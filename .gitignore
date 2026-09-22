@@ -7,7 +7,7 @@ dist
 *.tsbuildinfo
 
 # Local state written by the app (see README: the store is a spreadsheet)
-data/
+/data/
 
 # Environment
 .env
