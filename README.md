@@ -39,6 +39,16 @@ sources with no install step, and they are what caught the two bugs listed at th
 
 Read **ARCHITECTURE.md** before your first change, and **CONTRIBUTING.md** for the conventions.
 
+## What is in this repository
+
+The app is at the root. Two folders beside it are not part of the build:
+
+| Path | |
+|---|---|
+| `src/` `server/` `api/` `tests/` `scripts/` `public/` | **The app.** See ARCHITECTURE.md. |
+| `legacy/` | The two superseded generations, kept for reference. Not built, linted or deployed — see `legacy/README.md`. |
+| `docs/source-material/` | The original brief, the source spreadsheets and the design screenshots the app was built from. |
+
 ---
 
 ## Choosing where the data lives
