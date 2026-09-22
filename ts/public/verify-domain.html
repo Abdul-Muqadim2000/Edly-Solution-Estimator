@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Edly — TypeScript test run</title>
+<style>
+  body { margin: 0; font-family: 'DM Sans', system-ui, sans-serif; background: #F7F7F5; color: #252525; }
+  main { max-width: 1000px; margin: 0 auto; padding: 28px 24px 80px; }
+  h1 { font-family: 'Poppins', system-ui, sans-serif; font-size: 24px; font-weight: 700; margin: 0; letter-spacing: -0.3px; }
+  .sub { font-size: 13px; color: #6E6E6E; line-height: 1.6; margin-top: 6px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  .stat { background: #fff; border: 1px solid #E5E5E3; border-radius: 14px; padding: 12px 16px; min-width: 96px; }
+  .stat b { display: block; font-family: 'Poppins', system-ui, sans-serif; font-size: 22px; line-height: 1; }
+  .stat span { display: block; font-size: 10.5px; color: #8F8F8B; margin-top: 5px; }
+  .suite { background: #fff; border: 1px solid #E5E5E3; border-radius: 14px; margin-top: 14px; overflow: hidden; }
+  .suite > h2 { font-family: 'Poppins', system-ui, sans-serif; font-size: 14px; margin: 0; padding: 12px 18px; background: #FBFBFA; border-bottom: 1px solid #F0F0EE; font-weight: 600; }
+  .grp { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #9C9C97; padding: 11px 18px 4px; }
+  .t { display: flex; gap: 10px; align-items: baseline; padding: 5px 18px; font-size: 12.5px; border-top: 1px solid #F6F6F4; }
+  .t.pass .m { color: #00846F; }
+  .t.fail { background: #FDECEC; }
+  .t.fail .m { color: #C0161C; font-weight: 700; }
+  .m { flex: 0 0 18px; font-family: 'IBM Plex Mono', monospace; }
+  .why { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #C0161C; padding: 2px 18px 8px 46px; white-space: pre-wrap; line-height: 1.5; background: #FDECEC; }
+  .fatal { background: #FDECEC; border: 1px solid #F3B9BB; border-radius: 12px; padding: 14px 16px; margin-top: 14px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #C0161C; white-space: pre-wrap; line-height: 1.55; }
+  #done { font-family: 'Poppins', system-ui, sans-serif; font-size: 15px; font-weight: 600; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>TypeScript test run</h1>
+  <div class="sub">Transpiles the real <code>src/</code> sources with Babel and runs <code>tests/domain.test.ts</code> and <code>tests/schema.test.ts</code> in the browser. Same assertions Vitest would run.</div>
+  <div class="bar" id="stats"></div>
+  <div id="out"></div>
+  <div id="done"></div>
+</main>
+
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script>
+(async function () {
+  const out = document.getElementById('out');
+  const fatal = (msg) => { const d = document.createElement('div'); d.className = 'fatal'; d.textContent = msg; out.appendChild(d); };
+
+  /* ---------- minimal vitest shim ---------- */
+  const results = [];
+  let currentSuite = '', currentGroup = '';
+  const queue = [];
+  const describe = (name, fn) => { currentGroup = name; fn(); };
+  const it = (name, fn) => queue.push({ suite: currentSuite, group: currentGroup, name, fn });
+
+  const fmt = (v) => {
+    if (typeof v === 'string') return JSON.stringify(v);
+    if (v === undefined) return 'undefined';
+    try { return JSON.stringify(v); } catch { return String(v); }
+  };
+  const deepEq = (a, b) => {
+    if (a === b) return true;
+    if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const ka = Object.keys(a), kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    return ka.every((k) => deepEq(a[k], b[k]));
+  };
+  const expect = (actual) => {
+    const api = {
+      toBe: (e) => { if (actual !== e) throw new Error('expected ' + fmt(e) + ', got ' + fmt(actual)); },
+      toEqual: (e) => { if (!deepEq(actual, e)) throw new Error('deep-equal failed\n  expected ' + fmt(e) + '\n  got      ' + fmt(actual)); },
+      toBeCloseTo: (e, digits = 2) => { const tol = Math.pow(10, -digits) / 2; if (Math.abs(actual - e) > tol) throw new Error('expected ~' + e + ', got ' + actual); },
+      toBeGreaterThan: (e) => { if (!(actual > e)) throw new Error('expected > ' + e + ', got ' + actual); },
+      toBeGreaterThanOrEqual: (e) => { if (!(actual >= e)) throw new Error('expected >= ' + e + ', got ' + actual); },
+      toBeLessThanOrEqual: (e) => { if (!(actual <= e)) throw new Error('expected <= ' + e + ', got ' + actual); },
+      toBeUndefined: () => { if (actual !== undefined) throw new Error('expected undefined, got ' + fmt(actual)); },
+      toBeNull: () => { if (actual !== null) throw new Error('expected null, got ' + fmt(actual)); },
+      toHaveLength: (n) => { const len = actual == null ? -1 : actual.length; if (len !== n) throw new Error('expected length ' + n + ', got ' + len); },
+      toContain: (needle) => { if (!(actual || []).includes(needle)) throw new Error('expected to contain ' + fmt(needle) + ', got ' + fmt(actual)); }
+    };
+    return api;
+  };
+
+  /* ---------- module loader: fetch → Babel → CommonJS ---------- */
+  const cache = new Map();
+  const EXT = ['', '.ts', '.tsx', '/index.ts'];
+
+  const normalise = (path) => {
+    const stack = [];
+    for (const p of path.split('/')) {
+      if (!p || p === '.') continue;
+      if (p === '..') { if (stack.length && stack[stack.length - 1] !== '..') stack.pop(); else stack.push('..'); }
+      else stack.push(p);
+    }
+    return stack.join('/');
+  };
+
+  const mapSpecifier = (spec, fromPath) => {
+    if (spec === 'vitest') return 'vitest';
+    if (spec.startsWith('@/')) return '../src/' + spec.slice(2);
+    if (spec.startsWith('@server/')) return '../server/' + spec.slice(8);
+    if (spec.startsWith('.')) return normalise(fromPath.split('/').slice(0, -1).join('/') + '/' + spec);
+    return spec;
+  };
+
+  async function fetchSource(base) {
+    for (const ext of EXT) {
+      const url = base + ext;
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.ok) return { url, text: await res.text() };
+      } catch (_) { /* try next */ }
+    }
+    throw new Error('cannot resolve module: ' + base);
+  }
+
+  async function load(base) {
+    if (base === 'vitest') return { describe, it, expect };
+    if (cache.has(base)) return cache.get(base);
+
+    const { url, text } = await fetchSource(base);
+    const transformed = Babel.transform(text, {
+      filename: url,
+      presets: [['typescript', { isTSX: url.endsWith('.tsx'), allExtensions: true }]],
+      plugins: ['transform-modules-commonjs']
+    }).code;
+
+    /* pre-resolve every dependency, because require() must be synchronous */
+    const deps = new Map();
+    const specRe = /require\((['"])([^'"]+)\1\)/g;
+    let m;
+    while ((m = specRe.exec(transformed))) {
+      const spec = m[2];
+      const target = mapSpecifier(spec, url);
+      if (!deps.has(spec)) deps.set(spec, await load(target));
+    }
+
+    const module = { exports: {} };
+    cache.set(base, module.exports);
+    const require = (spec) => {
+      if (!deps.has(spec)) throw new Error('unresolved require: ' + spec + ' (in ' + url + ')');
+      return deps.get(spec);
+    };
+    new Function('require', 'module', 'exports', transformed)(require, module, module.exports);
+    cache.set(base, module.exports);
+    return module.exports;
+  }
+
+  /* ---------- run ---------- */
+  const suites = [
+    { file: '../tests/domain.test.ts', title: 'tests/domain.test.ts — estimate, planner, catalog' },
+    { file: '../tests/schema.test.ts', title: 'tests/schema.test.ts — spreadsheet round-trip' }
+  ];
+
+  for (const suite of suites) {
+    currentSuite = suite.title;
+    try {
+      cache.delete(suite.file);
+      await load(suite.file);
+    } catch (err) {
+      fatal('FAILED TO LOAD ' + suite.file + '\n' + (err && err.message ? err.message : String(err)));
+    }
+  }
+
+  for (const test of queue) {
+    try {
+      await test.fn();
+      results.push({ ...test, ok: true });
+    } catch (err) {
+      results.push({ ...test, ok: false, why: (err && err.message) || String(err) });
+    }
+  }
+
+  /* ---------- report ---------- */
+  const passed = results.filter((r) => r.ok).length;
+  const failed = results.length - passed;
+  document.getElementById('stats').innerHTML =
+    '<div class="stat"><b>' + results.length + '</b><span>assertions run</span></div>' +
+    '<div class="stat"><b style="color:#00846F">' + passed + '</b><span>passed</span></div>' +
+    '<div class="stat"><b style="color:' + (failed ? '#C0161C' : '#9C9C97') + '">' + failed + '</b><span>failed</span></div>';
+
+  for (const suite of suites) {
+    const mine = results.filter((r) => r.suite === suite.title);
+    if (!mine.length) continue;
+    const box = document.createElement('div');
+    box.className = 'suite';
+    box.innerHTML = '<h2>' + suite.title + '</h2>';
+    let group = null;
+    for (const r of mine) {
+      if (r.group !== group) {
+        group = r.group;
+        const g = document.createElement('div');
+        g.className = 'grp';
+        g.textContent = group;
+        box.appendChild(g);
+      }
+      const row = document.createElement('div');
+      row.className = 't ' + (r.ok ? 'pass' : 'fail');
+      row.innerHTML = '<span class="m">' + (r.ok ? '✓' : '✗') + '</span><span>' + r.name + '</span>';
+      box.appendChild(row);
+      if (!r.ok) {
+        const why = document.createElement('div');
+        why.className = 'why';
+        why.textContent = r.why;
+        box.appendChild(why);
+      }
+    }
+    out.appendChild(box);
+  }
+
+  document.getElementById('done').textContent = failed === 0
+    ? '✓ All ' + results.length + ' assertions passed.'
+    : '✗ ' + failed + ' of ' + results.length + ' assertions failed.';
+  window.__testSummary = { total: results.length, passed, failed, failures: results.filter((r) => !r.ok).map((r) => r.group + ' › ' + r.name + ' — ' + r.why) };
+})();
+</script>
+</body>
+</html>

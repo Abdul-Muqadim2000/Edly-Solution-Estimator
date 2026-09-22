@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+<template id="__bundler_thumbnail" data-bg-color="#EBF9F6">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#EBF9F6"/>
+    <text x="600" y="400" text-anchor="middle" font-family="Poppins, Arial, sans-serif" font-weight="700" font-size="190" fill="#252525">edly</text>
+    <circle cx="815" cy="395" r="22" fill="#DD1F25"/>
+    <rect x="440" y="470" width="320" height="14" rx="7" fill="#00AD90"/>
+  </svg>
+</template>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&amp;family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+html, body { margin: 0; padding: 0; background: #F7F7F5; -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+a { color: #00846F; text-decoration: none; }
+a:hover { color: #DD1F25; text-decoration: underline; }
+input, button { font-family: inherit; }
+::selection { background: #CBEFE6; }
+@page { margin: 16mm; }
+@media print {
+  [data-app] { display: none !important; }
+  [data-quote] { display: block !important; }
+  html, body { background: #FFFFFF; }
+}
+</style>
+<script src="../edly-bundles-data.js"></script>
+<script src="../edly-xlsx.js"></script>
+</helmet>
+<div data-app="true" style="min-width: 1200px; font-family: 'DM Sans', sans-serif; color: #252525; background: #F7F7F5;">
+  <div data-screen-label="Site header" style="background: #FFFFFF; border-bottom: 1px solid #ECECEA; padding: 0 32px;">
+    <div style="max-width: 1240px; margin: 0 auto; height: 74px; display: flex; align-items: center; gap: 22px;">
+      <a href="https://edly.io/" target="_blank" style="font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 30px; letter-spacing: -0.5px; color: #252525; line-height: 1;" style-hover="color: #252525; text-decoration: none;">edly</a>
+      <nav style="display: flex; align-items: center; flex: 1; gap: 2px;" onMouseLeave="{{ navClose }}">
+        <sc-for list="{{ navMenus }}" as="m" hint-placeholder-count="6">
+          <div style="position: relative;" onMouseEnter="{{ m.onEnter }}">
+            <a href="{{ m.href }}" target="_blank" style="display: flex; align-items: center; gap: 5px; padding: 10px 13px; font-size: 13.5px; font-weight: 600; color: #252525;" style-hover="color: #DD1F25; text-decoration: none;">{{ m.label }}<sc-if value="{{ m.hasKids }}" hint-placeholder-val="{{ false }}"><span style="font-size: 8px; color: #9C9C9C;">▼</span></sc-if></a>
+            <sc-if value="{{ m.open }}" hint-placeholder-val="{{ false }}">
+              <div style="position: absolute; top: 100%; left: 0; min-width: 250px; background: #FFFFFF; border: 1px solid #ECECEA; border-radius: 12px; box-shadow: 0 14px 34px rgba(20, 16, 58, 0.14); padding: 8px; z-index: 300;">
+                <sc-for list="{{ m.kids }}" as="k" hint-placeholder-count="4">
+                  <a href="{{ k.href }}" target="_blank" style="display: block; padding: 9px 12px; font-size: 13px; font-weight: 500; color: #3C3C3C; border-radius: 8px;" style-hover="background: #EBF9F6; color: #252525; text-decoration: none;">{{ k.label }}</a>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </nav>
+      <a href="https://panel.edly.io/trial/signup/" target="_blank" style="background: #DD1F25; color: #FFFFFF; border-radius: 8px; padding: 11px 18px; font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;" style-hover="background: #B81920; color: #FFFFFF; text-decoration: none;">Try for Free</a>
+      <a href="https://edly.io/request-a-demo/" target="_blank" style="border: 1.5px solid #DD1F25; color: #DD1F25; border-radius: 8px; padding: 10px 18px; font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;" style-hover="background: #FDECEC; color: #C0161C; text-decoration: none;">Request a Demo</a>
+    </div>
+  </div>
+  <section data-screen-label="Hero" style="background: #EBF9F6; color: #252525; padding: 52px 32px 56px; border-bottom: 1px solid #DCEFE9;">
+    <div style="max-width: 1200px; margin: 0 auto;">
+      <div style="display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 52px; align-items: end;">
+        <div>
+          <div style="font-size: 11px; font-weight: 700; letter-spacing: 2.2px; text-transform: uppercase; color: #00846F;">Open edX Solution Bundles · by Arbisoft</div>
+          <h1 style="font-family: 'Poppins', sans-serif; font-size: 39px; font-weight: 700; line-height: 1.16; letter-spacing: -0.8px; margin: 12px 0 14px; text-wrap: balance;">Client-proven Open edX solutions, ready to redeploy in hours.</h1>
+          <p style="font-size: 15px; line-height: 1.65; color: #5A5A5A; margin: 0; max-width: 640px; text-wrap: pretty;">Edly has been a core contributor to Open edX since 2013 — 5,000+ upstream contributions and platforms trusted by 40M+ learners. Every solution below was engineered for a real client. Pick what you need and see the effort instantly.</p>
+          <div style="display: flex; align-items: center; gap: 12px; margin-top: 26px;">
+            <button onClick="{{ scrollBuild }}" style="border: none; cursor: pointer; background: #DD1F25; color: #FFFFFF; border-radius: 9px; padding: 13px 24px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;" style-hover="background: #B81920;">Build your bundle ↓</button>
+            <a href="https://edly.io/services/open-edx-custom-solutions/" target="_blank" style="display: inline-flex; align-items: center; border: 1.5px solid #DD1F25; color: #DD1F25; border-radius: 9px; padding: 11px 20px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;" style-hover="background: #FFFFFF; color: #C0161C; text-decoration: none;">Custom development</a>
+          </div>
+          <div style="display: inline-flex; align-items: center; gap: 6px; margin-top: 18px; background: #FFFFFF; border: 1px solid #A8E0D3; border-radius: 999px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: #0A6B5B;">These bundles are only our pre-built work — don’t see what you need? <a href="https://edly.io/contact-us/" target="_blank" style="color: #DD1F25; font-weight: 700;">We build fully custom Open edX solutions — contact us</a></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div style="background: #FFFFFF; border: 1px solid #DCEFE9; border-radius: 12px; padding: 16px 18px;">
+            <div style="font-family: 'Poppins', sans-serif; font-size: 27px; font-weight: 700; line-height: 1;">{{ heroFeatures }}</div>
+            <div style="font-size: 11.5px; color: #6E6E6E; margin-top: 6px; line-height: 1.4;">client-proven solutions</div>
+          </div>
+          <div style="background: #FFFFFF; border: 1px solid #DCEFE9; border-radius: 12px; padding: 16px 18px;">
+            <div style="font-family: 'Poppins', sans-serif; font-size: 27px; font-weight: 700; line-height: 1;">{{ heroBundles }}</div>
+            <div style="font-size: 11.5px; color: #6E6E6E; margin-top: 6px; line-height: 1.4;">sellable bundles</div>
+          </div>
+          <div style="background: #FFFFFF; border: 1px solid #DCEFE9; border-radius: 12px; padding: 16px 18px;">
+            <div style="font-family: 'Poppins', sans-serif; font-size: 27px; font-weight: 700; line-height: 1;">{{ heroHrs }} h</div>
+            <div style="font-size: 11.5px; color: #6E6E6E; margin-top: 6px; line-height: 1.4;">engineering already built — you reuse it</div>
+          </div>
+          <div style="background: #FFFFFF; border: 1px solid #DCEFE9; border-radius: 12px; padding: 16px 18px;">
+            <div style="font-family: 'Poppins', sans-serif; font-size: 27px; font-weight: 700; line-height: 1;">2013</div>
+            <div style="font-size: 11.5px; color: #6E6E6E; margin-top: 6px; line-height: 1.4;">core Open edX contributor since</div>
+          </div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 16px; margin-top: 32px; padding-top: 16px; border-top: 1px solid #CFE8E1; flex-wrap: wrap;">
+        <span style="font-size: 10px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: #8A8A85;">Built with teams behind</span>
+        <span style="font-size: 12.5px; font-weight: 600; color: #333333;">edX.org · MIT Open Learning · Philanthropy University · Toastmasters · Wikimedia</span>
+        <span style="flex: 1;"></span>
+        <span style="font-size: 10px; color: #8A8A85;">Open edX® is a registered trademark of edX Inc.</span>
+      </div>
+    </div>
+  </section>
+  <header ref="{{ headerRef }}" style="position: sticky; top: 0; z-index: 50; height: 62px; background: #FFFFFF; border-bottom: 1px solid #E5E5E3; display: flex; align-items: center; gap: 18px; padding: 0 20px;">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      <div style="font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 27px; letter-spacing: -0.5px; color: #252525; line-height: 1;">edly</div>
+      <div style="width: 1px; height: 24px; background: #E5E5E3;"></div>
+      <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: #6E6E6E;">Bundle Builder</div>
+    </div>
+    <div style="flex: 1; display: flex; justify-content: center;">
+      <input type="search" value="{{ searchVal }}" onChange="{{ onSearch }}" placeholder="Search 87 features — SSO, payments, badges, translations…" style="width: 460px; max-width: 46vw; height: 38px; border: 1px solid #DBDBD8; border-radius: 999px; padding: 0 18px; font-size: 13.5px; color: #252525; background: #FAFAF8; outline: none;" style-focus="border-color: #00AD90; background: #FFFFFF; box-shadow: 0 0 0 3px #D6F2EA;">
+    </div>
+    <div title="Internal mode adds build economics, source references and catalog notes" style="display: flex; align-items: center; background: #F4F4F2; border: 1px solid #E5E5E3; border-radius: 999px; padding: 3px; gap: 2px;">
+      <button onClick="{{ setClient }}" style="border: none; cursor: pointer; border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 600; background: {{ cliBg }}; color: {{ cliColor }};">Client view</button>
+      <button onClick="{{ setInternal }}" style="border: none; cursor: pointer; border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 600; background: {{ intBg }}; color: {{ intColor }};">Internal</button>
+    </div>
+  </header>
+  <div style="height: calc(100vh - 62px); display: grid; grid-template-columns: 280px minmax(0, 1fr) 400px; min-height: 0;">
+    <nav style="background: #FFFFFF; border-right: 1px solid #E5E5E3; overflow-y: auto; padding: 14px 10px 10px; display: flex; flex-direction: column; gap: 2px;">
+      <div style="font-size: 10.5px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: #9C9C9C; padding: 0 12px 8px;">Bundles</div>
+      <sc-for list="{{ sideItems }}" as="b" hint-placeholder-count="16">
+        <div onClick="{{ b.onClick }}" style="display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 9px; cursor: pointer; background: {{ b.bg }};" style-hover="background: #F4F4F2;">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; width: 27px; flex: 0 0 27px; color: {{ b.idColor }};">{{ b.tag }}</span>
+          <span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: #333333; line-height: 1.25;">{{ b.name }}</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600; border-radius: 999px; padding: 2px 7px; background: {{ b.countBg }}; color: {{ b.countColor }};">{{ b.count }}</span>
+        </div>
+      </sc-for>
+      <div style="margin-top: auto; padding: 14px 12px 6px; font-size: 11px; color: #8F8F8B; line-height: 1.7; border-top: 1px solid #F0F0EE;">{{ metaLine }}<br>{{ metaFoot }}</div>
+    </nav>
+    <main style="overflow-y: auto; min-width: 0; padding: 40px 44px 72px;">
+      <sc-if value="{{ searching }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom: 16px;">
+          <div style="font-family: 'Poppins', sans-serif; font-size: 21px; font-weight: 600;">Search results</div>
+          <div style="font-size: 13px; color: #6E6E6E; margin-top: 2px;">{{ resultLabel }}</div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showAllHead }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-bottom: 16px;">
+          <div style="font-family: 'Poppins', sans-serif; font-size: 21px; font-weight: 600;">All components</div>
+          <div style="font-size: 13px; color: #6E6E6E; margin-top: 2px;">Every customization à la carte — check items to add them to the bundle.</div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showBundleHead }}" hint-placeholder-val="{{ true }}">
+        <div style="margin-bottom: 18px; max-width: 1000px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; font-weight: 600; color: #00AD90; background: #EBF9F6; border-radius: 6px; padding: 3px 8px;">{{ bd.id }}</span>
+            <sc-if value="{{ bd.inDevBadge }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size: 11px; font-weight: 600; color: #B45309; background: #FDF3E3; border-radius: 999px; padding: 3px 10px;">{{ bd.inDevBadge }}</span>
+            </sc-if>
+            <span style="flex: 1;"></span>
+            <span style="font-size: 12px; color: #00AD90; font-weight: 600;">{{ bd.selLabel }}</span>
+            <button onClick="{{ bd.onAddAll }}" style="border: 1px solid #00AD90; background: #FFFFFF; color: #00AD90; border-radius: 8px; padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer;" style-hover="background: #EBF9F6;">Select all {{ bd.count }}</button>
+            <button onClick="{{ bd.onClearB }}" style="border: 1px solid #E5E5E3; background: #FFFFFF; color: #6E6E6E; border-radius: 8px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer;" style-hover="border-color: #CFCFCC; color: #252525;">Clear</button>
+          </div>
+          <h1 style="font-family: 'Poppins', sans-serif; font-size: 27px; font-weight: 700; margin: 12px 0 8px; letter-spacing: -0.3px;">{{ bd.name }}</h1>
+          <p style="font-size: 14.5px; line-height: 1.6; color: #4A4A4A; margin: 0; max-width: 760px; text-wrap: pretty;">{{ bd.pitch }}</p>
+          <div style="display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 14px;">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #9C9C9C;">Offer when they ask about</span>
+            <sc-for list="{{ bd.chips }}" as="ch" hint-placeholder-count="4">
+              <span style="font-size: 12px; font-weight: 500; color: #3C3C3C; background: #F4F4F2; border-radius: 999px; padding: 4px 12px;">{{ ch }}</span>
+            </sc-for>
+          </div>
+          <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 12px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #6E6E6E;">
+            <span>{{ bd.stat }}</span>
+            <sc-if value="{{ bd.hasPairs }}" hint-placeholder-val="{{ false }}">
+              <span style="display: flex; align-items: center; gap: 6px; font-family: 'DM Sans', sans-serif;">
+                <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #9C9C9C;">Pairs with</span>
+                <sc-for list="{{ bd.pairs }}" as="p" hint-placeholder-count="2">
+                  <span onClick="{{ p.onClick }}" style="font-size: 11.5px; font-weight: 600; color: #00AD90; border: 1px solid #A8E0D3; border-radius: 999px; padding: 3px 10px; cursor: pointer;" style-hover="background: #EBF9F6;">{{ p.label }}</span>
+                </sc-for>
+              </span>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+      <div style="max-width: 1000px; background: #FFFFFF; border: 1px solid #E5E5E3; border-radius: 14px; overflow: hidden;">
+        <div style="display: grid; grid-template-columns: 46px minmax(0, 1fr) 118px 76px 76px 40px; padding: 10px 0; font-size: 10.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9C9C9C; background: #FBFBFA;">
+          <span></span><span>Feature</span><span>Std deploy</span><span style="text-align: right;">First h</span><span style="text-align: right;">Repeat h</span><span></span>
+        </div>
+        <sc-for list="{{ rows }}" as="it" hint-placeholder-count="7">
+          <div style="border-top: 1px solid #F0F0EE; background: {{ it.rowBg }};">
+            <div onClick="{{ it.onExpand }}" style="display: grid; grid-template-columns: 46px minmax(0, 1fr) 118px 76px 76px 40px; align-items: center; padding: 11px 0; cursor: pointer;">
+              <div style="display: flex; justify-content: center;">
+                <div onClick="{{ it.onToggle }}" style="width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid {{ it.checkBd }}; background: {{ it.checkBg }}; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+                  <span style="color: #FFFFFF; font-size: 12px; font-weight: 700; line-height: 1; opacity: {{ it.checkOp }};">✓</span>
+                </div>
+              </div>
+              <div style="min-width: 0; padding-right: 14px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="font-size: 13.5px; font-weight: 600; color: #252525;">{{ it.name }}</span>
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #9C9C9C;">{{ it.id }}</span>
+                  <sc-if value="{{ it.inDev }}" hint-placeholder-val="{{ false }}"><span style="font-size: 10.5px; font-weight: 600; color: #B45309; background: #FDF3E3; border-radius: 999px; padding: 2px 8px;">In development</span></sc-if>
+                  <sc-if value="{{ it.noEst }}" hint-placeholder-val="{{ false }}"><span style="font-size: 10.5px; font-weight: 600; color: #6E6E6E; background: #F4F4F2; border-radius: 999px; padding: 2px 8px;">No estimate</span></sc-if>
+                  <sc-if value="{{ it.bTag }}" hint-placeholder-val="{{ false }}"><span onClick="{{ it.onGoBundle }}" style="font-size: 10.5px; font-weight: 600; color: #00AD90; background: #EBF9F6; border-radius: 999px; padding: 2px 8px; cursor: pointer;">{{ it.bTag }} · {{ it.bName }}</span></sc-if>
+                </div>
+                <div style="font-size: 12.5px; color: #6E6E6E; line-height: 1.5; padding-top: 2px;">{{ it.desc }}</div>
+              </div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #6E6E6E;">{{ it.deploy }}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; text-align: right; color: #252525;">{{ it.firstD }}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; text-align: right; color: #6E6E6E;">{{ it.repeatD }}</div>
+              <div style="text-align: center; color: #9C9C9C; font-size: 11px; transform: {{ it.chev }}; transition: transform 0.15s;">▼</div>
+            </div>
+            <sc-if value="{{ it.ex }}" hint-placeholder-val="{{ false }}">
+              <div style="padding: 2px 20px 16px 46px;">
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 28px; max-width: 820px;">
+                  <sc-for list="{{ it.detail }}" as="d" hint-placeholder-count="4">
+                    <div style="display: flex; gap: 12px; font-size: 12.5px; line-height: 1.55;">
+                      <span style="flex: 0 0 132px; color: #9C9C9C;">{{ d.k }}</span>
+                      <span style="color: #3C3C3C; min-width: 0;">{{ d.v }}</span>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{ it.refUrl }}" hint-placeholder-val="{{ false }}">
+                    <div style="display: flex; gap: 12px; font-size: 12.5px; line-height: 1.55; grid-column: 1 / -1;">
+                      <span style="flex: 0 0 132px; color: #9C9C9C;">Reference</span>
+                      <a href="{{ it.refUrl }}" target="_blank" style="min-width: 0; word-break: break-all;">{{ it.refUrl }}</a>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+        <sc-if value="{{ noResults }}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 40px; text-align: center; font-size: 13.5px; color: #6E6E6E; border-top: 1px solid #F0F0EE;">No matches in our pre-built catalog — try a broader term like payments, SSO or analytics.<br>Or go custom: Edly builds bespoke Open edX solutions for exactly this. <a href="https://edly.io/contact-us/" target="_blank" style="font-weight: 700;">Contact us</a></div>
+        </sc-if>
+      </div>
+      <div style="max-width: 1000px; margin-top: 18px; background: #EBF9F6; border: 1px solid #BFE7DD; border-radius: 14px; padding: 18px 22px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 300px;">
+          <div style="font-family: 'Poppins', sans-serif; font-size: 15.5px; font-weight: 600; color: #0A6B5B;">Don’t see what you need? These are only our pre-built solutions.</div>
+          <div style="font-size: 13px; color: #3D6B62; line-height: 1.55; margin-top: 3px;">Edly designs and builds fully custom Open edX features, integrations and platforms — anything not in this catalog, we scope and deliver for you.</div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <a href="https://edly.io/services/open-edx-custom-solutions/" target="_blank" style="background: #DD1F25; color: #FFFFFF; border-radius: 8px; padding: 10px 16px; font-size: 12.5px; font-weight: 700;" style-hover="background: #B81920; color: #FFFFFF; text-decoration: none;">Custom development</a>
+          <a href="https://edly.io/contact-us/" target="_blank" style="border: 1.5px solid #DD1F25; color: #C0161C; border-radius: 8px; padding: 9px 16px; font-size: 12.5px; font-weight: 700;" style-hover="background: #FDECEC; text-decoration: none;">Contact us</a>
+        </div>
+      </div>
+      <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width: 1000px; margin-top: 18px; padding: 14px 18px; background: #FBFBFA; border: 1px dashed #E5E5E3; border-radius: 12px;">
+          <div style="font-size: 10.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9C9C9C; margin-bottom: 6px;">How to read these numbers — internal</div>
+          <sc-for list="{{ notes }}" as="n" hint-placeholder-count="3">
+            <p style="font-size: 11.5px; color: #6E6E6E; line-height: 1.6; margin: 4px 0; text-wrap: pretty;">{{ n }}</p>
+          </sc-for>
+        </div>
+      </sc-if>
+    </main>
+    <aside style="background: #242424; color: #FFFFFF; overflow-y: auto; display: flex; flex-direction: column; min-height: 0;">
+      <div style="padding: 20px 22px 0;">
+        <div style="display: flex; align-items: baseline; justify-content: space-between;">
+          <span style="font-family: 'Poppins', sans-serif; font-size: 16px; font-weight: 600;">Your bundle</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #9C9C97;">{{ selCountLabel }}</span>
+        </div>
+        <div style="margin-top: 14px; background: #363636; border-radius: 12px; padding: 12px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: #1B1B1B; border-radius: 9px; padding: 4px;">
+            <button onClick="{{ setFirst }}" title="First time Edly delivers this to a new client" style="border: none; cursor: pointer; border-radius: 7px; padding: 7px 4px; font-size: 12px; font-weight: 600; background: {{ firstBg }}; color: {{ firstColor }};">First delivery</button>
+            <button onClick="{{ setRepeat }}" title="Per-client configuration once productized" style="border: none; cursor: pointer; border-radius: 7px; padding: 7px 4px; font-size: 12px; font-weight: 600; background: {{ repeatBg }}; color: {{ repeatColor }};">Repeat delivery</button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+            <sc-if value="{{ showUsdRow }}" hint-placeholder-val="{{ false }}">
+              <label style="display: flex; flex-direction: column; gap: 4px; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9C9C97;">Blended rate $/h
+                <input type="number" min="0" max="500" value="{{ rateVal }}" onChange="{{ onRate }}" style="background: #1B1B1B; border: 1px solid #4A4A48; border-radius: 8px; color: #FFFFFF; padding: 8px 10px; font-size: 13px; font-family: 'IBM Plex Mono', monospace; outline: none; width: 100%;" style-focus="border-color: #00AD90;">
+              </label>
+            </sc-if>
+            <label title="Sheet guidance: add PM, QA and support overhead per delivery standards before quoting" style="display: flex; flex-direction: column; gap: 4px; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9C9C97;">PM/QA overhead %
+              <input type="number" min="0" max="100" value="{{ ovrVal }}" onChange="{{ onOvr }}" style="background: #1B1B1B; border: 1px solid #4A4A48; border-radius: 8px; color: #FFFFFF; padding: 8px 10px; font-size: 13px; font-family: 'IBM Plex Mono', monospace; outline: none; width: 100%;" style-focus="border-color: #00AD90;">
+            </label>
+          </div>
+        </div>
+      </div>
+      <div style="flex: 1; padding: 6px 22px 12px;">
+        <sc-if value="{{ emptySel }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 16px; border: 1px dashed #4A4A48; border-radius: 12px; padding: 22px 18px; font-size: 13px; line-height: 1.65; color: #B3B3AE; text-align: center;">Nothing selected yet.<br>Check features on the left, or use “Select all” to add a whole bundle.</div>
+        </sc-if>
+        <sc-for list="{{ groups }}" as="g" hint-placeholder-count="0">
+          <div style="padding: 12px 0 2px;">
+            <div style="display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9C9C97;">
+              <span style="font-family: 'IBM Plex Mono', monospace; color: #4DC6B1;">{{ g.id }}</span>
+              <span style="min-width: 0;">{{ g.name }}</span>
+              <span style="flex: 1;"></span>
+              <span style="font-family: 'IBM Plex Mono', monospace;">{{ g.subD }} h</span>
+            </div>
+            <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="2">
+              <div style="display: flex; align-items: center; gap: 8px; padding: 5px 0;">
+                <span style="flex: 1; min-width: 0; font-size: 12.5px; color: #EFEFEB; line-height: 1.4;">{{ r.name }}</span>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #C9C9C4;">{{ r.hrsD }}</span>
+                <span onClick="{{ r.onRemove }}" title="Remove" style="color: #8A8A85; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px;" style-hover="color: #FF8B8B;">×</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding: 16px 22px 20px; border-top: 1px solid #3D3D3B; background: #1B1B1B;">
+        <sc-if value="{{ hasSel }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div style="display: inline-flex; align-items: center; gap: 7px; background: #173B33; border: 1px solid #2E6B5C; color: #5FD9C0; border-radius: 999px; padding: 5px 12px; font-size: 11.5px; font-weight: 600;">Reusing {{ buildD }} h of proven engineering</div>
+            <div style="display: flex; justify-content: space-between; font-size: 12.5px; color: #B3B3AE; margin-top: 12px;"><span>First delivery</span><span style="font-family: 'IBM Plex Mono', monospace; color: {{ firstTotColor }};">{{ firstTotD }} h</span></div>
+            <div style="display: flex; justify-content: space-between; font-size: 12.5px; color: #B3B3AE; margin-top: 5px;"><span>Repeat delivery</span><span style="font-family: 'IBM Plex Mono', monospace; color: {{ repeatTotColor }};">{{ repeatTotD }} h</span></div>
+            <sc-if value="{{ hasOvh }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; justify-content: space-between; font-size: 12.5px; color: #B3B3AE; margin-top: 5px;"><span>PM/QA overhead</span><span style="font-family: 'IBM Plex Mono', monospace; color: #EFEFEB;">{{ ovhD }}</span></div>
+            </sc-if>
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; padding-top: 12px; border-top: 1px solid #3D3D3B;">
+              <span style="font-size: 12px; color: #B3B3AE;">Total · {{ basisLabel }}</span>
+              <span style="font-family: 'Poppins', sans-serif; font-size: 31px; font-weight: 700; letter-spacing: -0.5px;">{{ grandD }} h</span>
+            </div>
+            <div style="text-align: right; font-size: 11.5px; color: #9C9C97; margin-top: -2px;">≈ {{ daysD }} person-days · {{ weeksD }} wks</div>
+            <sc-if value="{{ showUsdRow }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px;">
+                <span style="font-size: 12px; color: #B3B3AE;">Estimate at {{ rateD }}</span>
+                <span style="font-family: 'Poppins', sans-serif; font-size: 21px; font-weight: 700; color: #5FD9C0;">{{ usdD }}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ savedPctD }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 12px;">
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: #9C9C97;"><span>Effort saved vs building new</span><span style="font-family: 'IBM Plex Mono', monospace; color: #5FD9C0; font-weight: 600;">{{ savedPctD }}</span></div>
+                <div style="height: 5px; background: #363636; border-radius: 999px; margin-top: 5px; overflow: hidden;"><div style="height: 100%; background: #00AD90; border-radius: 999px; width: {{ savedW }};"></div></div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ cavD }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 12px; font-size: 11.5px; line-height: 1.55; color: #F3C88B;">⚠ {{ cavD }}</div>
+            </sc-if>
+            <sc-if value="{{ acctsD }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 8px; font-size: 11.5px; line-height: 1.6; color: #B3B3AE;"><span style="color: #9C9C97; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; font-size: 10px;">Client-held accounts</span><br>{{ acctsD }}</div>
+            </sc-if>
+          </div>
+        </sc-if>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px;">
+          <button onClick="{{ onDownload }}" style="grid-column: 1 / -1; border: none; cursor: pointer; border-radius: 9px; padding: 11px 8px; font-size: 13px; font-weight: 600; background: #DD1F25; color: #FFFFFF;" style-hover="background: #B81920;">{{ dlBtnLabel }}</button>
+          <button onClick="{{ onCopySummary }}" style="border: 1px solid #4A4A48; cursor: pointer; border-radius: 9px; padding: 10px 8px; font-size: 12.5px; font-weight: 600; background: #363636; color: #E8E8E4;" style-hover="background: #414141;">{{ sumBtnLabel }}</button>
+          <button onClick="{{ onPrint }}" style="border: 1px solid #4A4A48; cursor: pointer; border-radius: 9px; padding: 10px 8px; font-size: 12.5px; font-weight: 600; background: #363636; color: #E8E8E4;" style-hover="background: #414141;">Print quote</button>
+          <button onClick="{{ onCopyLink }}" style="border: 1px solid #4A4A48; cursor: pointer; border-radius: 9px; padding: 10px 8px; font-size: 12.5px; font-weight: 600; background: #363636; color: #E8E8E4;" style-hover="background: #414141;">{{ linkBtnLabel }}</button>
+          <button onClick="{{ onClearSel }}" style="border: 1px solid #5A3A3A; cursor: pointer; border-radius: 9px; padding: 10px 8px; font-size: 12.5px; font-weight: 600; background: transparent; color: #FF9B9B;" style-hover="background: #3A2222;">Clear all</button>
+        </div>
+        <div style="margin-top: 12px; font-size: 11.5px; line-height: 1.6; color: #B3B3AE; text-align: center;">These are only our pre-built solutions — missing something? <a href="https://edly.io/contact-us/" target="_blank" style="color: #5FD9C0; font-weight: 600;">We build custom too ↗</a></div>
+      </div>
+    </aside>
+  </div>
+  <div style="height: 48px; background: #F7F7F5;"></div>
+  <footer data-screen-label="Footer" style="background: #242424; color: #FFFFFF; padding: 50px 32px 24px;">
+    <div style="max-width: 1240px; margin: 0 auto;">
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) 1.35fr; gap: 36px;">
+        <div>
+          <div style="font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 600; margin-bottom: 14px;">Industries</div>
+          <div style="display: flex; flex-direction: column; gap: 9px;">
+            <a href="https://edly.io/k12-lms/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">K12</a>
+            <a href="https://edly.io/higher-education-lms/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Higher Ed</a>
+            <a href="https://edly.io/corporate-lms/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Corporate</a>
+            <a href="https://edly.io/nonprofit-lms/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Non Profit</a>
+            <a href="https://edly.io/business-lms/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Business</a>
+          </div>
+        </div>
+        <div>
+          <div style="font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 600; margin-bottom: 14px;">Services</div>
+          <div style="display: flex; flex-direction: column; gap: 9px;">
+            <a href="https://edly.io/services/open-edx-managed-hosting/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Managed Hosting</a>
+            <a href="https://edly.io/services/open-edx-installation/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Open edX Installation</a>
+            <a href="https://edly.io/services/open-edx-custom-solutions/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Open edX Custom Solutions</a>
+            <a href="https://edly.io/services/instructional-design/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Instructional Design</a>
+            <a href="https://edly.io/services/lms-training-support/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">LMS Training and Support</a>
+            <a href="https://edly.io/services/lms-data-migration/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Data Migration</a>
+          </div>
+        </div>
+        <div>
+          <div style="font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 600; margin-bottom: 14px;">Resources</div>
+          <div style="display: flex; flex-direction: column; gap: 9px;">
+            <a href="https://edly.io/resources/blog/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Blog</a>
+            <a href="https://edly.io/resources/case-studies/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Case Studies</a>
+            <a href="https://edly.io/resources/guides-and-whitepapers/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Guides and Whitepapers</a>
+            <a href="https://edly.io/resources/news-and-updates/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Product Updates</a>
+            <a href="https://edly.io/faq/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">FAQs</a>
+          </div>
+        </div>
+        <div>
+          <div style="font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 600; margin-bottom: 14px;">About</div>
+          <div style="display: flex; flex-direction: column; gap: 9px;">
+            <a href="https://edly.io/why-edly/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Why Edly</a>
+            <a href="https://edly.io/customers/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Our Customers</a>
+            <a href="https://edly.io/features/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Features</a>
+            <a href="https://edly.io/pricing-and-plans/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Edly Plans</a>
+            <a href="https://edly.io/contact-us/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Contact us</a>
+            <a href="https://panel.edly.io/" target="_blank" style="font-size: 13px; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Sign In</a>
+          </div>
+        </div>
+        <div>
+          <div style="font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 600; margin-bottom: 14px;">Subscribe to Our Newsletter</div>
+          <div style="display: flex; gap: 8px;">
+            <input type="email" placeholder="Email" style="flex: 1; min-width: 0; background: #333333; border: 1px solid #4C4C4A; border-radius: 8px; color: #FFFFFF; padding: 10px 12px; font-size: 13px; outline: none;" style-focus="border-color: #DD1F25;">
+            <button style="border: none; cursor: pointer; background: #DD1F25; color: #FFFFFF; border-radius: 8px; padding: 10px 16px; font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;" style-hover="background: #B81920;">Subscribe</button>
+          </div>
+          <div style="display: flex; gap: 14px; margin-top: 14px;">
+            <a href="https://twitter.com/edly_inc" target="_blank" style="font-size: 12.5px; font-weight: 600; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">Twitter</a>
+            <a href="https://www.linkedin.com/company/edly" target="_blank" style="font-size: 12.5px; font-weight: 600; color: #BDBDB8;" style-hover="color: #FFFFFF; text-decoration: none;">LinkedIn</a>
+          </div>
+          <div style="margin-top: 16px; background: #333333; border: 1px solid #4C4C4A; border-radius: 10px; padding: 12px 14px; font-size: 12px; line-height: 1.6; color: #BDBDB8;">This catalog is only our pre-built work. <a href="https://edly.io/contact-us/" target="_blank" style="color: #5FD9C0; font-weight: 600;">Need something custom? Talk to us.</a></div>
+        </div>
+      </div>
+      <div style="border-top: 1px solid #3D3D3B; margin-top: 40px; padding-top: 16px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: #9C9C97;">
+        <span style="line-height: 1.6;">EDX, Open EDX are registered trademarks of edX Inc. All Rights Reserved. © Edly 2026. All rights reserved.</span>
+        <span style="flex: 1;"></span>
+        <a href="https://edly.io/privacy-policy/" target="_blank" style="color: #C9C9C4; font-size: 11.5px;" style-hover="color: #FFFFFF; text-decoration: none;">Privacy Policy</a>
+        <a href="https://edly.io/refund-policy/" target="_blank" style="color: #C9C9C4; font-size: 11.5px;" style-hover="color: #FFFFFF; text-decoration: none;">Refund Policy</a>
+        <a href="https://edly.io/cancellation-policy/" target="_blank" style="color: #C9C9C4; font-size: 11.5px;" style-hover="color: #FFFFFF; text-decoration: none;">Cancellation Policy</a>
+        <a href="https://edly.io/terms-and-conditions/" target="_blank" style="color: #C9C9C4; font-size: 11.5px;" style-hover="color: #FFFFFF; text-decoration: none;">Terms &amp; Conditions</a>
+      </div>
+    </div>
+  </footer>
+</div>
+<div data-quote="true" style="display: none; font-family: 'DM Sans', sans-serif; color: #252525; padding: 24px 8px;">
+  <div style="max-width: 720px; margin: 0 auto;">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 3px solid #252525; padding-bottom: 14px;">
+      <div>
+        <div style="font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 30px; color: #252525; line-height: 1;">edly</div>
+        <div style="font-size: 11.5px; letter-spacing: 1.4px; text-transform: uppercase; color: #5A5A5A; font-weight: 600; margin-top: 6px;">Open edX Solution Bundle — Estimate</div>
+      </div>
+      <div style="text-align: right; font-size: 11.5px; color: #5A5A5A; line-height: 1.6;">{{ quoteDate }}<br>{{ qBasisLine }}</div>
+    </div>
+    <sc-for list="{{ groups }}" as="g" hint-placeholder-count="0">
+      <div style="margin-top: 20px;">
+        <div style="display: flex; gap: 10px; align-items: baseline; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 14px;">
+          <span style="color: #00AD90; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px;">{{ g.id }}</span>
+          <span>{{ g.name }}</span>
+          <span style="flex: 1; border-bottom: 1px dotted #CCCCC8;"></span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">{{ g.subD }} h</span>
+        </div>
+        <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="0">
+          <div style="display: flex; gap: 10px; font-size: 12.5px; padding: 4px 0 0 24px; color: #3C3C3C;"><span style="flex: 1;">{{ r.name }}</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px;">{{ r.hrsD }}</span></div>
+        </sc-for>
+      </div>
+    </sc-for>
+    <div style="margin-top: 26px; border: 2px solid #252525; border-radius: 10px; padding: 16px 20px;">
+      <div style="display: flex; justify-content: space-between; font-size: 13px; color: #4A4A4A;"><span>First delivery hours</span><span style="font-family: 'IBM Plex Mono', monospace;">{{ firstTotD }}</span></div>
+      <div style="display: flex; justify-content: space-between; font-size: 13px; color: #4A4A4A; margin-top: 4px;"><span>Repeat delivery hours</span><span style="font-family: 'IBM Plex Mono', monospace;">{{ repeatTotD }}</span></div>
+      <sc-if value="{{ hasOvh }}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; justify-content: space-between; font-size: 13px; color: #4A4A4A; margin-top: 4px;"><span>PM/QA overhead</span><span style="font-family: 'IBM Plex Mono', monospace;">{{ ovhD }}</span></div>
+      </sc-if>
+      <div style="display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid #E0E0DD; margin-top: 10px; padding-top: 10px;">
+        <span style="font-weight: 700; font-size: 14px;">Total — {{ basisLabel }}</span>
+        <span style="font-family: 'Poppins', sans-serif; font-size: 24px; font-weight: 700;">{{ grandD }} h</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; color: #5A5A5A; margin-top: 2px;">
+        <span>≈ {{ daysD }} person-days · {{ weeksD }} working weeks</span>
+        <sc-if value="{{ showUsdRow }}" hint-placeholder-val="{{ false }}"><span style="font-weight: 700; color: #252525; font-size: 16px;">{{ usdD }} at {{ rateD }}</span></sc-if>
+      </div>
+      <sc-if value="{{ savedPctD }}" hint-placeholder-val="{{ false }}">
+        <div style="font-size: 12px; color: #0A6B5B; font-weight: 600; margin-top: 8px;">Reusing {{ buildD }} h of engineered work — {{ savedPctD }} effort saved vs building new</div>
+      </sc-if>
+    </div>
+    <sc-if value="{{ acctsD }}" hint-placeholder-val="{{ false }}">
+      <p style="font-size: 12px; color: #4A4A4A; margin: 14px 0 0; line-height: 1.6;"><span style="font-weight: 700;">Client-held accounts required:</span> {{ acctsD }}</p>
+    </sc-if>
+    <sc-if value="{{ cavD }}" hint-placeholder-val="{{ false }}">
+      <p style="font-size: 12px; color: #8A5A12; margin: 8px 0 0; line-height: 1.6;"><span style="font-weight: 700;">Caveats:</span> {{ cavD }}</p>
+    </sc-if>
+    <p style="font-size: 10.5px; color: #8F8F8B; margin-top: 18px; line-height: 1.65;">Engineering hours only — add PM, QA and support overhead per delivery standards unless applied above. Third-party vendor fees are payable by the client and are not included. Prepared with the Edly Bundle Builder · edly.io · Open edX® is a registered trademark of edX Inc. This estimate covers pre-built solutions only — Edly also designs and builds fully custom Open edX solutions: edly.io/contact-us.</p>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;clientMode&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Mode&quot;}, &quot;showUsd&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Pricing&quot;}, &quot;defaultRate&quot;: {&quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 60, &quot;min&quot;: 25, &quot;max&quot;: 250, &quot;unit&quot;: &quot;$/h&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Pricing&quot;}, &quot;overheadPct&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 0, &quot;min&quot;: 0, &quot;max&quot;: 50, &quot;step&quot;: 5, &quot;unit&quot;: &quot;%&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Pricing&quot;}}">
+class Component extends DCLogic {
+  state = { ready: false, active: 'B01', sel: {}, expanded: {}, search: '', rate: null, overhead: null, basis: 'first', clientMode: null, copied: '', navOpen: '' };
+
+  componentDidMount() { this.boot(); }
+  componentWillUnmount() { clearTimeout(this._bt); clearTimeout(this._ct); }
+
+  boot() {
+    if (!window.EDLY_BUNDLES) { this._bt = setTimeout(() => this.boot(), 60); return; }
+    const st = { ready: true };
+    try {
+      const sv = JSON.parse(localStorage.getItem('edly-bundle-calc-v1') || 'null');
+      if (sv) { st.sel = sv.sel || {}; st.basis = sv.basis === 'repeat' ? 'repeat' : 'first'; st.active = sv.active || 'B01'; }
+    } catch (e) {}
+    try {
+      const h = new URLSearchParams((location.hash || '').slice(1));
+      if (h.get('s') !== null) { st.sel = {}; (h.get('s') || '').split(',').filter(Boolean).forEach(id => st.sel[id] = true); }
+      if (h.get('r')) st.rate = Math.max(0, +h.get('r') || 0);
+      if (h.get('o') !== null && h.get('o') !== '') st.overhead = Math.max(0, +h.get('o') || 0);
+      if (h.get('b') === 'repeat' || h.get('b') === 'first') st.basis = h.get('b');
+      if (h.get('m')) st.clientMode = h.get('m') === 'client';
+    } catch (e) {}
+    this.setState(st);
+  }
+
+  componentDidUpdate() {
+    if (!this.state.ready) return;
+    try { localStorage.setItem('edly-bundle-calc-v1', JSON.stringify({ sel: this.state.sel, basis: this.state.basis, active: this.state.active })); } catch (e) {}
+    const c = this.calc();
+    try { history.replaceState(null, '', '#s=' + c.selIds.join(',') + '&b=' + this.state.basis + '&o=' + c.ovr + (this.showUsd() ? '&r=' + c.rate : '') + (c.client ? '&m=client' : '&m=internal')); } catch (e) {}
+  }
+
+  db() { return window.EDLY_BUNDLES || { meta: { totals: {}, notes: [] }, bundles: [] }; }
+  showUsd() { return !!this.props.showUsd; }
+  H(n) { return n == null ? '—' : (+n).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+  H1(n) { return (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 }); }
+  flash(k) { this.setState({ copied: k }); clearTimeout(this._ct); this._ct = setTimeout(() => this.setState({ copied: '' }), 2000); }
+
+  calc() {
+    const DB = this.db(), s = this.state;
+    const client = s.clientMode != null ? s.clientMode : (this.props.clientMode != null ? this.props.clientMode : true);
+    const rate = s.rate != null ? s.rate : (this.props.defaultRate != null ? this.props.defaultRate : 60);
+    const ovr = s.overhead != null ? s.overhead : (this.props.overheadPct || 0);
+    const selIds = [], groups = [], accts = new Set();
+    let first = 0, repeat = 0, build = 0, firstRec = 0, buildRec = 0, inDev = 0, noEst = 0;
+    DB.bundles.forEach(b => {
+      const its = b.items.filter(it => s.sel[it.id]);
+      if (!its.length) return;
+      let gf = 0, gr = 0;
+      its.forEach(it => {
+        selIds.push(it.id);
+        if (it.first != null) { first += it.first; gf += it.first; }
+        if (it.repeat != null) { repeat += it.repeat; gr += it.repeat; }
+        if (it.build != null) build += it.build;
+        if (it.first != null && it.build != null) { firstRec += it.first; buildRec += it.build; }
+        if (it.status === 'In Development') inDev++; else if (it.first == null) noEst++;
+        if (it.account) it.account.split(';').map(x => x.trim()).filter(Boolean).forEach(a => accts.add(a));
+      });
+      groups.push({ id: b.id, name: b.name, items: its, first: gf, repeat: gr });
+    });
+    const basisTotal = s.basis === 'first' ? first : repeat;
+    const ovh = basisTotal * ovr / 100;
+    const grand = basisTotal + ovh;
+    return { client, rate, ovr, selIds, groups, first, repeat, build, inDev, noEst, accts: [...accts],
+      basisTotal, ovh, grand, savedPct: buildRec > 0 ? Math.round((1 - firstRec / buildRec) * 100) : null,
+      usd: Math.round(grand * rate), days: grand / 8, weeks: grand / 40 };
+  }
+
+  toggle(id) {
+    this.setState(p => { const sel = { ...p.sel }; if (sel[id]) delete sel[id]; else sel[id] = true; return { sel }; });
+  }
+
+  summaryText(c) {
+    const s = this.state, L = [];
+    L.push('EDLY — OPEN EDX SOLUTION BUNDLE ESTIMATE');
+    L.push(new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }) + ' · basis: ' + (s.basis === 'first' ? 'first delivery' : 'repeat delivery') + (c.ovr ? ' · +' + c.ovr + '% PM/QA overhead' : ''));
+    L.push('');
+    c.groups.forEach(g => {
+      L.push(g.id + ' ' + g.name);
+      g.items.forEach(it => {
+        const v = s.basis === 'first' ? it.first : it.repeat;
+        L.push('  - ' + it.name + ' (' + it.id + ') — ' + (v == null ? (it.status === 'In Development' ? 'in development' : 'no estimate') : this.H(v) + ' h'));
+      });
+    });
+    L.push('');
+    L.push('TOTAL: ' + this.H(c.grand) + ' h ≈ ' + this.H1(c.days) + ' person-days' + (this.showUsd() ? ' · USD ' + c.usd.toLocaleString('en-US') + ' @ $' + c.rate + '/h' : ''));
+    if (c.savedPct != null) L.push('Reusing ' + this.H(c.build) + ' engineered hrs — ' + c.savedPct + '% effort saved vs building new');
+    if (c.accts.length) L.push('Client-held accounts: ' + c.accts.join(', '));
+    const cav = [];
+    if (c.inDev) cav.push(c.inDev + ' item(s) in development');
+    if (c.noEst) cav.push(c.noEst + ' item(s) without recorded estimates');
+    if (cav.length) L.push('Caveats: ' + cav.join('; '));
+    L.push('Engineering hours only — excludes PM/QA/support unless overhead applied.');
+    return L.join('\n');
+  }
+
+  copyText(txt, key) {
+    const done = () => this.flash(key);
+    const fb = () => { try { const t = document.createElement('textarea'); t.value = txt; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); done(); } catch (e) {} };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(fb); else fb();
+  }
+
+  downloadSheet() {
+    const c = this.calc();
+    if (!c.selIds.length) { this.flash('nosel'); return; }
+    if (!window.EdlyXlsx) return;
+    const s = this.state, showUsd = this.showUsd();
+    const basisLabel = s.basis === 'first' ? 'first delivery' : 'repeat delivery';
+    const rows = [], merges = [];
+    rows.push({ h: 30, cells: [{ v: 'EDLY — OPEN EDX SOLUTION BUNDLE ESTIMATE', s: 1 }, { v: '', s: 1 }, { v: '', s: 1 }, { v: '', s: 1 }, { v: '', s: 1 }, { v: '', s: 1 }] });
+    merges.push('A1:F1');
+    rows.push({ cells: [{ v: 'Prepared ' + new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }) + ' · Basis: ' + basisLabel + ' hours' + (c.ovr ? ' · +' + c.ovr + '% PM/QA overhead' : '') + (showUsd ? ' · rate $' + c.rate + '/h' : '') + ' · Edly by Arbisoft, core Open edX contributor since 2013', s: 2 }] });
+    merges.push('A2:F2');
+    rows.push({});
+    rows.push({ cells: [{ v: 'Bundle', s: 3 }, { v: 'Solution ID', s: 3 }, { v: 'Feature', s: 3 }, { v: 'First-delivery h', s: 3 }, { v: 'Repeat h', s: 3 }, { v: 'Client-held account', s: 3 }] });
+    c.groups.forEach(g => {
+      g.items.forEach((it, i) => rows.push({ cells: [
+        { v: i === 0 ? g.id + ' · ' + g.name : '' }, { v: it.id }, { v: it.name },
+        it.first == null ? { v: it.status === 'In Development' ? 'in development' : 'no estimate' } : { n: it.first },
+        it.repeat == null ? { v: '—' } : { n: it.repeat },
+        { v: it.account || '' }
+      ] }));
+      rows.push({ cells: [{ v: '', s: 4 }, { v: '', s: 4 }, { v: g.name + ' — subtotal', s: 4 }, { n: g.first, s: 4 }, { n: g.repeat, s: 4 }, { v: '', s: 4 }] });
+    });
+    rows.push({ cells: [{ v: '', s: 3 }, { v: '', s: 3 }, { v: 'TOTAL', s: 3 }, { n: c.first, s: 3 }, { n: c.repeat, s: 3 }, { v: '', s: 3 }] });
+    rows.push({});
+    if (c.ovr) rows.push({ cells: [null, null, { v: 'PM/QA overhead (' + c.ovr + '% on ' + basisLabel + ')', s: 5 }, { v: '+' + this.H(c.ovh) + ' h', s: 5 }] });
+    rows.push({ cells: [null, null, { v: 'Grand total — ' + basisLabel, s: 5 }, { v: this.H(c.grand) + ' h  (≈ ' + this.H1(c.days) + ' person-days)', s: 5 }] });
+    if (showUsd) rows.push({ cells: [null, null, { v: 'Estimate at $' + c.rate + '/h', s: 5 }, { v: '$' + c.usd.toLocaleString('en-US'), s: 5 }] });
+    if (c.savedPct != null) rows.push({ cells: [null, null, { v: 'Reusing ' + this.H(c.build) + ' engineered hours — ' + c.savedPct + '% effort saved vs building new', s: 6 }] });
+    if (c.accts.length) rows.push({ cells: [null, null, { v: 'Client-held accounts: ' + c.accts.join(', '), s: 2 }] });
+    const cav = [];
+    if (c.inDev) cav.push(c.inDev + ' item(s) in development — sold with a delivery-date caveat');
+    if (c.noEst) cav.push(c.noEst + ' item(s) without recorded estimates — totals understate');
+    if (cav.length) rows.push({ cells: [null, null, { v: 'Caveats: ' + cav.join('; '), s: 2 }] });
+    rows.push({});
+    rows.push({ cells: [{ v: 'Engineering hours only — PM, QA and support overhead per delivery standards unless applied above. Third-party vendor fees are payable by the client. Edly by Arbisoft · edly.io · Open edX® is a registered trademark of edX Inc. This estimate covers pre-built solutions only — Edly also builds fully custom Open edX solutions: edly.io/contact-us.', s: 2 }] });
+    window.EdlyXlsx.make('Edly-Bundle-Estimate-' + new Date().toISOString().slice(0, 10) + '.xlsx', { rows, merges, widths: [30, 12, 56, 16, 12, 34] });
+    this.flash('xlsx');
+  }
+
+  mkRow(it, b, client) {
+    const s = this.state, sel = !!s.sel[it.id], ex = !!s.expanded[it.id];
+    const inDev = it.status === 'In Development';
+    const noEst = !inDev && it.first == null;
+    const detail = [{ k: 'Delivery form', v: it.form || '—' }];
+    if (it.category) detail.push({ k: 'Category', v: it.category + (it.subCategory ? ' · ' + it.subCategory : '') });
+    detail.push({ k: 'Std deployment', v: it.deploy || 'Not recorded' });
+    if (!client) {
+      if (it.build != null) detail.push({ k: 'Original build', v: this.H(it.build) + ' h' });
+      if (it.saving != null) detail.push({ k: 'Reuse saving (source)', v: Math.round(it.saving * 100) + '%' });
+    }
+    if (it.account) detail.push({ k: 'Client-held account', v: it.account });
+    if (it.integrations) detail.push({ k: 'Integrations', v: it.integrations });
+    if (it.notes) detail.push({ k: 'Notes & limits', v: it.notes });
+    let refUrl = null;
+    if (!client && it.ref) {
+      if (/^http/.test(it.ref)) refUrl = it.ref; else detail.push({ k: 'Reference', v: it.ref });
+    }
+    const long = (it.desc || '').length > 150;
+    return {
+      id: it.id, name: it.name,
+      desc: long && !ex ? it.desc.slice(0, 150).trim() + '…' : it.desc,
+      deploy: (!it.deploy || it.deploy === 'Not recorded') ? '—' : it.deploy,
+      firstD: it.first == null ? '—' : this.H(it.first),
+      repeatD: it.repeat == null ? '—' : this.H(it.repeat),
+      sel, ex, inDev, noEst, detail, refUrl,
+      checkBg: sel ? '#00AD90' : '#FFFFFF', checkBd: sel ? '#00AD90' : '#CFCFCC', checkOp: sel ? 1 : 0,
+      rowBg: sel ? '#F0FAF7' : '#FFFFFF',
+      chev: ex ? 'rotate(180deg)' : 'rotate(0deg)',
+      bTag: b ? b.id : false, bName: b ? b.name : '',
+      onGoBundle: b ? (e) => { e.stopPropagation(); this.setState({ active: b.id, search: '' }); } : null,
+      onToggle: (e) => { e.stopPropagation(); this.toggle(it.id); },
+      onExpand: () => this.setState(p => ({ expanded: { ...p.expanded, [it.id]: !p.expanded[it.id] } }))
+    };
+  }
+
+  renderVals() {
+    const DB = this.db(), s = this.state, ready = s.ready && DB.bundles.length > 0;
+    const c = this.calc();
+    const t = DB.meta.totals || {};
+    const searching = (s.search || '').trim().length > 0;
+    const showUsd = this.showUsd();
+
+    const mkSide = (key, tag, name, total, selCount) => ({
+      key, tag, name,
+      count: selCount > 0 ? selCount + '/' + total : '' + total,
+      countBg: selCount > 0 ? '#00AD90' : '#F0F0EE', countColor: selCount > 0 ? '#FFFFFF' : '#6E6E6E',
+      bg: s.active === key && !searching ? '#EBF9F6' : 'transparent',
+      idColor: s.active === key && !searching ? '#00AD90' : '#9C9C9C',
+      onClick: () => this.setState({ active: key, search: '' })
+    });
+    const sideItems = ready ? [
+      mkSide('ALL', 'ALL', 'All components', t.features || 87, Object.keys(s.sel).length),
+      ...DB.bundles.map(b => mkSide(b.id, b.id, b.name, b.items.length, b.items.filter(it => s.sel[it.id]).length))
+    ] : undefined;
+
+    let rows, resultLabel = '';
+    if (ready) {
+      if (searching) {
+        const q = s.search.trim().toLowerCase(); const out = [];
+        DB.bundles.forEach(b => b.items.forEach(it => {
+          if (out.length >= 60) return;
+          const hay = (it.name + ' ' + it.id + ' ' + it.desc + ' ' + (it.category || '') + ' ' + (it.subCategory || '') + ' ' + b.name + ' ' + (b.offerWhen || '') + ' ' + (it.integrations || '')).toLowerCase();
+          if (hay.indexOf(q) >= 0) out.push(this.mkRow(it, b, c.client));
+        }));
+        rows = out;
+        resultLabel = out.length + (out.length === 60 ? '+' : '') + ' matches across all bundles';
+      } else if (s.active === 'ALL') {
+        rows = [];
+        DB.bundles.forEach(b => b.items.forEach(it => rows.push(this.mkRow(it, b, c.client))));
+      } else {
+        const b = DB.bundles.find(x => x.id === s.active) || DB.bundles[0];
+        rows = b.items.map(it => this.mkRow(it, null, c.client));
+      }
+    }
+
+    const showBundleHead = ready && !searching && s.active !== 'ALL';
+    let bd;
+    if (showBundleHead) {
+      const b = DB.bundles.find(x => x.id === s.active) || DB.bundles[0];
+      const selN = b.items.filter(it => s.sel[it.id]).length;
+      bd = {
+        id: b.id, name: b.name, pitch: b.pitch, count: b.items.length,
+        selLabel: selN ? selN + ' of ' + b.items.length + ' selected' : '',
+        inDevBadge: b.inDev > 0 ? (b.inDev >= b.items.length ? 'In development' : b.inDev + ' items in development') : false,
+        chips: (b.offerWhen || '').split('·').map(x => x.trim()).filter(Boolean),
+        pairs: (b.pairsWith || '').split(',').map(x => x.trim()).filter(Boolean).map(seg => {
+          const m = seg.match(/B\d+/);
+          return { label: seg, onClick: m ? () => this.setState({ active: m[0], search: '' }) : null };
+        }),
+        hasPairs: !!b.pairsWith,
+        stat: 'Engineered ' + this.H(b.buildHrs) + ' h · First delivery ' + this.H(b.firstHrs) + ' h · Repeat ' + this.H(b.repeatHrs) + ' h' + (b.saved != null ? ' · Saves ' + Math.round(b.saved * 100) + '%' : ''),
+        onAddAll: () => this.setState(p => { const sel = { ...p.sel }; b.items.forEach(it => sel[it.id] = true); return { sel }; }),
+        onClearB: () => this.setState(p => { const sel = { ...p.sel }; b.items.forEach(it => delete sel[it.id]); return { sel }; })
+      };
+    }
+
+    const groups = ready ? c.groups.map(g => ({
+      id: g.id, name: g.name,
+      subD: this.H(s.basis === 'first' ? g.first : g.repeat),
+      rows: g.items.map(it => ({
+        name: it.name,
+        hrsD: s.basis === 'first' ? (it.first == null ? '—' : this.H(it.first)) : (it.repeat == null ? '—' : this.H(it.repeat)),
+        onRemove: () => this.toggle(it.id)
+      }))
+    })) : undefined;
+
+    const hasSel = c.selIds.length > 0;
+    const cav = [];
+    if (c.inDev) cav.push(c.inDev + ' in development — sell with a delivery-date caveat');
+    if (c.noEst) cav.push(c.noEst + ' without recorded estimates — totals understate');
+
+    return {
+      ready, searching, resultLabel,
+      showAllHead: ready && !searching && s.active === 'ALL',
+      showBundleHead, bd, rows, sideItems, groups,
+      noResults: ready && searching && rows && rows.length === 0,
+      heroFeatures: ready ? '' + t.features : '87',
+      heroBundles: ready ? '' + DB.bundles.length : '15',
+      heroHrs: ready ? this.H(t.buildHrs) : '9,818',
+      headerRef: (el) => { this._hdr = el; },
+      scrollBuild: () => { if (this._hdr) window.scrollTo({ top: this._hdr.offsetTop, behavior: 'smooth' }); },
+      navClose: () => this.setState({ navOpen: '' }),
+      navMenus: [
+        { label: 'Product', href: 'https://edly.io/edly-lms/', kids: [['Edly LMS', 'https://edly.io/edly-lms/'], ['Edly Studio', 'https://edly.io/edly-studio/'], ['Edly Go App', 'https://edly.io/edly-go/'], ['Edly Panel', 'https://edly.io/edly-panel/'], ['Edly Discovery', 'https://edly.io/edly-discovery/'], ['Edly Features', 'https://edly.io/features/']] },
+        { label: 'Self Hosted', href: 'https://edly.io/tutor/' },
+        { label: 'Industries', href: 'https://edly.io/higher-education-lms/', kids: [['K12', 'https://edly.io/k12-lms/'], ['Higher Education', 'https://edly.io/higher-education-lms/'], ['Corporation', 'https://edly.io/corporate-lms/'], ['Business', 'https://edly.io/business-lms/'], ['Non Profit', 'https://edly.io/nonprofit-lms/']] },
+        { label: 'Services', href: 'https://edly.io/services/', kids: [['Managed Hosting', 'https://edly.io/services/open-edx-managed-hosting/'], ['Open edX Installation', 'https://edly.io/services/open-edx-installation/'], ['Open edX Custom Solutions', 'https://edly.io/services/open-edx-custom-solutions/'], ['Instructional Design', 'https://edly.io/services/instructional-design/'], ['Course Authoring', 'https://edly.io/services/course-authoring/'], ['LMS Training and Support', 'https://edly.io/services/lms-training-support/'], ['Data Migration', 'https://edly.io/services/lms-data-migration/'], ['Totara Custom Solutions', 'https://edly.io/services/totara-custom-solutions/']] },
+        { label: 'Resources', href: 'https://edly.io/resources/blog/', kids: [['Our Blog', 'https://edly.io/resources/blog/'], ['News and Updates', 'https://edly.io/resources/news-and-updates/'], ['Guides and Whitepapers', 'https://edly.io/resources/guides-and-whitepapers/'], ['Case Studies', 'https://edly.io/resources/case-studies/']] },
+        { label: 'Pricing', href: 'https://edly.io/pricing-and-plans/' }
+      ].map(m => ({ label: m.label, href: m.href, hasKids: !!m.kids, open: s.navOpen === m.label && !!m.kids, kids: (m.kids || []).map(k => ({ label: k[0], href: k[1] })), onEnter: () => this.setState({ navOpen: m.kids ? m.label : '' }) })),
+      metaLine: ready ? (t.features + ' features · ' + DB.bundles.length + ' bundles · ' + this.H(t.buildHrs) + ' h engineered') : 'Loading catalog…',
+      metaFoot: c.client ? ('Catalog compiled ' + (DB.meta.compiled || '')) : ('Compiled ' + (DB.meta.compiled || '') + ' · from the master sales sheet'),
+      notes: ready ? DB.meta.notes : undefined,
+      showNotes: ready && !c.client && !searching,
+      searchVal: s.search,
+      onSearch: (e) => this.setState({ search: e.target.value }),
+      intBg: !c.client ? '#252525' : 'transparent', intColor: !c.client ? '#FFFFFF' : '#6E6E6E',
+      cliBg: c.client ? '#252525' : 'transparent', cliColor: c.client ? '#FFFFFF' : '#6E6E6E',
+      setInternal: () => this.setState({ clientMode: false }),
+      setClient: () => this.setState({ clientMode: true }),
+      firstBg: s.basis === 'first' ? '#00AD90' : 'transparent', firstColor: s.basis === 'first' ? '#FFFFFF' : '#9C9C97',
+      repeatBg: s.basis === 'repeat' ? '#00AD90' : 'transparent', repeatColor: s.basis === 'repeat' ? '#FFFFFF' : '#9C9C97',
+      setFirst: () => this.setState({ basis: 'first' }),
+      setRepeat: () => this.setState({ basis: 'repeat' }),
+      rateVal: c.rate, ovrVal: c.ovr,
+      onRate: (e) => this.setState({ rate: Math.max(0, Math.round(+e.target.value || 0)) }),
+      onOvr: (e) => this.setState({ overhead: Math.min(100, Math.max(0, Math.round(+e.target.value || 0))) }),
+      selCountLabel: hasSel ? c.selIds.length + ' of ' + (t.features || 87) + ' selected' : '',
+      emptySel: ready && !hasSel, hasSel,
+      showUsdRow: showUsd,
+      buildD: this.H(c.build),
+      firstTotD: this.H(c.first), repeatTotD: this.H(c.repeat),
+      firstTotColor: s.basis === 'first' ? '#FFFFFF' : '#C9C9C4',
+      repeatTotColor: s.basis === 'repeat' ? '#FFFFFF' : '#C9C9C4',
+      hasOvh: c.ovr > 0, ovhD: '+' + this.H(c.ovh) + ' h (' + c.ovr + '%)',
+      grandD: this.H(c.grand),
+      daysD: this.H1(c.days), weeksD: this.H1(c.weeks),
+      basisLabel: s.basis === 'first' ? 'first delivery' : 'repeat delivery',
+      rateD: '$' + c.rate + '/h',
+      usdD: '$' + c.usd.toLocaleString('en-US'),
+      savedPctD: c.savedPct != null ? c.savedPct + '%' : false,
+      savedW: Math.max(0, Math.min(100, c.savedPct || 0)) + '%',
+      cavD: cav.length ? cav.join(' · ') : false,
+      acctsD: c.accts.length ? c.accts.join(' · ') : false,
+      dlBtnLabel: s.copied === 'xlsx' ? '✓ Sheet downloaded' : (s.copied === 'nosel' ? 'Select features first' : 'Download branded sheet (.xlsx)'),
+      sumBtnLabel: s.copied === 'sum' ? '✓ Copied' : 'Copy summary',
+      linkBtnLabel: s.copied === 'link' ? '✓ Link copied' : 'Copy link',
+      onDownload: () => this.downloadSheet(),
+      onCopySummary: () => this.copyText(this.summaryText(this.calc()), 'sum'),
+      onCopyLink: () => this.copyText(location.href, 'link'),
+      onPrint: () => window.print(),
+      onClearSel: () => this.setState({ sel: {} }),
+      quoteDate: new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }),
+      qBasisLine: 'Basis: ' + (s.basis === 'first' ? 'first delivery' : 'repeat delivery') + ' hours' + (c.ovr ? ' · incl. ' + c.ovr + '% PM/QA' : '')
+    };
+  }
+}
+</script>
+</body>
+</html>

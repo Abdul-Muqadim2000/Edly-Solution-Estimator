@@ -1,0 +1,21 @@
+{
+  "name": "edly-solution-estimator",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Edly solution estimator — practice/platform catalogs, estimations, rate cards and delivery planning. Data persists to a spreadsheet in your own account.",
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "scripts": {
+    "dev": "bun run server.js",
+    "start": "bun run server.js",
+    "check": "bun run scripts/check.js",
+    "store:probe": "bun run scripts/state.js probe",
+    "store:discover": "bun run scripts/state.js discover",
+    "state:dump": "bun run scripts/state.js dump",
+    "state:seed": "bun run scripts/state.js seed"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

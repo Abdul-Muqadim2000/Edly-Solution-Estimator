@@ -1,0 +1,20 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+.vercel
+*.tsbuildinfo
+
+# Local state written by the app (see README: the store is a spreadsheet)
+data/
+
+# Environment
+.env
+.env.local
+
+# Logs and OS noise
+coverage
+*.log
+.DS_Store
+.thumbnail

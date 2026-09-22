@@ -1,0 +1,125 @@
+/* Global resets, plus the interaction states that inline styles cannot express.
+   The palette lives in src/theme.ts — these values mirror it; keep them in step. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #252525;
+  background: #f7f7f5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: #00846f;
+  text-decoration: none;
+}
+
+a:hover {
+  color: #dd1f25;
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* ---- focus ----------------------------------------------------------------
+   The source design gave every field a green focus border. Doing it here covers
+   every input in one rule instead of 58 inline declarations. */
+
+/* Every input gets a focus ring, including the bespoke ones that are not built on the
+   Field/Select/TextArea primitives.
+
+   This uses `outline` and `box-shadow` rather than `border-color`: these fields carry an inline
+   `border` shorthand, and a stylesheet cannot reliably override an inline declaration. Outline
+   and box-shadow are never set inline, so they always land. The primitives additionally tint the
+   border inline — see FOCUS_RING in components/ui.tsx. */
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px #d6f2ea;
+}
+
+/* Keyboard users get a visible ring; mouse users do not. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid #00ad90;
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---- pointer feedback ---------------------------------------------------- */
+
+button:not(:disabled),
+[role='button'],
+label[for],
+input[type='checkbox'],
+input[type='radio'] {
+  cursor: pointer;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+input[type='checkbox'] {
+  accent-color: #00ad90;
+}
+
+::selection {
+  background: #cbefe6;
+}
+
+::placeholder {
+  color: #9c9c97;
+}
+
+/* Scrollable popovers and modals get a slim scrollbar rather than the OS default. */
+[data-scroll]::-webkit-scrollbar {
+  width: 9px;
+}
+
+[data-scroll]::-webkit-scrollbar-thumb {
+  background: #dbdbd8;
+  border-radius: 999px;
+}
+
+[data-scroll]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@page {
+  margin: 16mm;
+}
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+}
