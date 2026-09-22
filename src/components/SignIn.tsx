@@ -72,7 +72,7 @@ function RoleCard({ on, onPick, title, blurb }: { on: boolean; onPick: () => voi
             justifyContent: 'center'
           }}
         >
-          <span style={{ color: '#FFFFFF', fontSize: 10, fontWeight: 700, lineHeight: 1, opacity: on ? 1 : 0 }}>✓</span>
+          <span style={{ color: color.onSolid, fontSize: 10, fontWeight: 700, lineHeight: 1, opacity: on ? 1 : 0 }}>✓</span>
         </div>
         <span style={{ fontSize: 13, fontWeight: 700, color: color.ink }}>{title}</span>
       </div>
@@ -185,7 +185,7 @@ export function SignIn(): JSX.Element {
               border: 'none',
               cursor: 'pointer',
               background: submitHover.on ? color.redDeep : color.red,
-              color: '#FFFFFF',
+              color: color.onSolid,
               borderRadius: 10,
               padding: 13,
               fontSize: 13,

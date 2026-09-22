@@ -128,7 +128,7 @@ function EstChip({ children, onClick }: { children: ReactNode; onClick: () => vo
         fontSize: 11,
         fontWeight: 600,
         color: color.brandInk,
-        background: h.on ? '#CBEFE6' : color.brandWashDeep,
+        background: h.on ? color.brandChip : color.brandWashDeep,
         borderRadius: radius.pill,
         padding: '3px 10px',
         cursor: 'pointer',
@@ -634,7 +634,7 @@ function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX
       </div>
 
       {numbers.selIds.length > 0 || requests.length > 0 ? (
-        <div style={{ marginTop: 16, background: color.dark, color: '#FFFFFF', borderRadius: radius.lg, padding: '18px 22px' }}>
+        <div style={{ marginTop: 16, background: color.dark, color: color.onSolid, borderRadius: radius.lg, padding: '18px 22px' }}>
           <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>Where this estimation stands</div>
           {totals.map((line) => (
             <Row key={line.label} gap={12} style={{ marginTop: 7 }} wrap={false}>
@@ -658,7 +658,7 @@ function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX
               {numbers.roleRows.map((row) => (
                 <Row key={row.id} gap={8} align="baseline" style={{ marginTop: 6 }} wrap={false}>
                   <span style={{ width: 7, height: 7, borderRadius: radius.pill, background: row.color, flex: '0 0 auto' }} />
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#C9C9C4' }}>{row.name}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: color.onDarkSoft }}>{row.name}</span>
                   <Mono size={10.5} tone={color.onDarkFaint}>
                     {hours(row.hrs)} h × {money(row.rate, currency)}
                   </Mono>

@@ -48,7 +48,7 @@ export function HeaderPill({
       onClick={onClick}
       title={title}
       style={{
-        border: `1px solid ${h.on ? (danger ? color.red : '#9C9C9C') : color.rule}`,
+        border: `1px solid ${h.on ? (danger ? color.red : color.chevron) : color.rule}`,
         cursor: 'pointer',
         borderRadius: radius.pill,
         padding: '7px 14px',

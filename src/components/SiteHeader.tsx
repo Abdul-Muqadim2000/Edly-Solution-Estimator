@@ -51,7 +51,7 @@ export function SiteHeader(): JSX.Element {
                 }}
               >
                 {menu.label}
-                {menu.children ? <span style={{ fontSize: 8, color: '#9C9C9C' }}>▼</span> : null}
+                {menu.children ? <span style={{ fontSize: 8, color: color.chevron }}>▼</span> : null}
               </Link>
               {menu.children && open === menu.label ? (
                 <div
@@ -86,10 +86,10 @@ export function SiteHeader(): JSX.Element {
 
         <Link
           href={EDLY_LINKS.trial}
-          hover={{ background: color.redDeep, color: '#FFFFFF' }}
+          hover={{ background: color.redDeep, color: color.onSolid }}
           style={{
             background: color.red,
-            color: '#FFFFFF',
+            color: color.onSolid,
             borderRadius: 8,
             padding: '11px 18px',
             fontSize: 12,

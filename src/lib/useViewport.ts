@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { color } from '@/theme';
 
 /**
  * Viewport width, for the few places layout genuinely has to branch on it.
@@ -63,8 +64,8 @@ export function useLayout(): Layout {
     mainPad: narrow ? '28px 18px 56px' : mid ? '32px 28px 64px' : '40px 44px 72px',
     navDir: narrow ? 'row' : 'column',
     navWrap: narrow ? 'wrap' : 'nowrap',
-    navBorderRight: narrow ? 'none' : '1px solid #E5E5E3',
-    navBorderBottom: narrow ? '1px solid #E5E5E3' : 'none',
+    navBorderRight: narrow ? 'none' : `1px solid ${color.hairline}`,
+    navBorderBottom: narrow ? `1px solid ${color.hairline}` : 'none',
     navPad: narrow ? '12px 14px' : '14px 10px 10px',
     navGap: narrow ? '6px' : '2px',
     navLabelFlex: narrow ? '0 0 100%' : 'none',

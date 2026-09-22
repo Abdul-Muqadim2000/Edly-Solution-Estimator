@@ -43,7 +43,7 @@ function Row({
   const selected = Boolean(state.draft.sel[item.id]);
   const ownedByRequest = Object.values(state.requests).some((request) => request.csId === item.id && request.estId === state.openEstimation);
   const buffer = Number(state.draft.buf?.[item.id]) || 0;
-  const hover = useRowHover({ background: selected ? '#E7F6F1' : color.surfaceSoft });
+  const hover = useRowHover({ background: selected ? color.brandWashRow : color.surfaceSoft });
 
   const roleId = state.draft.lineRole?.[item.id];
   const roleIndex = estimate.roles.findIndex((role) => role.id === roleId);
@@ -68,7 +68,7 @@ function Row({
   );
 
   return (
-    <div style={{ borderTop: `1px solid ${color.hairlineSoft}`, background: selected ? '#F0FAF7' : color.surface, transition: 'background 110ms ease', ...hover.style }} {...hover.bind}>
+    <div style={{ borderTop: `1px solid ${color.hairlineSoft}`, background: selected ? color.brandWashPale : color.surface, transition: 'background 110ms ease', ...hover.style }} {...hover.bind}>
       <div
         onClick={() => setExpanded((value) => !value)}
         style={{ display: 'grid', gridTemplateColumns: columns, alignItems: 'center', padding: '11px 0', cursor: 'pointer' }}
@@ -84,7 +84,7 @@ function Row({
               width: 20,
               height: 20,
               borderRadius: radius.sm,
-              border: `1.5px solid ${ownedByRequest ? color.rule : selected ? color.brand : '#CFCFCC'}`,
+              border: `1.5px solid ${ownedByRequest ? color.rule : selected ? color.brand : color.dashRule}`,
               background: ownedByRequest ? color.surfaceMuted : selected ? color.brand : color.surface,
               display: 'flex',
               alignItems: 'center',
@@ -92,7 +92,7 @@ function Row({
               cursor: 'pointer'
             }}
           >
-            <span style={{ color: '#FFFFFF', fontSize: 12, fontWeight: 700, lineHeight: 1, opacity: selected && !ownedByRequest ? 1 : 0 }}>✓</span>
+            <span style={{ color: color.onSolid, fontSize: 12, fontWeight: 700, lineHeight: 1, opacity: selected && !ownedByRequest ? 1 : 0 }}>✓</span>
           </div>
         </div>
 

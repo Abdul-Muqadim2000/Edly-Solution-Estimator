@@ -265,7 +265,7 @@ export function Builder(): JSX.Element {
               maxWidth: 1000,
               marginTop: 18,
               background: color.brandWash,
-              border: '1px solid #BFE7DD',
+              border: `1px solid ${color.brandEdgePale}`,
               borderRadius: radius.lg,
               padding: '18px 22px',
               display: 'flex',
@@ -278,7 +278,7 @@ export function Builder(): JSX.Element {
               <div style={{ fontFamily: font.display, fontSize: 15.5, fontWeight: 600, color: color.brandInk }}>
                 Don’t see what you need? These are only our pre-built solutions.
               </div>
-              <div style={{ fontSize: 13, color: '#3D6B62', lineHeight: 1.55, marginTop: 3 }}>
+              <div style={{ fontSize: 13, color: color.brandInkSoft, lineHeight: 1.55, marginTop: 3 }}>
                 Edly designs and builds fully custom Open edX features, integrations and platforms — anything not in this catalog, we
                 scope and deliver for you.
               </div>
@@ -286,8 +286,8 @@ export function Builder(): JSX.Element {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <Link
                 href={EDLY_LINKS.customSolutions}
-                hover={{ background: color.redDeep, color: '#FFFFFF' }}
-                style={{ background: color.red, color: '#FFFFFF', borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
+                hover={{ background: color.redDeep, color: color.onSolid }}
+                style={{ background: color.red, color: color.onSolid, borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
               >
                 Custom development
               </Link>
@@ -300,8 +300,8 @@ export function Builder(): JSX.Element {
               </Link>
               <Button
                 onClick={() => setRequestOpen(true)}
-                hover={{ background: '#000000' }}
-                style={{ background: color.ink, color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
+                hover={{ background: color.black }}
+                style={{ background: color.ink, color: color.onSolid, border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
               >
                 Request an estimate
               </Button>
@@ -325,7 +325,7 @@ export function Builder(): JSX.Element {
         <aside
           style={{
             background: color.dark,
-            color: '#FFFFFF',
+            color: color.onSolid,
             overflowY: layout.paneOverflow,
             display: 'flex',
             flexDirection: 'column',
@@ -391,7 +391,7 @@ function PresentButton({ on, onClick }: { on: boolean; onClick: () => void }): J
         fontWeight: 700,
         fontFamily: font.body,
         background: on ? color.red : 'transparent',
-        color: on ? '#FFFFFF' : color.muted,
+        color: on ? color.onSolid : color.muted,
         whiteSpace: 'nowrap',
         transition: 'background 120ms ease, color 120ms ease, border-color 120ms ease'
       }}

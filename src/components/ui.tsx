@@ -26,7 +26,7 @@ export interface ButtonProps {
 }
 
 const TONES: Record<Tone, CSSProperties> = {
-  primary: { background: color.red, color: '#FFFFFF', border: 'none' },
+  primary: { background: color.red, color: color.onSolid, border: 'none' },
   secondary: { background: color.surface, color: color.ink, border: `1px solid ${color.rule}` },
   ghost: { background: 'transparent', color: color.muted, border: 'none' },
   danger: { background: color.surface, color: color.redInk, border: `1px solid ${color.rule}` },
@@ -319,7 +319,7 @@ export function Empty({ title, body }: { title: string; body: string }): JSX.Ele
   return (
     <div
       style={{
-        border: '1px dashed #CFCFCC',
+        border: `1px dashed ${color.dashRule}`,
         borderRadius: radius.xl,
         padding: '56px 28px',
         textAlign: 'center',

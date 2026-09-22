@@ -79,7 +79,7 @@ export function Hero({ onBuild }: { onBuild: () => void }): JSX.Element {
             >
               {title}
             </h1>
-            <p style={{ fontSize: 15, lineHeight: 1.65, color: '#5A5A5A', margin: 0, maxWidth: 640, textWrap: 'pretty' }}>{blurb}</p>
+            <p style={{ fontSize: 15, lineHeight: 1.65, color: color.bodySoft, margin: 0, maxWidth: 640, textWrap: 'pretty' }}>{blurb}</p>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginTop: 26 }}>
               <Button
@@ -154,14 +154,14 @@ export function Hero({ onBuild }: { onBuild: () => void }): JSX.Element {
             gap: 16,
             marginTop: 32,
             paddingTop: 16,
-            borderTop: '1px solid #CFE8E1',
+            borderTop: `1px solid ${color.brandEdgeFaint}`,
             flexWrap: 'wrap'
           }}
         >
           <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.6, textTransform: 'uppercase', color: color.dim }}>
             Built with teams behind
           </span>
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: '#333333' }}>{TEAMS_BEHIND}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: color.footerField }}>{TEAMS_BEHIND}</span>
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 10, color: color.dim }}>{TRADEMARK}</span>
         </div>

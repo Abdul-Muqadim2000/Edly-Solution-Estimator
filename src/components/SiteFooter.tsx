@@ -59,13 +59,13 @@ const COLUMNS: FooterColumn[] = [
   }
 ];
 
-const linkStyle = { fontSize: 13, color: '#BDBDB8', textDecoration: 'none' } as const;
+const linkStyle = { fontSize: 13, color: color.onDarkQuiet, textDecoration: 'none' } as const;
 
 export function SiteFooter(): JSX.Element {
   const { footCols } = useLayout();
 
   return (
-    <footer data-screen-label="Footer" style={{ background: color.dark, color: '#FFFFFF', padding: '50px 32px 24px' }}>
+    <footer data-screen-label="Footer" style={{ background: color.dark, color: color.onSolid, padding: '50px 32px 24px' }}>
       <div style={{ maxWidth: 1240, margin: '0 auto' }}>
         <div style={{ display: 'grid', gridTemplateColumns: footCols, gap: 36 }}>
           {COLUMNS.map((column) => (
@@ -73,7 +73,7 @@ export function SiteFooter(): JSX.Element {
               <div style={{ fontFamily: font.display, fontSize: 14, fontWeight: 600, marginBottom: 14 }}>{column.title}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                 {column.links.map(([label, href]) => (
-                  <Link key={label} href={href} hover={{ color: '#FFFFFF' }} style={linkStyle}>
+                  <Link key={label} href={href} hover={{ color: color.onSolid }} style={linkStyle}>
                     {label}
                   </Link>
                 ))}
@@ -90,10 +90,10 @@ export function SiteFooter(): JSX.Element {
                 style={{
                   flex: 1,
                   minWidth: 0,
-                  background: '#333333',
-                  border: '1px solid #4C4C4A',
+                  background: color.footerField,
+                  border: `1px solid ${color.footerFieldEdge}`,
                   borderRadius: 8,
-                  color: '#FFFFFF',
+                  color: color.onSolid,
                   padding: '10px 12px',
                   fontSize: 13,
                   outline: 'none',
@@ -102,10 +102,10 @@ export function SiteFooter(): JSX.Element {
               />
               <Link
                 href="https://edly.io/resources/news-and-updates/"
-                hover={{ background: color.redDeep, color: '#FFFFFF' }}
+                hover={{ background: color.redDeep, color: color.onSolid }}
                 style={{
                   background: color.red,
-                  color: '#FFFFFF',
+                  color: color.onSolid,
                   borderRadius: 8,
                   padding: '10px 16px',
                   fontSize: 12,
@@ -120,27 +120,27 @@ export function SiteFooter(): JSX.Element {
               </Link>
             </div>
             <div style={{ display: 'flex', gap: 14, marginTop: 14 }}>
-              <Link href="https://twitter.com/edly_inc" hover={{ color: '#FFFFFF' }} style={{ ...linkStyle, fontSize: 12.5, fontWeight: 600 }}>
+              <Link href="https://twitter.com/edly_inc" hover={{ color: color.onSolid }} style={{ ...linkStyle, fontSize: 12.5, fontWeight: 600 }}>
                 Twitter
               </Link>
-              <Link href="https://www.linkedin.com/company/edly" hover={{ color: '#FFFFFF' }} style={{ ...linkStyle, fontSize: 12.5, fontWeight: 600 }}>
+              <Link href="https://www.linkedin.com/company/edly" hover={{ color: color.onSolid }} style={{ ...linkStyle, fontSize: 12.5, fontWeight: 600 }}>
                 LinkedIn
               </Link>
             </div>
             <div
               style={{
                 marginTop: 16,
-                background: '#333333',
-                border: '1px solid #4C4C4A',
+                background: color.footerField,
+                border: `1px solid ${color.footerFieldEdge}`,
                 borderRadius: radius.md,
                 padding: '12px 14px',
                 fontSize: 12,
                 lineHeight: 1.6,
-                color: '#BDBDB8'
+                color: color.onDarkQuiet
               }}
             >
               This catalog is only our pre-built work.{' '}
-              <Link href="https://edly.io/contact-us/" hover={{ color: '#FFFFFF' }} style={{ color: color.brandGlow, fontWeight: 600 }}>
+              <Link href="https://edly.io/contact-us/" hover={{ color: color.onSolid }} style={{ color: color.brandGlow, fontWeight: 600 }}>
                 Need something custom? Talk to us.
               </Link>
             </div>
@@ -172,7 +172,7 @@ export function SiteFooter(): JSX.Element {
               ['Terms & Conditions', 'https://edly.io/terms-and-conditions/']
             ] as [string, string][]
           ).map(([label, href]) => (
-            <Link key={label} href={href} hover={{ color: '#FFFFFF' }} style={{ color: '#C9C9C4', fontSize: 11.5 }}>
+            <Link key={label} href={href} hover={{ color: color.onSolid }} style={{ color: color.onDarkSoft, fontSize: 11.5 }}>
               {label}
             </Link>
           ))}

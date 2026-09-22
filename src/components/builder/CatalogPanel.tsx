@@ -69,7 +69,7 @@ export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element 
       </div>
 
       {changes.length > 0 ? (
-        <div style={{ marginTop: 10, background: '#F0FAF7', border: '1px solid #BFE7DD', borderRadius: radius.md, padding: '9px 11px', display: 'grid', gap: 4 }}>
+        <div style={{ marginTop: 10, background: color.brandWashPale, border: `1px solid ${color.brandEdgePale}`, borderRadius: radius.md, padding: '9px 11px', display: 'grid', gap: 4 }}>
           {changes.map((line) => (
             <div key={line} style={{ fontSize: 11.5, color: color.brandInk, lineHeight: 1.5 }}>
               {line}
@@ -84,7 +84,7 @@ export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element 
         style={{
           marginTop: 12,
           border: `1.5px dashed ${color.brandEdge}`,
-          background: '#FAFDFC',
+          background: color.brandWashTint,
           borderRadius: radius.md + 1,
           padding: 12,
           textAlign: 'center',

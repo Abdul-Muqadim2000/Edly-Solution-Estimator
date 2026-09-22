@@ -52,7 +52,7 @@ function Toggle({ row, on, onFlip }: { row: ToggleRow; on: boolean; onFlip: () =
           height: 20,
           flex: '0 0 34px',
           borderRadius: radius.pill,
-          background: on ? color.brand : '#CFCFCC',
+          background: on ? color.brand : color.dashRule,
           padding: 2,
           transition: 'background 150ms ease'
         }}
@@ -62,7 +62,7 @@ function Toggle({ row, on, onFlip }: { row: ToggleRow; on: boolean; onFlip: () =
             width: 16,
             height: 16,
             borderRadius: '50%',
-            background: '#FFFFFF',
+            background: color.surface,
             transform: on ? 'translateX(14px)' : 'translateX(0px)',
             transition: 'transform 150ms ease'
           }}

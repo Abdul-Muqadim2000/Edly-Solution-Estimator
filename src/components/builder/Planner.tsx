@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { PlanTask } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { peopleForDuration, reorder, SNAP } from '@/domain/planner';
@@ -62,7 +62,8 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
   for (let week = 0; week < plan.weeks; week += step) ticks.push(week);
   const percent = (value: number): string => `${((value / plan.weeks) * 100).toFixed(3)}%`;
 
-  const start = state.draft.planStart ? new Date(`${state.draft.planStart}T00:00:00`) : null;
+  /* Memoised so the `dateAt` callback below is not rebuilt on every render. */
+  const start = useMemo(() => (state.draft.planStart ? new Date(`${state.draft.planStart}T00:00:00`) : null), [state.draft.planStart]);
   const dateAt = useCallback(
     (week: number): string => {
       if (!start) return '';
@@ -206,8 +207,8 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
                       style={{
                         width: `${(100 / Math.max(1, plan.lane.length)).toFixed(3)}%`,
                         height: Math.max(2, Math.round((people / Math.max(1, Math.max(plan.peak, plan.cap))) * 22)),
-                        background: people > plan.cap ? color.red : people === 0 ? '#ECECEA' : '#9BDCCB',
-                        borderRight: '1px solid #FFFFFF'
+                        background: people > plan.cap ? color.red : people === 0 ? color.gridLine : color.brandBar,
+                        borderRight: `1px solid ${color.onSolid}`
                       }}
                     />
                   ))}
@@ -243,7 +244,7 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
                         textAlign: 'center',
                         fontFamily: font.mono,
                         fontSize: 9,
-                        color: '#C2C2BE'
+                        color: color.onDarkDim
                       }}
                     >
                       {dateAt(week)}
@@ -269,7 +270,7 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
                   alignItems: 'center',
                   padding: '3px 0',
                   borderTop: `1px solid ${color.surfaceMuted}`,
-                  background: dragging === task.key ? '#F5FCFA' : 'transparent'
+                  background: dragging === task.key ? color.brandWashSoft : 'transparent'
                 }}
               >
                 <Row gap={6} wrap={false}>
@@ -337,7 +338,7 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
                         tone="ghost"
                         title={task.pinned ? `Pinned to week ${task.start + 1} — click to hand it back to auto-sequencing` : 'Auto-sequenced — drag the bar to pin it to a week'}
                         onClick={() => dispatch({ type: 'setPlanEntry', key: task.key, entry: { start: undefined } })}
-                        style={{ color: task.pinned ? color.brandDeep : '#CFCFCC', padding: 2, fontSize: 10 }}
+                        style={{ color: task.pinned ? color.brandDeep : color.dashRule, padding: 2, fontSize: 10 }}
                       >
                         ●
                       </Button>
@@ -345,7 +346,7 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
                   ) : null}
                 </Row>
 
-                <div data-track="1" style={{ position: 'relative', height: 24, background: task.span ? color.surfaceSoft : '#F6F6F4', borderRadius: radius.sm }}>
+                <div data-track="1" style={{ position: 'relative', height: 24, background: task.span ? color.surfaceSoft : color.trackSoft, borderRadius: radius.sm }}>
                   <div
                     onPointerDown={(event) => beginDrag(event, task, 'move')}
                     title={`${when} · ${Math.round(task.hrs)}h · ${hours1(task.dur)}w — drag to move`}
@@ -367,7 +368,7 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
                       zIndex: plan.bars.length - index
                     }}
                   >
-                    <Mono size={9.5} tone="#FFFFFF">
+                    <Mono size={9.5} tone={color.onSolid}>
                       {Math.round(task.hrs)}h · {hours1(task.dur)}w
                     </Mono>
                     <Spacer />

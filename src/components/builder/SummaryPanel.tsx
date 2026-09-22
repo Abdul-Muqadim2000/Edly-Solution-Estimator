@@ -20,16 +20,16 @@ import { useFocus, useHover } from '@/lib/useHover';
  * one number in the room.
  */
 
-const INK = '#1B1B1B';
-const PANEL = '#363636';
-const EDGE = '#4A4A48';
-const AMBER = '#F3C88B';
+const INK = color.inkDeep;
+const PANEL = color.darkSoft;
+const EDGE = color.panelEdge;
+const AMBER = color.amberGlow;
 
 const darkFieldStyle: CSSProperties = {
   background: INK,
   border: `1px solid ${EDGE}`,
   borderRadius: 8,
-  color: '#FFFFFF',
+  color: color.onSolid,
   padding: '8px 10px',
   fontSize: 13,
   fontFamily: font.mono,
@@ -93,12 +93,12 @@ function DarkButton({
 }): JSX.Element {
   const h = useHover();
   const base: Record<string, { rest: CSSProperties; hover: CSSProperties }> = {
-    grey: { rest: { border: `1px solid ${EDGE}`, background: PANEL, color: '#E8E8E4' }, hover: { background: '#414141' } },
-    red: { rest: { border: 'none', background: color.red, color: '#FFFFFF' }, hover: { background: color.redDeep } },
-    brand: { rest: { border: 'none', background: color.brand, color: '#FFFFFF' }, hover: { background: color.brandDeep } },
-    dashed: { rest: { border: `1px dashed ${color.ghost}`, background: 'transparent', color: '#E8E8E4' }, hover: { background: PANEL } },
-    danger: { rest: { border: '1px solid #5A3A3A', background: 'transparent', color: '#FF9B9B' }, hover: { background: '#3A2222' } },
-    brandDashed: { rest: { border: `1px dashed ${color.brandGlow}`, background: 'transparent', color: color.brandGlow }, hover: { background: '#173B33' } }
+    grey: { rest: { border: `1px solid ${EDGE}`, background: PANEL, color: color.onDarkBright }, hover: { background: color.panelRaise } },
+    red: { rest: { border: 'none', background: color.red, color: color.onSolid }, hover: { background: color.redDeep } },
+    brand: { rest: { border: 'none', background: color.brand, color: color.onSolid }, hover: { background: color.brandDeep } },
+    dashed: { rest: { border: `1px dashed ${color.ghost}`, background: 'transparent', color: color.onDarkBright }, hover: { background: PANEL } },
+    danger: { rest: { border: `1px solid ${color.redOnDarkEdge}`, background: 'transparent', color: color.redGlow }, hover: { background: color.redOnDark } },
+    brandDashed: { rest: { border: `1px dashed ${color.brandGlow}`, background: 'transparent', color: color.brandGlow }, hover: { background: color.brandOnDark } }
   };
   const tone = base[variant]!;
   return (
@@ -131,7 +131,7 @@ function Remove({ onClick }: { onClick: () => void }): JSX.Element {
     <span
       onClick={onClick}
       title="Remove"
-      style={{ color: h.on ? '#FF8B8B' : color.dim, cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px' }}
+      style={{ color: h.on ? color.redGlowBright : color.dim, cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px' }}
       {...h.bind}
     >
       ×
@@ -368,7 +368,7 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
                         }}
                       />
                     ) : null}
-                    <span style={{ fontFamily: font.mono, fontSize: 12, color: '#C9C9C4' }}>{shown}</span>
+                    <span style={{ fontFamily: font.mono, fontSize: 12, color: color.onDarkSoft }}>{shown}</span>
                     <Remove onClick={() => dispatch({ type: 'toggleSolution', id: item.id })} />
                   </div>
                 );
@@ -410,7 +410,7 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
                       fontSize: 10,
                       fontWeight: 600,
                       color: AMBER,
-                      background: '#3B3222',
+                      background: color.amberOnDark,
                       borderRadius: 999,
                       padding: '2px 8px',
                       whiteSpace: 'nowrap'
@@ -449,8 +449,8 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 7,
-                  background: '#173B33',
-                  border: '1px solid #2E6B5C',
+                  background: color.brandOnDark,
+                  border: `1px solid ${color.brandOnDarkEdge}`,
                   color: color.brandGlow,
                   borderRadius: 999,
                   padding: '5px 12px',
@@ -465,7 +465,7 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
             {totalRow(
               'Solution hours',
               `${hours(display.blendBuffer ? (estimate.first + estimate.itemBufSum) * factor : estimate.first)} h`,
-              '#FFFFFF',
+              color.onSolid,
               12
             )}
             {requests.length > 0
@@ -612,7 +612,7 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
                 ×
               </DarkButton>
             </div>
-            {addErr ? <div style={{ fontSize: 11, color: '#FF9B9B' }}>{addErr}</div> : null}
+            {addErr ? <div style={{ fontSize: 11, color: color.redGlow }}>{addErr}</div> : null}
             <div style={{ fontSize: 10.5, color: color.onDarkFaint, lineHeight: 1.45 }}>
               Joins the total and the timeline immediately — use it for custom work you’ve already scoped.
             </div>
@@ -625,7 +625,7 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
 
         <div style={{ marginTop: 10, fontSize: 11.5, lineHeight: 1.6, color: color.onDarkMuted, textAlign: 'center' }}>
           These are only our pre-built solutions — missing something?{' '}
-          <Link href={EDLY_LINKS.contact} style={{ color: color.brandGlow, fontWeight: 600 }} hover={{ color: '#FFFFFF' }}>
+          <Link href={EDLY_LINKS.contact} style={{ color: color.brandGlow, fontWeight: 600 }} hover={{ color: color.onSolid }}>
             We build custom too ↗
           </Link>
         </div>

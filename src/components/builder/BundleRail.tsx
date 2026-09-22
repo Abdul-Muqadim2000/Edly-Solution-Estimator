@@ -60,12 +60,12 @@ function RailRow({ entry, on, narrow, onPick }: { entry: RailEntry; on: boolean;
           fontWeight: 600,
           width: 27,
           flex: '0 0 27px',
-          color: on ? color.brand : '#9C9C9C'
+          color: on ? color.brand : color.chevron
         }}
       >
         {entry.tag}
       </span>
-      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, color: '#333333', lineHeight: 1.25 }}>{entry.name}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, color: color.footerField, lineHeight: 1.25 }}>{entry.name}</span>
       <span
         style={{
           fontFamily: font.mono,
@@ -74,7 +74,7 @@ function RailRow({ entry, on, narrow, onPick }: { entry: RailEntry; on: boolean;
           borderRadius: radius.pill,
           padding: '2px 7px',
           background: hasSelection ? color.brand : color.hairlineSoft,
-          color: hasSelection ? '#FFFFFF' : color.muted
+          color: hasSelection ? color.onSolid : color.muted
         }}
       >
         {hasSelection ? `${entry.selected}/${entry.total}` : entry.total}
@@ -102,7 +102,7 @@ export function BundleRail({
   onBack: () => void;
   estimationLabel: string;
 }): JSX.Element {
-  const back = useRowHover({ background: '#D6F2EA' });
+  const back = useRowHover({ background: color.focusRing });
 
   return (
     <nav

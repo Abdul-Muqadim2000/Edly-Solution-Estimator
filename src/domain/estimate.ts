@@ -8,7 +8,7 @@ import type {
   RoleCostRow,
   Solution
 } from '@/types';
-import { roleColor } from '@/theme';
+import { color, roleColor } from '@/theme';
 
 /**
  * The estimate, computed from a snapshot. Pure: same inputs, same numbers — which is what
@@ -143,7 +143,7 @@ export function calcEstimate(
         id: key,
         name: role?.name ?? 'Unassigned · blended',
         rate: lineRate,
-        color: role?.color ?? '#8F8F8B',
+        color: role?.color ?? color.faint,
         hrs: 0,
         cost: 0,
         assigned: Boolean(role)
@@ -179,7 +179,7 @@ export function calcEstimate(
       id: `ov-${kind}`,
       name: `${label} · ${role?.name ?? 'blended'}`,
       rate: role ? Number(role.rate) : rate,
-      color: role?.color ?? '#8F8F8B',
+      color: role?.color ?? color.faint,
       hrs,
       cost: hrs * (role ? Number(role.rate) : rate),
       assigned: Boolean(role),

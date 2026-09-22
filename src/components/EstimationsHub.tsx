@@ -125,7 +125,7 @@ export function EstimationsHub(): JSX.Element {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, flex: '1 1 330px' }}>
             <Stat value={String(live.length)} label={live.length === 1 ? 'open deal' : 'open deals'} />
             <Stat value={hours(totalHours)} label="hours in play" tone={color.brandDeep} />
-            <Stat value={String(pendingCount)} label="awaiting estimates" tone={pendingCount > 0 ? color.amber : '#A8A8A3'} />
+            <Stat value={String(pendingCount)} label="awaiting estimates" tone={pendingCount > 0 ? color.amber : color.quiet} />
           </div>
         </Row>
 
@@ -223,12 +223,12 @@ export function EstimationsHub(): JSX.Element {
                   <Row gap={14} style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${color.hairlineSoft}` }}>
                     {[
                       ['solutions', String(numbers.selIds.length), color.ink],
-                      ['custom', String(requests.length), requests.length > 0 ? color.ink : '#A8A8A3'],
-                      ['pending', String(pending), pending > 0 ? color.amber : '#A8A8A3']
+                      ['custom', String(requests.length), requests.length > 0 ? color.ink : color.quiet],
+                      ['pending', String(pending), pending > 0 ? color.amber : color.quiet]
                     ].map(([label, value, tone]) => (
                       <div key={label}>
                         <div style={{ fontFamily: font.mono, fontSize: 13, fontWeight: 600, color: tone }}>{value}</div>
-                        <div style={{ fontSize: 10, color: '#A8A8A3', letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 2 }}>{label}</div>
+                        <div style={{ fontSize: 10, color: color.quiet, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 2 }}>{label}</div>
                       </div>
                     ))}
                   </Row>
@@ -268,7 +268,7 @@ export function EstimationsHub(): JSX.Element {
                     }}
                   />
                   <Spacer />
-                  <span style={{ fontSize: 10.5, color: '#A8A8A3', whiteSpace: 'nowrap' }}>Updated {estimation.up || estimation.at || '—'}</span>
+                  <span style={{ fontSize: 10.5, color: color.quiet, whiteSpace: 'nowrap' }}>Updated {estimation.up || estimation.at || '—'}</span>
                   <Button
                     size="sm"
                     tone={asking ? 'danger' : 'ghost'}
@@ -289,7 +289,7 @@ export function EstimationsHub(): JSX.Element {
                 </Row>
 
                 {pending > 0 ? (
-                  <div style={{ background: color.amberWash, borderTop: '1px solid #F5DCB4', padding: '8px 20px', fontSize: 11, fontWeight: 700, color: color.amberInk }}>
+                  <div style={{ background: color.amberWash, borderTop: `1px solid ${color.amberEdgeSoft}`, padding: '8px 20px', fontSize: 11, fontWeight: 700, color: color.amberInk }}>
                     {pending} awaiting estimate
                   </div>
                 ) : null}

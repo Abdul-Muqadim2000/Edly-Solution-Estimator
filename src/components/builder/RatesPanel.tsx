@@ -16,7 +16,7 @@ import { Button, Mono, Popover, Row, Select, Spacer, useRowHover } from '@/compo
  */
 /** One billable line in the assignment list. */
 function RateLine({ picked, children }: { picked: boolean; children: ReactNode }): JSX.Element {
-  const hover = useRowHover({ borderColor: color.brand, background: picked ? '#EDF9F5' : color.surfaceSoft });
+  const hover = useRowHover({ borderColor: color.brand, background: picked ? color.brandWashPicked : color.surfaceSoft });
   return (
     <div
       {...hover.bind}
@@ -26,7 +26,7 @@ function RateLine({ picked, children }: { picked: boolean; children: ReactNode }
         alignItems: 'center',
         gap: 8,
         border: `1px solid ${picked ? color.brand : color.hairline}`,
-        background: picked ? '#F5FCFA' : color.surface,
+        background: picked ? color.brandWashSoft : color.surface,
         borderRadius: radius.md,
         padding: '7px 10px',
         transition: 'border-color 120ms ease, background 120ms ease',
@@ -45,7 +45,8 @@ export function RatesPanel({ onClose }: { onClose: () => void }): JSX.Element {
 
   const roles = rolesOf(state.draft);
   const currency = state.draft.cur ?? 'USD';
-  const lineRole = state.draft.lineRole ?? {};
+  /* Memoised so the `lines` memo below is not invalidated on every render. */
+  const lineRole = useMemo(() => state.draft.lineRole ?? {}, [state.draft.lineRole]);
   const factor = 1 + estimate.bufPct / 100;
 
   const lines = useMemo(() => {
@@ -169,7 +170,7 @@ export function RatesPanel({ onClose }: { onClose: () => void }): JSX.Element {
                 dispatch({ type: 'assignRole', ids: pickedIds, roleId: role.id });
                 setPicked({});
               }}
-              style={{ background: pickedIds.length > 0 ? roleColor(index) : color.onDark, color: pickedIds.length > 0 ? '#FFFFFF' : color.ghost, border: 'none' }}
+              style={{ background: pickedIds.length > 0 ? roleColor(index) : color.onDark, color: pickedIds.length > 0 ? color.onSolid : color.ghost, border: 'none' }}
             >
               {role.name} · {money(role.rate, currency)}
             </Button>
