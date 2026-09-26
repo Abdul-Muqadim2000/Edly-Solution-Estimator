@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
-import { coerceState, countRows, sheetsToState, stateToSheets, SHEETS } from '../server/schema';
+import { coerceState, countRows, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
 import type { Catalog, PersistedState } from '../src/types';
 
 /**
@@ -348,11 +348,119 @@ describe('oversized values', () => {
     expect(back.settings['edly-loaded-catalogs-v2']).toEqual(original.settings['edly-loaded-catalogs-v2']);
   });
 
+  it('keeps settings in the order they were written, even one split across rows', async () => {
+    /* a split value used to be re-added after the plain ones, so it came back last */
+    const original = sample();
+    original.settings['edly-catalog-source-v2'] = { source: 'auto', at: '2026-09-26' };
+    const back = await roundTrip(original);
+    expect(Object.keys(back.settings)).toEqual(Object.keys(original.settings));
+  });
+
+  it('drops a split value with a chunk missing, and leaves no empty key where it was', async () => {
+    /* a hand-edited sheet with one chunk row deleted: half a catalog would fail to parse later */
+    const sheets = stateToSheets(sample());
+    const settings = sheets[SHEETS.settings] ?? [];
+    sheets[SHEETS.settings] = settings.filter((row) => !String(row[0]).startsWith('edly-loaded-catalogs-v2##2/'));
+
+    const back = sheetsToState(await readWorkbook(writeWorkbook(sheets)));
+    expect(Object.keys(back.settings)).not.toContain('edly-loaded-catalogs-v2');
+    expect(back.settings['edly-platform-v2']).toEqual({ practice: 'edtech', plat: 'openedx' });
+  });
+
   it('survives a space landing on a chunk boundary', async () => {
     /* chunks are pipe-wrapped because the reader trims cells */
     const spaced = { ...sample(), settings: { 'edly-workspace-v2': { blob: 'word '.repeat(12_000) } } };
     const back = await roundTrip(spaced);
     expect(back.settings['edly-workspace-v2']).toEqual(spaced.settings['edly-workspace-v2']);
+  });
+});
+
+/**
+ * What `useSync` compares. It used to compare raw JSON text, and the text of what the browser
+ * holds never equals the text of what a store hands back for the same data: cells cannot tell ''
+ * from a missing field, the reader trims every cell, and a split setting came back last. So every
+ * 45 s poll looked like a change, and each open tab re-read and rewrote the whole workbook.
+ */
+describe('the sync key', () => {
+  /** A workspace shaped the way the reducer shapes one, including the parts a cell flattens. */
+  function heldByTheBrowser(): PersistedState {
+    const state = sample();
+    /* the deal seeded for a fresh workspace has no tag at all */
+    state.estimations.push({
+      id: 'EST-3', plat: 'openedx', name: 'General estimation', slug: 'general-estimation', client: '', tag: '',
+      due: '', at: '2026-09-01', up: '2026-09-01', total: 0, cost: 0, items: 0,
+      snap: { sel: {}, buf: {}, bufPct: 0, pm: null, qa: null, cur: 'USD', planStart: '' }
+    });
+    const pending = state.requests[2];
+    /* typed into a textarea, so it ends in a newline the reader will trim */
+    if (pending) pending.details = 'Still pending, see the thread\n';
+    const priced = state.requests[0];
+    /* the desk left the note blank: '' here, and no cell at all in the sheet */
+    if (priced) priced.estNote = '';
+    const custom = state.solutions[0];
+    /* two fields the reducer sets that the sheet has no column for */
+    if (custom) Object.assign(custom, { integrations: 'Proctorio', estName: 'Acme Corporate Academy' });
+    /* the order `SYNCED_SETTING_KEYS` produces, with the split catalog in the middle */
+    const catalogs = state.settings['edly-loaded-catalogs-v2'];
+    state.settings = {
+      'edly-workspace-v2': state.settings['edly-workspace-v2'],
+      'edly-open-estimation-v2': 'EST-1',
+      'edly-platform-v2': { practice: 'edtech', plat: 'openedx' },
+      'edly-loaded-catalogs-v2': catalogs,
+      'edly-catalog-source-v2': { source: 'auto', name: 'catalog-source.xlsx', at: '2026-09-26' }
+    };
+    return state;
+  }
+
+  it('is the same for what the browser holds and what the store hands back', async () => {
+    const held = heldByTheBrowser();
+    const back = await roundTrip(held);
+    expect(syncKey(back)).toBe(syncKey(held));
+  });
+
+  it('stays the same through a second read, so a quiet poll is not a change', async () => {
+    const once = await roundTrip(heldByTheBrowser());
+    const twice = await roundTrip(once);
+    expect(syncKey(twice)).toBe(syncKey(once));
+  });
+
+  it('matches storedForm to what the file actually returns', async () => {
+    /* storedForm is the in-memory model of the file round trip; if the two drift, the key lies */
+    const held = heldByTheBrowser();
+    expect(storedForm(held)).toEqual(await roundTrip(held));
+  });
+
+  it('ignores the order keys arrive in', () => {
+    const held = heldByTheBrowser();
+    const reversed: PersistedState = {
+      ...held,
+      settings: Object.fromEntries(Object.entries(held.settings).reverse()),
+      estimations: held.estimations.map((one) => ({ ...one, snap: Object.fromEntries(Object.entries(one.snap).reverse()) as typeof one.snap }))
+    };
+    expect(syncKey(reversed)).toBe(syncKey(held));
+  });
+
+  it('changes when the store would hold something different', () => {
+    const held = heldByTheBrowser();
+    const base = syncKey(held);
+
+    const edited = heldByTheBrowser();
+    const deal = edited.estimations[0];
+    if (deal) deal.snap = { ...deal.snap, bufPct: 13 };
+    expect(syncKey(edited)).not.toBe(base);
+
+    const retitled = heldByTheBrowser();
+    const first = retitled.requests[0];
+    if (first) first.title = 'Proctored exam integration, phase two';
+    expect(syncKey(retitled)).not.toBe(base);
+
+    const reopened = heldByTheBrowser();
+    reopened.settings['edly-open-estimation-v2'] = 'EST-2';
+    expect(syncKey(reopened)).not.toBe(base);
+
+    const removed = heldByTheBrowser();
+    removed.bundles = [];
+    expect(syncKey(removed)).not.toBe(base);
   });
 });
 

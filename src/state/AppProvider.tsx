@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import type { Catalog, EstimateResult, Estimation, PersistedState, Schedule } from '@/types';
-import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, commitDraft, effectiveDisplay, openRequests, platformEstimations, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
+import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, catalogReady, commitDraft, effectiveDisplay, openRequests, platformEstimations, platformTotals, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
 import { readStorage, removeStorage, STORAGE_KEYS, writeStorage } from '@/state/keys';
 import { useSync, type SyncApi } from '@/state/useSync';
 import { useRouting, type RouterApi } from '@/state/useRouting';
@@ -268,6 +268,15 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       };
     return composeCatalog({ base, platform, added: state.solutions, ownBundles: state.bundles });
   }, [state.platform, state.loadedCatalogs, state.solutions, state.bundles]);
+
+  /* Each deal caches its totals for the hub's "hours in play" and the sheet's readable columns,
+     and this is the one place that keeps them in step with what its card shows. It waits for a
+     real catalog, because pricing against the empty stand-in would write zeros. `cacheTotals`
+     hands back the same state when nothing moved, so this settles after one pass. */
+  useEffect(() => {
+    if (!catalogReady(state)) return;
+    dispatch({ type: 'cacheTotals', totals: platformTotals(state, catalog) });
+  }, [state, catalog]);
 
   const requests = useMemo(() => openRequests(state), [state]);
 

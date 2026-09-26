@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Catalog, EstimateRequest, EstimationSnapshot, Solution } from '../src/types';
-import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
+import { cachedTotals, calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { peopleForDuration, reorder, schedule } from '../src/domain/planner';
 import { allSolutions, categories, composeCatalog, diffCatalogs, guessBundle, subCategories, toSolution } from '../src/domain/catalog';
 import { nextId } from '../src/lib/format';
@@ -119,6 +119,14 @@ describe('calcEstimate', () => {
     const pmRow = result.roleRows.find((row) => row.id === 'ov-pm');
     expect(pmRow?.hrs).toBe(20);
     expect(pmRow?.rate).toBe(40);
+  });
+
+  it('turns an estimate into the totals a deal caches, as the card would show them', () => {
+    const result = calcEstimate(book, snapshot({ sel: { A: true, B: true }, bufPct: 12, qa: 8 }), []);
+    /* 120.96 in exact decimals, but 120.96000000000001 in floating point: a store that prints
+       fewer digits would hand back a different number, and the sync loop would see a change */
+    expect(result.grand).not.toBe(120.96);
+    expect(cachedTotals(result)).toEqual({ total: 120.96, cost: result.usd, items: 2 });
   });
 
   it('reports reuse savings from recorded build hours', () => {

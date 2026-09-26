@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  catalogReady,
   commitDraft,
   currentPlatform,
   DEFAULT_DISPLAY,
@@ -11,6 +12,7 @@ import {
   openRequests,
   platformEstimations,
   platformRequests,
+  platformTotals,
   catalogSourceLabel,
   reducer,
   requestsFor,
@@ -18,7 +20,7 @@ import {
   type Action,
   type AppState
 } from '../src/state/reducer';
-import type { EstimateRequest, Estimation } from '../src/types';
+import type { Catalog, EstimateRequest, Estimation, Solution } from '../src/types';
 
 /**
  * The reducer is every state transition in the app, and it is pure, so it is tested with plain
@@ -173,18 +175,12 @@ describe('the open estimation and its draft', () => {
     expect(next.draft).toEqual(EMPTY_SNAPSHOT);
   });
 
-  it('refreshes the cached totals only when it is given them', () => {
+  it('carries the cached totals through a commit rather than resetting them', () => {
     const state = workspace({
       estimations: [estimation('EST-1', { total: 5, cost: 500, items: 1 })],
       openEstimation: 'EST-1'
     });
-
     expect(commitDraft(state)[0]).toMatchObject({ total: 5, cost: 500, items: 1 });
-    expect(commitDraft(state, { hours: 80, cost: 9600, items: 4 })[0]).toMatchObject({
-      total: 80,
-      cost: 9600,
-      items: 4
-    });
   });
 
   it('leaves the list alone when nothing is open', () => {
@@ -480,6 +476,43 @@ describe('signing in, out and choosing a platform', () => {
     expect(next.lastPlatform).toBe('openedx');
   });
 
+  /* Sign out is a button in the builder, so it fires with a deal open. Persistence writes
+     `commitDraft(state)`, which with nothing open is the stale list, so the next save used to
+     put the snapshot from when the deal was opened back over everything done since. */
+  it('signing out from the builder keeps the edits made to the open deal', () => {
+    const building = workspace({
+      estimations: [estimation('EST-1')],
+      openEstimation: 'EST-1',
+      draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-1': true }, bufPct: 12 }
+    });
+    const next = reducer(building, { type: 'signOut' });
+
+    expect(next.openEstimation).toBeNull();
+    expect(toPersisted(next).estimations[0]?.snap).toMatchObject({ sel: { 'OX-1': true }, bufPct: 12 });
+  });
+
+  it('signing in again keeps the edits of a deal that was left open', () => {
+    const building = workspace({
+      estimations: [estimation('EST-1')],
+      openEstimation: 'EST-1',
+      draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-2': true } }
+    });
+    const next = reducer(building, { type: 'signIn', user: 'admin', role: 'estimator' });
+    expect(toPersisted(next).estimations[0]?.snap.sel).toEqual({ 'OX-2': true });
+  });
+
+  it('switching platform commits the open deal before clearing the draft', () => {
+    const building = workspace({
+      estimations: [estimation('EST-1')],
+      openEstimation: 'EST-1',
+      draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-3': true } }
+    });
+    const next = reducer(building, { type: 'choosePlatform', practice: 'edtech', platform: 'moodle' });
+
+    expect(next.draft).toEqual(EMPTY_SNAPSHOT);
+    expect(toPersisted(next).estimations[0]?.snap.sel).toEqual({ 'OX-3': true });
+  });
+
   it('switching platform resets the workspace around it', () => {
     const state = workspace({
       openEstimation: 'EST-1',
@@ -643,6 +676,77 @@ describe('selectors', () => {
 
     expect(persisted.estimations.find((one) => one.id === 'EST-1')?.snap.sel).toEqual({ 'OX-4': true });
     expect(persisted.requests).toHaveLength(3);
+  });
+});
+
+/* ------------------------------------------------------------ cached totals */
+
+/* `total`, `cost` and `items` feed the hub's "hours in play" and the sheet's readable columns.
+   Nothing kept them current after the move to TypeScript, so both read zero beside cards that
+   showed real hours. */
+describe('the totals each deal caches', () => {
+  const item = (id: string, first: number): Solution => ({
+    id, name: `Solution ${id}`, desc: '', form: 'Integration', status: 'Production', deploy: '', first,
+    repeat: null, build: null, saving: null, account: null, integrations: null, notes: null, ref: null,
+    category: 'Core Platform', subCategory: null
+  });
+  const book: Catalog = {
+    meta: { title: 'Mine', subtitle: '', compiled: '', totals: { features: 2, buildHrs: null, firstHrs: null, repeatHrs: null, saved: null, noEstimate: 0, inDev: 0 }, notes: [] },
+    bundles: [
+      {
+        id: 'B01', name: 'One', pitch: '', offerWhen: '', featureCount: 2, buildHrs: null, firstHrs: null, repeatHrs: null,
+        saved: null, noEstimate: 0, inDev: 0, accounts: null, pairsWith: null, items: [item('OX-1', 40), item('OX-2', 60)]
+      }
+    ]
+  };
+
+  it('writes the totals it is handed onto each deal', () => {
+    const state = workspace({ estimations: [estimation('EST-1'), estimation('EST-2')] });
+    const next = reducer(state, { type: 'cacheTotals', totals: { 'EST-2': { total: 80, cost: 4800, items: 2 } } });
+
+    expect(next.estimations[1]).toMatchObject({ total: 80, cost: 4800, items: 2 });
+    /* a deal it was not given totals for is left exactly as it was */
+    expect(next.estimations[0]).toBe(state.estimations[0]);
+    /* a recount is not an edit, so it must not jump the deal to the top of the hub */
+    expect(next.estimations[1]?.up).toBe(state.estimations[1]?.up);
+  });
+
+  it('returns the same state when nothing moved, so caching cannot loop a render or a save', () => {
+    const state = workspace({ estimations: [estimation('EST-1', { total: 80, cost: 4800, items: 2 })] });
+    expect(reducer(state, { type: 'cacheTotals', totals: { 'EST-1': { total: 80, cost: 4800, items: 2 } } })).toBe(state);
+    expect(reducer(state, { type: 'cacheTotals', totals: { 'EST-404': { total: 1, cost: 1, items: 1 } } })).toBe(state);
+  });
+
+  it('prices the open deal from its live draft and every other deal from its snapshot', () => {
+    const state = workspace({
+      estimations: [
+        estimation('EST-1', { snap: { ...EMPTY_SNAPSHOT, sel: { 'OX-1': true } } }),
+        estimation('EST-2', { snap: { ...EMPTY_SNAPSHOT, sel: { 'OX-1': true, 'OX-2': true } } }),
+        estimation('EST-3', { plat: 'moodle', snap: { ...EMPTY_SNAPSHOT, sel: { 'OX-2': true } } })
+      ],
+      requests: [request('RQ-01', { estId: 'EST-2', est: 20 })],
+      openEstimation: 'EST-1',
+      draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-2': true } }
+    });
+
+    const totals = platformTotals(state, book);
+
+    /* the draft picked OX-2, not the committed OX-1 */
+    expect(totals['EST-1']).toMatchObject({ total: 60, items: 1 });
+    /* the desk's returned hours count toward the deal they belong to */
+    expect(totals['EST-2']).toMatchObject({ total: 120, items: 2 });
+    /* another platform's deal is priced against its own catalog, not this one */
+    expect(totals['EST-3']).toBeUndefined();
+  });
+
+  it('only trusts a real catalog, so a slow sheet cannot write zeros over real totals', () => {
+    /* Open edX has no bundled copy: until its sheet loads, the catalog in play is an empty
+       stand-in, and every deal priced against it would come out at 0 h */
+    expect(catalogReady(workspace({ platform: 'openedx' }))).toBe(false);
+    expect(catalogReady(workspace({ platform: 'openedx', loadedCatalogs: { openedx: book } }))).toBe(true);
+    /* the sample platforms ship benchmark hours, which are what their cards show */
+    expect(catalogReady(workspace({ platform: 'moodle' }))).toBe(true);
+    expect(catalogReady(workspace({ platform: '' }))).toBe(false);
   });
 });
 

@@ -12,7 +12,7 @@ import {
   type Route
 } from '../src/lib/router';
 import { slugify, uniqueSlug, withSlugs } from '../src/lib/format';
-import { INITIAL_STATE, reducer, type AppState } from '../src/state/reducer';
+import { INITIAL_STATE, reducer, type Action, type AppState } from '../src/state/reducer';
 import { routeOfState } from '../src/state/useRouting';
 import type { Estimation } from '../src/types';
 
@@ -248,6 +248,7 @@ const workspace = (over: Partial<AppState> = {}): AppState => ({
 });
 
 const apply = (state: AppState, url: string): AppState => reducer(state, { type: 'applyRoute', route: parseRoute(url) });
+const run = (state: AppState, ...actions: Action[]): AppState => actions.reduce(reducer, state);
 
 describe('applyRoute', () => {
   it('opens the estimation a link names', () => {
@@ -290,6 +291,28 @@ describe('applyRoute', () => {
     const back = apply(atDesk, '/p/openedx/e/acme-academy');
     expect(back.auth?.role).toBe('sales');
     expect(back.openEstimation).toBe('EST-1');
+  });
+
+  it('shows the desk the deal as it stands, not as it was when it was opened', () => {
+    /* the desk reads `estimations`, and the draft only reached it on close, so a deal with three
+       solutions picked showed "0 h, 0 solutions" to the estimator in the same tab */
+    const building = apply(workspace(), '/p/openedx/e/acme-academy');
+    const picked = run(building, { type: 'toggleSolution', id: 'OX-1' }, { type: 'toggleSolution', id: 'OX-2' });
+    const atDesk = apply(picked, '/p/openedx/desk/e/acme-academy');
+
+    expect(atDesk.estimations.find((one) => one.id === 'EST-1')?.snap.sel).toEqual({ 'OX-1': true, 'OX-2': true });
+    /* and the round trip still holds: the deal stays open with its draft, ready to come back to */
+    expect(atDesk.openEstimation).toBe('EST-1');
+    expect(atDesk.draft.sel).toEqual({ 'OX-1': true, 'OX-2': true });
+  });
+
+  it('commits the open draft when a link moves to another platform', () => {
+    const building = apply(workspace(), '/p/openedx/e/acme-academy');
+    const edited = reducer(building, { type: 'patchDraft', patch: { bufPct: 20 } });
+    const moved = apply(edited, '/p/moodle/e/elsewhere-entirely');
+
+    expect(moved.openEstimation).toBe('EST-3');
+    expect(moved.estimations.find((one) => one.id === 'EST-1')?.snap.bufPct).toBe(20);
   });
 
   it('lands on the hub when the linked estimation has been deleted', () => {

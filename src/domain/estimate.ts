@@ -230,3 +230,21 @@ export function calcEstimate(
     weeks: grand / 40
   };
 }
+
+/** What a deal keeps on its record for list views and the sheet's readable columns. */
+export interface CachedTotals {
+  total: number;
+  cost: number;
+  items: number;
+}
+
+/**
+ * The numbers a deal caches, taken from its estimate: the same grand total its hub card shows.
+ *
+ * Hours are rounded to two places. Floating point leaves tails like 139.15000000000003, and a
+ * store that prints fewer digits would hand back a different number, which the sync loop would
+ * read as someone else's edit.
+ */
+export function cachedTotals(result: EstimateResult): CachedTotals {
+  return { total: Math.round(result.grand * 100) / 100, cost: result.usd, items: result.selIds.length };
+}

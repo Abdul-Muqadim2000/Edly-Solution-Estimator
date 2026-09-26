@@ -15,9 +15,9 @@ import type {
   Role
 } from '@/types';
 import type { Route } from '@/lib/router';
-import { DEFAULT_ROLES } from '@/domain/estimate';
+import { cachedTotals, calcEstimate, DEFAULT_ROLES, type CachedTotals } from '@/domain/estimate';
 import { nextId, today, uniqueSlug } from '@/lib/format';
-import { findPlatform, isLiveCatalog } from '@/data/practices';
+import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
 
 /**
  * All workspace state, and the only functions that change it.
@@ -192,6 +192,7 @@ export type Action =
   | { type: 'closeEstimation' }
   | { type: 'deleteEstimation'; id: string }
   | { type: 'patchEstimation'; id: string; patch: Partial<Pick<Estimation, 'tag' | 'due' | 'name' | 'client'>> }
+  | { type: 'cacheTotals'; totals: Record<string, CachedTotals> }
   | { type: 'toggleSolution'; id: string }
   | { type: 'clearSelection' }
   | { type: 'selectMany'; ids: string[]; selected: boolean }
@@ -221,20 +222,20 @@ export type Action =
 
 const platOf = (state: AppState): string => state.platform || 'openedx';
 
-/** The open estimation, with the live draft folded in and its cached totals refreshed. */
-export function commitDraft(state: AppState, totals?: { hours: number; cost: number; items: number }): Estimation[] {
+/**
+ * The open estimation, with the live draft folded in.
+ *
+ * Every transition that stops a deal being open has to fold its draft in first. Persistence
+ * writes `commitDraft(state)`, and once nothing is open that is the list as it stood when the
+ * deal was opened, so skipping this puts the old snapshot back over everything done since.
+ *
+ * The cached totals are not worked out here, because the reducer has no catalog to price
+ * against; the provider keeps them current through `cacheTotals`.
+ */
+export function commitDraft(state: AppState): Estimation[] {
   if (!state.openEstimation) return state.estimations;
   return state.estimations.map((estimation) =>
-    estimation.id === state.openEstimation
-      ? {
-          ...estimation,
-          up: today(),
-          total: totals?.hours ?? estimation.total,
-          cost: totals?.cost ?? estimation.cost,
-          items: totals?.items ?? estimation.items,
-          snap: state.draft
-        }
-      : estimation
+    estimation.id === state.openEstimation ? { ...estimation, up: today(), snap: state.draft } : estimation
   );
 }
 
@@ -266,6 +267,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'signIn':
       return {
         ...state,
+        estimations: commitDraft(state),
         auth: { user: action.user, role: action.role, at: Date.now() },
         practice: '',
         platform: '',
@@ -277,6 +279,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'signOut':
       return {
         ...state,
+        estimations: commitDraft(state),
         auth: null,
         practice: '',
         platform: '',
@@ -288,6 +291,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'choosePlatform':
       return {
         ...state,
+        estimations: commitDraft(state),
         practice: action.practice,
         platform: action.platform,
         lastPlatform: action.platform,
@@ -365,6 +369,20 @@ export function reducer(state: AppState, action: Action): AppState {
           estimation.id === action.id ? { ...estimation, ...action.patch, up: today() } : estimation
         )
       };
+
+    /* A recount, not an edit: `up` stays put, so a deal does not jump up the hub because the
+       desk priced one of its requests or the catalog changed under it. */
+    case 'cacheTotals': {
+      let changed = false;
+      const estimations = state.estimations.map((estimation) => {
+        const next = action.totals[estimation.id];
+        if (!next || (next.total === estimation.total && next.cost === estimation.cost && next.items === estimation.items)) return estimation;
+        changed = true;
+        return { ...estimation, ...next };
+      });
+      /* the same object when nothing moved, or the provider's effect would loop */
+      return changed ? { ...state, estimations } : state;
+    }
 
     case 'toggleSolution': {
       const sel = { ...state.draft.sel };
@@ -626,10 +644,18 @@ export function reducer(state: AppState, action: Action): AppState {
 
       /* The desk deliberately leaves the open estimation alone. Which screen shows is decided by
          role, not by `openEstimation`, so a sales person who ducks into the desk and comes back
-         lands in the builder they left — the round trip the chrome's ⇄ pill has always offered.
-         The URL stays honest either way, because `routeOfState` reads the role first. */
+         lands in the builder they left, which is the round trip the chrome's ⇄ pill has always offered.
+         The URL stays honest either way, because `routeOfState` reads the role first.
+
+         It does commit the draft, though. The desk reads `estimations`, so without this it shows
+         the deal as it was when it was opened: "0 h, 0 solutions" for a deal with three picked. */
       if (route.screen === 'desk') {
-        return { ...next, deskTab: target ? 'estimations' : route.tab ?? 'queue', deskView: target?.id ?? null };
+        return {
+          ...next,
+          estimations: commitDraft(next),
+          deskTab: target ? 'estimations' : route.tab ?? 'queue',
+          deskView: target?.id ?? null
+        };
       }
 
       if (route.screen === 'builder' && target) {
@@ -693,6 +719,31 @@ export function catalogSourceLabel(state: AppState): string {
   if (source?.source === 'builtin') return 'built-in copy of the master sheet';
   if (source?.source === 'auto') return `live from ${source.name ?? 'the sheet beside the app'}`;
   return 'from the master sales sheet';
+}
+
+/**
+ * A real catalog is in play, rather than the empty stand-in shown while the Open edX sheet loads
+ * or after it failed to. Deals priced against the stand-in come out at 0 h, and caching that
+ * would overwrite real totals every time the sheet was slow.
+ */
+export function catalogReady(state: AppState): boolean {
+  if (!state.platform) return false;
+  return Boolean(state.loadedCatalogs[state.platform]) || benchmarkCatalog(state.platform) !== null;
+}
+
+/**
+ * The totals every deal on the platform in play should cache, priced against `catalog`. The
+ * open deal is priced from its live draft, the rest from their committed snapshots, and each
+ * one counts the desk's hours for its own requests.
+ */
+export function platformTotals(state: AppState, catalog: Catalog): Record<string, CachedTotals> {
+  const totals: Record<string, CachedTotals> = {};
+  for (const estimation of platformEstimations(state)) {
+    /* the committed snapshot as it is, which is what the deal's hub card prices */
+    const snap = estimation.id === state.openEstimation ? state.draft : estimation.snap;
+    totals[estimation.id] = cachedTotals(calcEstimate(catalog, snap, requestsFor(state, estimation.id)));
+  }
+  return totals;
 }
 
 /** What sales may see right now — presentation mode hides the economics. */

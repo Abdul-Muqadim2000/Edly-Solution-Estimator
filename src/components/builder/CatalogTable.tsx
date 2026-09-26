@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import type { Solution } from '@/types';
 import { useApp } from '@/state/AppProvider';
-import type { DisplayPrefs } from '@/state/reducer';
+import { openRequests, type DisplayPrefs } from '@/state/reducer';
+import { ownedCatalogIds } from '@/domain/estimate';
 import { color, font, radius } from '@/theme';
 import { hours } from '@/lib/format';
 import { Link, useRowHover } from '@/components/ui';
@@ -44,7 +45,8 @@ function Row({
   const { item } = row;
 
   const selected = Boolean(state.draft.sel[item.id]);
-  const ownedByRequest = Object.values(state.requests).some((request) => request.csId === item.id && request.estId === state.openEstimation);
+  /* the owning request's id, not just whether there is one: the badge names it */
+  const ownedByRequest = ownedCatalogIds(openRequests(state))[item.id] ?? null;
   const hover = useRowHover({ background: selected ? color.brandWashRow : color.surfaceSoft });
 
   const isCustom = item.status === 'Estimation';

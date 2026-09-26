@@ -275,6 +275,9 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       continue;
     }
     const key = match[1]!;
+    /* Hold the place of the first chunk, so a split value comes back where it was written.
+       Appending it after the loop moved the Open edX catalog to the end on every read. */
+    if (!chunks.has(key) && !(key in settings)) settings[key] = undefined;
     const bag = chunks.get(key) ?? { total: Number(match[3]), parts: [] };
     bag.parts[Number(match[2]) - 1] = unwrapChunk(row.valueJson);
     chunks.set(key, bag);
@@ -282,11 +285,49 @@ export function sheetsToState(workbook: Workbook): PersistedState {
   for (const [key, bag] of chunks) {
     let have = 0;
     for (let i = 0; i < bag.total; i++) if (bag.parts[i] !== undefined) have += 1;
-    if (have !== bag.total) continue; /* a partial value is worse than none */
+    if (have !== bag.total) {
+      /* a partial value is worse than none */
+      if (settings[key] === undefined) delete settings[key];
+      continue;
+    }
     settings[key] = fromJson(bag.parts.join(''));
   }
 
   return { estimations, requests, solutions, bundles, settings };
+}
+
+/* --------------------------------------------------- comparing for sync ---- */
+
+/**
+ * The state exactly as a store hands it back: into cells, every cell read as trimmed text, and
+ * out again. It is the file round trip without the zip.
+ *
+ * A cell cannot tell '' from a missing field, the reader trims, and the sheet has no column for
+ * a few fields the reducer sets. So the browser's copy and the store's copy of the same data are
+ * never the same text, and comparing them raw made every poll look like a change.
+ */
+export function storedForm(state: PersistedState): PersistedState {
+  const cells: Workbook = {};
+  for (const [name, rows] of Object.entries(stateToSheets(state))) {
+    cells[name] = rows.map((row) => row.map((cell) => (cell === null || cell === undefined ? '' : String(cell).trim())));
+  }
+  return sheetsToState(cells);
+}
+
+/** JSON with object keys sorted, so two copies of one state serialise alike whatever order they were built in. */
+const stableJson = (value: unknown): string =>
+  JSON.stringify(value, (_key, inner: unknown) =>
+    inner && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner
+  );
+
+/**
+ * Equal exactly when a store would hold the same thing. `useSync` compares these, never raw
+ * payloads: one side of every comparison is the browser's copy and the other is the store's.
+ */
+export function syncKey(state: PersistedState): string {
+  return stableJson(storedForm(state));
 }
 
 export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solutions: [], bundles: [], settings: {} };

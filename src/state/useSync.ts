@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PersistedState } from '@/types';
 import { beaconSave, fetchState, saveState } from '@/api/client';
+import { syncKey } from '@server/schema';
 import { ALL_SYNCED_KEYS, readStorage, STORAGE_KEYS, SYNCED_SETTING_KEYS, writeStorage } from '@/state/keys';
 
 /**
@@ -57,6 +58,8 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
   const [status, setStatus] = useState<SyncStatus>({ tone: 'busy', message: 'connecting…', hydrated: false, store: 'store' });
 
   const hydrated = useRef(false);
+  /* The sync key of the state both sides last agreed on. Always a key, never a raw payload:
+     comparing the browser's text with the store's text rewrote the workbook on every poll. */
   const lastSynced = useRef('');
   const inFlight = useRef(false);
   const failures = useRef(0);
@@ -66,7 +69,7 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
   const hydrateRef = useRef(onHydrate);
   hydrateRef.current = onHydrate;
 
-  const payload = useCallback((): string => JSON.stringify({ ...latest.current, settings: SETTINGS_SNAPSHOT() }), []);
+  const current = useCallback((): PersistedState => ({ ...latest.current, settings: SETTINGS_SNAPSHOT() }), []);
 
   const push = useCallback(async () => {
     if (!hydrated.current) {
@@ -74,14 +77,15 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
       return;
     }
     if (inFlight.current) return;
-    const body = payload();
-    if (body === lastSynced.current) return;
+    const state = current();
+    const key = syncKey(state);
+    if (key === lastSynced.current) return;
 
     inFlight.current = true;
     setStatus((s) => ({ ...s, tone: 'busy', message: 'saving…' }));
     try {
-      const result = await saveState(JSON.parse(body) as PersistedState);
-      lastSynced.current = body;
+      const result = await saveState(state);
+      lastSynced.current = key;
       failures.current = 0;
       const store = shortStore(result.label ?? 'store');
       setStatus({ tone: 'good', store, hydrated: true, message: `saved to ${store} · ${result.counts?.estimations ?? 0} estimations` });
@@ -94,13 +98,13 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
     } finally {
       inFlight.current = false;
     }
-  }, [payload]);
+  }, [current]);
 
   const pull = useCallback(async () => {
     try {
       const result = await fetchState();
       const store = shortStore(result.label);
-      const incoming = JSON.stringify({
+      const incoming = syncKey({
         estimations: result.state.estimations ?? [],
         requests: result.state.requests ?? [],
         solutions: result.state.solutions ?? [],
@@ -130,7 +134,7 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
       }
 
       if (incoming === lastSynced.current) return;
-      if (payload() !== lastSynced.current) {
+      if (syncKey(current()) !== lastSynced.current) {
         setStatus({ tone: 'warn', store, hydrated: true, message: `changed in ${store} by someone else — reload to merge` });
         return;
       }
@@ -148,7 +152,7 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
       });
       if (failures.current < 6) setTimeout(() => void pull(), Math.min(15_000, 1500 * failures.current));
     }
-  }, [payload]);
+  }, [current]);
 
   /* first read */
   useEffect(() => {
@@ -187,13 +191,13 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
     if (!enabled) return;
     const onLeave = (): void => {
       if (!hydrated.current) return;
-      const body = payload();
-      if (body === lastSynced.current) return;
-      beaconSave(JSON.parse(body) as PersistedState);
+      const state = current();
+      if (syncKey(state) === lastSynced.current) return;
+      beaconSave(state);
     };
     window.addEventListener('beforeunload', onLeave);
     return () => window.removeEventListener('beforeunload', onLeave);
-  }, [enabled, payload]);
+  }, [enabled, current]);
 
   return useMemo<SyncApi>(
     () => ({
