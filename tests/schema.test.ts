@@ -62,6 +62,7 @@ function sample(): PersistedState {
         id: 'EST-1',
         plat: 'openedx',
         name: 'Acme Corporate Academy',
+        slug: 'acme-corporate-academy',
         client: 'Acme Ltd',
         tag: 'Urgent',
         due: '2026-10-15',
@@ -97,6 +98,7 @@ function sample(): PersistedState {
         id: 'EST-2',
         plat: 'moodle',
         name: 'Nordic University',
+        slug: 'nordic-university',
         client: '',
         tag: 'Closed',
         due: '',
@@ -252,6 +254,39 @@ describe('spreadsheet round-trip', () => {
     expect(back.estimations[0]?.cost).toBe(74_250);
     /* the snapshot carries selections, buffers, rate card, role assignments and the plan */
     expect(back.estimations[0]?.snap).toEqual(original.estimations[0]?.snap);
+  });
+
+  it('keeps the slug a deep link is built from', async () => {
+    const back = await roundTrip(sample());
+    expect(back.estimations[0]?.slug).toBe('acme-corporate-academy');
+    expect(back.estimations[1]?.slug).toBe('nordic-university');
+  });
+
+  it('gives a file written before the slug column a slug, unique within its platform', async () => {
+    /* exactly what an older build wrote: the slug column is not there at all */
+    const columns = ['id', 'plat', 'name', 'client', 'tag', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions', 'snapshotJson'];
+    const row = (id: string, plat: string, client: string): (string | number)[] => [
+      id, plat, 'Acme Corporate Academy', client, 'Active', '', '2026-01-01', '2026-01-02', 0, 0, 0, '{}'
+    ];
+    const legacy = {
+      [SHEETS.estimations]: [columns, row('EST-1', 'openedx', 'One'), row('EST-2', 'openedx', 'Two'), row('EST-3', 'moodle', 'Three')]
+    };
+
+    const back = sheetsToState(await readWorkbook(writeWorkbook(legacy)));
+    expect(back.estimations[0]?.slug).toBe('acme-corporate-academy');
+    /* two deals with one name on one platform must not share a URL */
+    expect(back.estimations[1]?.slug).toBe('acme-corporate-academy-2');
+    /* another platform is its own namespace, so it starts clean */
+    expect(back.estimations[2]?.slug).toBe('acme-corporate-academy');
+  });
+
+  it('never rewrites a slug that is already set', async () => {
+    /* a renamed deal keeps its original slug, so a link shared last week still opens it */
+    const renamed = sample();
+    const first = renamed.estimations[0];
+    if (first) first.name = 'Acme Global Academy — renamed';
+    const back = await roundTrip(renamed);
+    expect(back.estimations[0]?.slug).toBe('acme-corporate-academy');
   });
 
   it('keeps a closed estimation with blank fields', async () => {

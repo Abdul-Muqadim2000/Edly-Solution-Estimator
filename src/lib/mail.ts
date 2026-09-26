@@ -9,6 +9,12 @@ import { copyText } from '@/lib/clipboard';
  * because `mailto:` silently does nothing on machines with no mail client configured.
  */
 
+/*
+ * The `window.location.href` quoted in both bodies below is now a real deep link — the router
+ * keeps the address bar on the open estimation — so "Bundle link:" lands the reader on the deal
+ * the request came from rather than on the sign-in screen. It carries ids only, never hours.
+ */
+
 /** Where estimate requests go. The source design made this configurable; this is its default. */
 export const DESK_EMAIL = 'sales@edly.io';
 

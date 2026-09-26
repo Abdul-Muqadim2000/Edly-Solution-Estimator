@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '@/state/AppProvider';
 import { catalogSourceLabel, openEstimationRecord } from '@/state/reducer';
+import { ALL_BUNDLES } from '@/lib/router';
 import { allSolutions } from '@/domain/catalog';
 import { color, dueInfo, font, radius, tagStyle } from '@/theme';
 import { hours } from '@/lib/format';
@@ -36,21 +37,38 @@ const SEARCH_LIMIT = 60;
 const HEADER_H = 62;
 
 export function Builder(): JSX.Element {
-  const { state, dispatch, catalog, estimate, display } = useApp();
+  const { state, dispatch, router, catalog, estimate, display } = useApp();
   const estimation = openEstimationRecord(state);
   const layout = useLayout();
   const { narrow } = layout;
 
-  /* Empty means "the first bundle": the builder opens on a bundle, not on the whole catalogue,
-     and the catalogue is not loaded yet on the first render. */
-  const [active, setActive] = useState<string>('');
-  const [search, setSearch] = useState('');
+  /* Which bundle, what is typed in the box and whether the planner is up all live in the URL, so
+     a pasted link opens on the same screen the sender was looking at. Empty means "the first
+     bundle": the builder opens on one, and the catalogue is not parsed yet on the first render. */
+  const active = router.route.bundle ? (router.route.bundle.toLowerCase() === ALL_BUNDLES ? ALL : router.route.bundle) : '';
+  const plannerOpen = Boolean(router.route.plan);
+
+  /* The box is local so it stays instant, and the URL catches up a beat later — pushing a route
+     per keystroke would bury the Back button and trip the browser's history-call throttle. */
+  const [search, setSearch] = useState(router.route.q ?? '');
   const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display'>('');
   const [catalogFlash, setCatalogFlash] = useState(false);
   const [requestFlash, setRequestFlash] = useState(false);
-  const [plannerOpen, setPlannerOpen] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
+
+  const routeSearch = router.route.q ?? '';
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (routeSearch !== search) router.navigate({ q: search || undefined });
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [search, routeSearch, router]);
+
+  /* Back and Forward move the search too, so the box has to follow the URL as well as lead it. */
+  useEffect(() => {
+    setSearch(routeSearch);
+  }, [routeSearch]);
 
   const everySolution = useMemo(() => allSolutions(catalog), [catalog]);
   const searching = search.trim().length > 0;
@@ -112,7 +130,7 @@ export function Builder(): JSX.Element {
 
   const goBundle = (id: string): void => {
     setSearch('');
-    setActive(id);
+    router.navigate({ bundle: id === ALL ? ALL_BUNDLES : id, q: undefined });
   };
 
 
@@ -139,7 +157,7 @@ export function Builder(): JSX.Element {
           <div style={{ fontFamily: font.display, fontWeight: 700, fontSize: 27, letterSpacing: -0.5, color: color.ink, lineHeight: 1 }}>edly</div>
           <div style={{ width: 1, height: 24, background: color.hairline }} />
           <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 1.6, textTransform: 'uppercase', color: color.muted }}>Bundle Builder</div>
-          <BackToHub onClick={() => dispatch({ type: 'closeEstimation' })} />
+          <BackToHub onClick={() => router.navigate({ screen: 'hub', estimation: undefined })} />
           <span
             style={{
               fontSize: 12,
@@ -179,7 +197,7 @@ export function Builder(): JSX.Element {
           <UserChip>
             {state.auth?.user ?? ''} · {state.auth?.role === 'estimator' ? 'Estimator' : 'Sales'}
           </UserChip>
-          <HeaderPill onClick={() => dispatch({ type: 'switchRole' })}>⇄ Estimation desk</HeaderPill>
+          <HeaderPill onClick={() => router.navigate({ screen: 'desk', estimation: undefined })}>⇄ Estimation desk</HeaderPill>
           <HeaderPill danger onClick={() => dispatch({ type: 'signOut' })}>
             Logout
           </HeaderPill>
@@ -243,11 +261,8 @@ export function Builder(): JSX.Element {
               : `Compiled ${catalog.meta.compiled || '—'} · ${catalogSourceLabel(state)}`
           }
           estimationLabel={estimation?.name ?? ''}
-          onPick={(key) => {
-            setSearch('');
-            setActive(key);
-          }}
-          onBack={() => dispatch({ type: 'closeEstimation' })}
+          onPick={goBundle}
+          onBack={() => router.navigate({ screen: 'hub', estimation: undefined })}
         />
 
         <main style={{ overflowY: layout.paneOverflow, minWidth: 0, padding: layout.mainPad }}>
@@ -370,7 +385,7 @@ export function Builder(): JSX.Element {
           }}
         >
           <SummaryPanel
-            onOpenPlanner={() => setPlannerOpen(true)}
+            onOpenPlanner={() => router.navigate({ plan: true })}
             onOpenRequest={() => setRequestOpen(true)}
             requestAdded={requestFlash}
           />
@@ -379,7 +394,7 @@ export function Builder(): JSX.Element {
 
       <div style={{ height: 48, background: color.page }} />
 
-      {plannerOpen ? <Planner onClose={() => setPlannerOpen(false)} /> : null}
+      {plannerOpen ? <Planner onClose={() => router.navigate({ plan: undefined })} /> : null}
       {requestOpen ? (
         <RequestModal
           onClose={() => setRequestOpen(false)}

@@ -53,11 +53,14 @@ Vercel.
 Never remove or reorder a column: read by name, not by position. A file written by an older build
 must still load.
 
-Two specific traps, both covered by tests:
+Three specific traps, all covered by tests:
 
 - An **un-estimated request must round-trip with no hours at all**, not `0`. Zero reads as
   "estimated at nothing" and joins the totals.
 - Any value that can exceed ~28,000 characters must chunk. Loaded catalogs do.
+- **An estimation's `slug` is never recomputed.** It is what deep links are built from, so a
+  renamed deal keeps the slug it was created with. `withSlugs` only ever fills a blank one, and
+  only uniquely within a platform.
 
 ## Pull requests
 
@@ -73,3 +76,7 @@ If you touched persistence, say so explicitly and name the test that covers it.
 - `domain/planner.ts` — the packing loop is bounded (`guard < 800`); keep a bound.
 - `lib/catalogSheet.ts` — header matching claims exact matches before prefixes, so "Bundle ID" is
   not stolen by the "Bundle" alias. Keep that order.
+- `lib/router.ts` — `parseRoute` and `formatRoute` must stay inverses; `tests/router.test.ts`
+  round-trips every route and will tell you when they drift.
+- `index.html` — the `<base href>` is load-bearing. Without it a deep link makes every relative
+  URL resolve against the route rather than the mount point, and the catalog sheet 404s.

@@ -3,13 +3,14 @@ import type { Catalog, EstimateResult, Estimation, PersistedState, Schedule } fr
 import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, commitDraft, effectiveDisplay, openRequests, platformEstimations, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
 import { readStorage, removeStorage, STORAGE_KEYS, writeStorage } from '@/state/keys';
 import { useSync, type SyncApi } from '@/state/useSync';
+import { useRouting, type RouterApi } from '@/state/useRouting';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
 import { composeCatalog } from '@/domain/catalog';
 import { calcEstimate } from '@/domain/estimate';
 import { schedule as buildSchedule } from '@/domain/planner';
 import { fetchCatalog, parseCatalogWorkbook } from '@/lib/catalogSheet';
 import { fingerprint } from '@/lib/xlsx';
-import { today } from '@/lib/format';
+import { today, withSlugs } from '@/lib/format';
 
 /**
  * One provider holds the workspace: reducer state, persistence, server sync, and the derived
@@ -28,6 +29,8 @@ export interface AppContextValue {
   state: AppState;
   dispatch: (action: Action) => void;
   sync: SyncApi;
+  /** The URL, as a value, plus the two ways to change it. Screens never touch `window.location`. */
+  router: RouterApi;
   /** The catalog for the platform in play, desk additions folded in. */
   catalog: Catalog;
   /** The open estimation's numbers. */
@@ -56,6 +59,7 @@ function seedEstimation(): Estimation {
     id: `EST-${Date.now().toString(36)}`,
     plat: 'openedx',
     name: 'General estimation',
+    slug: 'general-estimation',
     client: '',
     tag: '',
     due: '',
@@ -76,7 +80,9 @@ function hydrateFromStorage(): Partial<AppState> {
     auth: readStorage(STORAGE_KEYS.auth, null),
     /* signing in always lands on the picker; the last platform is only a shortcut */
     lastPlatform: platform?.plat && findPlatform(platform.plat) ? platform.plat : '',
-    estimations: stored.length > 0 ? stored : [seedEstimation()],
+    /* records saved before slugs existed get one here, so every deal has a URL from the first
+       render — `routeOfState` would otherwise fall back to the raw id in the address bar */
+    estimations: withSlugs(stored.length > 0 ? stored : [seedEstimation()]),
     requests: readStorage(STORAGE_KEYS.requests, []),
     solutions: readStorage(STORAGE_KEYS.solutions, []),
     bundles: readStorage(STORAGE_KEYS.bundles, []),
@@ -228,7 +234,8 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     dispatch({
       type: 'hydrate',
       payload: {
-        estimations: incoming.estimations,
+        /* the server already backfills, but a hand-edited sheet can still arrive with a gap */
+        estimations: withSlugs(incoming.estimations),
         requests: incoming.requests,
         solutions: incoming.solutions,
         bundles: incoming.bundles,
@@ -238,6 +245,10 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   }, []);
 
   const sync = useSync({ snapshot: persisted, onHydrate, enabled: state.ready });
+
+  /* A deep link can name an estimation this browser has not read yet, so the router waits on the
+     store before deciding the link is dead. `hydrated` is true once a read has succeeded. */
+  const router = useRouting(state, dispatch, sync.status.hydrated);
 
   /* ---- derived: catalog, estimate, plan ---- */
 
@@ -298,8 +309,8 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   }, [state.platform]);
 
   const value = useMemo<AppContextValue>(
-    () => ({ state, dispatch, sync, catalog, estimate, plan, display, importCatalog, resetCatalog, reloadCatalog }),
-    [state, sync, catalog, estimate, plan, display, importCatalog, resetCatalog, reloadCatalog]
+    () => ({ state, dispatch, sync, router, catalog, estimate, plan, display, importCatalog, resetCatalog, reloadCatalog }),
+    [state, sync, router, catalog, estimate, plan, display, importCatalog, resetCatalog, reloadCatalog]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

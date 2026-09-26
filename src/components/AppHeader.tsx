@@ -95,7 +95,7 @@ function SwitchRow({ name, live, on, onPick }: { name: string; live: boolean; on
 }
 
 export function PlatformSwitcher(): JSX.Element | null {
-  const { state, dispatch } = useApp();
+  const { state, router } = useApp();
   const [open, setOpen] = useState(false);
   const current = findPlatform(state.platform);
   if (!current) return null;
@@ -126,7 +126,12 @@ export function PlatformSwitcher(): JSX.Element | null {
                     live={Boolean(platform.live)}
                     on={on}
                     onPick={() => {
-                      dispatch({ type: 'choosePlatform', practice: practice.id, platform: platform.id });
+                      /* the desk stays the desk when you switch platform; sales stays in sales */
+                      router.navigate({
+                        screen: state.auth?.role === 'estimator' ? 'desk' : 'hub',
+                        platform: platform.id,
+                        estimation: undefined
+                      });
                       setOpen(false);
                     }}
                   />
@@ -150,8 +155,20 @@ export function PlatformSwitcher(): JSX.Element | null {
  * away, the hub and the desk pin theirs.
  */
 export function AppHeader({ children, sticky }: { children?: ReactNode; sticky?: boolean }): JSX.Element {
-  const { state, dispatch } = useApp();
+  const { state, dispatch, router } = useApp();
   const role = state.auth?.role;
+
+  /* Ducking into the desk and back should return you to the deal you were building, which is what
+     this pill has always done. The estimation stays open while the desk is showing, so coming
+     back is a matter of naming it again rather than reopening it. */
+  const swapRole = (): void => {
+    if (role !== 'estimator') {
+      router.navigate({ screen: 'desk', estimation: undefined });
+      return;
+    }
+    const open = state.estimations.find((one) => one.id === state.openEstimation);
+    router.navigate(open ? { screen: 'builder', estimation: open.slug || open.id } : { screen: 'hub', estimation: undefined });
+  };
 
   return (
     <header
@@ -180,9 +197,7 @@ export function AppHeader({ children, sticky }: { children?: ReactNode; sticky?:
       <UserChip>
         {state.auth?.user ?? ''} · {role === 'estimator' ? 'Estimator' : 'Sales'}
       </UserChip>
-      <HeaderPill onClick={() => dispatch({ type: 'switchRole' })}>
-        ⇄ {role === 'estimator' ? 'Sales workspace' : 'Estimation desk'}
-      </HeaderPill>
+      <HeaderPill onClick={swapRole}>⇄ {role === 'estimator' ? 'Sales workspace' : 'Estimation desk'}</HeaderPill>
       <HeaderPill danger onClick={() => dispatch({ type: 'signOut' })}>
         Logout
       </HeaderPill>

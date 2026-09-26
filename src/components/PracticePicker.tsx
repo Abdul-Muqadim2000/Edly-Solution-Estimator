@@ -157,7 +157,7 @@ function BackLink({ children, onClick }: { children: string; onClick: () => void
 }
 
 export function PracticePicker(): JSX.Element {
-  const { state, dispatch } = useApp();
+  const { state, router } = useApp();
   const chosen = PRACTICES.find((practice) => practice.id === state.practice) ?? null;
   const last = findPlatform(state.lastPlatform);
 
@@ -166,7 +166,7 @@ export function PracticePicker(): JSX.Element {
       <div style={{ minHeight: '100vh', background: color.page }}>
         <AppHeader />
         <div style={{ maxWidth: 880, margin: '0 auto', padding: '52px 24px 80px' }}>
-          <BackLink onClick={() => dispatch({ type: 'choosePractice', practice: '' })}>← All practices</BackLink>
+          <BackLink onClick={() => router.navigate({ screen: 'practices', practice: undefined })}>← All practices</BackLink>
           <h1 style={{ fontFamily: font.display, fontSize: 30, fontWeight: 700, letterSpacing: -0.5, margin: '14px 0 0' }}>{chosen.name}</h1>
           <p style={{ fontSize: 14, color: color.muted, lineHeight: 1.6, margin: '6px 0 0', maxWidth: 560 }}>{chosen.blurb}</p>
 
@@ -175,7 +175,7 @@ export function PracticePicker(): JSX.Element {
               <PlatformRow
                 key={platform.id}
                 platform={platform}
-                onPick={() => dispatch({ type: 'choosePlatform', practice: chosen.id, platform: platform.id })}
+                onPick={() => router.navigate({ screen: 'hub', platform: platform.id })}
               />
             ))}
           </div>
@@ -202,13 +202,13 @@ export function PracticePicker(): JSX.Element {
           <ResumeShortcut
             label={`${last.practice.name} / ${last.platform.name}`}
             meta={platformMeta(last.platform)}
-            onPick={() => dispatch({ type: 'choosePlatform', practice: last.practice.id, platform: last.platform.id })}
+            onPick={() => router.navigate({ screen: 'hub', platform: last.platform.id })}
           />
         ) : null}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14, marginTop: 28 }}>
           {PRACTICES.map((practice) => (
-            <PracticeCard key={practice.id} practice={practice} onPick={() => dispatch({ type: 'choosePractice', practice: practice.id })} />
+            <PracticeCard key={practice.id} practice={practice} onPick={() => router.navigate({ screen: 'practices', practice: practice.id })} />
           ))}
         </div>
       </div>

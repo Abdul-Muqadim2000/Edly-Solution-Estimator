@@ -4,6 +4,7 @@ import type {
   Auth,
   Catalog,
   CurrencyCode,
+  DeskTab,
   EstimateRequest,
   Estimation,
   EstimationSnapshot,
@@ -13,8 +14,9 @@ import type {
   RateRole,
   Role
 } from '@/types';
+import type { Route } from '@/lib/router';
 import { DEFAULT_ROLES } from '@/domain/estimate';
-import { nextId, today } from '@/lib/format';
+import { nextId, today, uniqueSlug } from '@/lib/format';
 import { findPlatform, isLiveCatalog } from '@/data/practices';
 
 /**
@@ -62,7 +64,7 @@ export const EMPTY_SNAPSHOT: EstimationSnapshot = {
   planStart: ''
 };
 
-export type DeskTab = 'queue' | 'estimations' | 'add';
+export type { DeskTab };
 
 export interface AppState {
   ready: boolean;
@@ -170,14 +172,20 @@ export interface NewSolutionInput {
   note: string;
 }
 
+/**
+ * Every transition, and only transitions.
+ *
+ * There is no `switchRole`, `choosePractice`, `setDeskTab` or `setDeskView` here any more:
+ * changing screen goes through `applyRoute`, so the address bar cannot drift out of step with
+ * what is on it. Navigate with `router.navigate` from `useApp()`, never by dispatching a screen
+ * change directly.
+ */
 export type Action =
   | { type: 'hydrate'; payload: Partial<AppState> }
   | { type: 'mergeEstimations'; estimations: Estimation[] }
   | { type: 'ready' }
   | { type: 'signIn'; user: string; role: Role }
   | { type: 'signOut' }
-  | { type: 'switchRole' }
-  | { type: 'choosePractice'; practice: string }
   | { type: 'choosePlatform'; practice: string; platform: string }
   | { type: 'createEstimation'; input: NewEstimationInput }
   | { type: 'openEstimation'; id: string }
@@ -207,10 +215,9 @@ export type Action =
   | { type: 'addBundle'; name: string; pitch: string; offerWhen: string }
   | { type: 'removeBundle'; id: string }
   | { type: 'setLoadedCatalog'; platform: string; catalog: Catalog | null; source: AppState['catalogSource'] }
+  | { type: 'applyRoute'; route: Route }
   | { type: 'setAutoAvail'; available: boolean }
-  | { type: 'setCatalogError'; message: string | null }
-  | { type: 'setDeskTab'; tab: DeskTab }
-  | { type: 'setDeskView'; id: string | null };
+  | { type: 'setCatalogError'; message: string | null };
 
 const platOf = (state: AppState): string => state.platform || 'openedx';
 
@@ -278,12 +285,6 @@ export function reducer(state: AppState, action: Action): AppState {
         deskView: null
       };
 
-    case 'switchRole':
-      return state.auth ? { ...state, auth: { ...state.auth, role: state.auth.role === 'sales' ? 'estimator' : 'sales' } } : state;
-
-    case 'choosePractice':
-      return { ...state, practice: action.practice };
-
     case 'choosePlatform':
       return {
         ...state,
@@ -300,10 +301,17 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'createEstimation': {
       const id = `EST-${Date.now().toString(36)}`;
       const stamp = today();
+      const plat = platOf(state);
       const estimation: Estimation = {
         id,
-        plat: platOf(state),
+        plat,
         name: action.input.name,
+        /* unique within the platform only, because that is the scope a URL carries */
+        slug: uniqueSlug(
+          action.input.name,
+          state.estimations.filter((one) => (one.plat || 'openedx') === plat).map((one) => one.slug),
+          id
+        ),
         client: action.input.client,
         tag: action.input.tag,
         due: action.input.due,
@@ -583,11 +591,54 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, loadedCatalogs, catalogSource: action.source, autoAvail: false, catalogError: action.catalog ? null : state.catalogError };
     }
 
-    case 'setDeskTab':
-      return { ...state, deskTab: action.tab, deskView: null };
+    /**
+     * A URL, turned into state. The only place navigation flows this way — everywhere else the
+     * address bar follows state. See `state/useRouting.ts` for the bridge.
+     *
+     * A link is an instruction, so it may switch role: `/p/openedx/desk` opens the desk even if
+     * you were last in sales, and an estimation link puts you back in sales. Role is a one-click
+     * toggle in the chrome anyway, so honouring the link is less surprising than ignoring it.
+     */
+    case 'applyRoute': {
+      const { route } = action;
+      const auth = state.auth;
+      if (!auth) return state;
 
-    case 'setDeskView':
-      return { ...state, deskView: action.id };
+      let next = state;
+
+      /* platform first: choosing one clears the open estimation, which we may be about to set */
+      const ref = route.platform ? findPlatform(route.platform) : null;
+      if (ref && ref.platform.id !== next.platform) {
+        next = reducer(next, { type: 'choosePlatform', practice: ref.practice.id, platform: ref.platform.id });
+      }
+
+      if (route.screen === 'practices') {
+        const closed = next.openEstimation ? reducer(next, { type: 'closeEstimation' }) : next;
+        /* `/practices` with no practice is the "← All practices" link, so an absent one clears the
+           choice rather than keeping it — otherwise the back link would appear to do nothing. */
+        return { ...closed, practice: route.practice ?? '', platform: '', deskView: null };
+      }
+
+      const wanted: Role = route.screen === 'desk' ? 'estimator' : route.screen === 'root' ? auth.role : 'sales';
+      if (wanted !== auth.role) next = { ...next, auth: { ...auth, role: wanted } };
+
+      const target = route.estimation ? findEstimation(next, route.estimation) : null;
+
+      /* The desk deliberately leaves the open estimation alone. Which screen shows is decided by
+         role, not by `openEstimation`, so a sales person who ducks into the desk and comes back
+         lands in the builder they left — the round trip the chrome's ⇄ pill has always offered.
+         The URL stays honest either way, because `routeOfState` reads the role first. */
+      if (route.screen === 'desk') {
+        return { ...next, deskTab: target ? 'estimations' : route.tab ?? 'queue', deskView: target?.id ?? null };
+      }
+
+      if (route.screen === 'builder' && target) {
+        return next.openEstimation === target.id ? next : reducer(next, { type: 'openEstimation', id: target.id });
+      }
+
+      /* the hub, or a link whose estimation has since been deleted — land on the list, not a blank */
+      return next.openEstimation ? reducer(next, { type: 'closeEstimation' }) : next;
+    }
 
     default:
       return state;
@@ -614,6 +665,19 @@ export const requestsFor = (state: AppState, estimationId: string): EstimateRequ
 
 export const openEstimationRecord = (state: AppState): Estimation | null =>
   state.estimations.find((estimation) => estimation.id === state.openEstimation) ?? null;
+
+/**
+ * An estimation on the platform in play, by slug.
+ *
+ * The id is accepted as well, so a link copied before slugs existed still opens the right deal,
+ * and so does one someone assembled by hand from a spreadsheet row.
+ */
+export function findEstimation(state: AppState, slugOrId: string): Estimation | null {
+  const key = String(slugOrId ?? '').trim().toLowerCase();
+  if (!key) return null;
+  const here = platformEstimations(state);
+  return here.find((one) => (one.slug ?? '').toLowerCase() === key) ?? here.find((one) => one.id.toLowerCase() === key) ?? null;
+}
 
 /**
  * Where the catalog in play came from, in the phrasing the rail and the catalog panel share.
