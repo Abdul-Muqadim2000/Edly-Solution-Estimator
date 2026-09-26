@@ -141,14 +141,14 @@ reference.
 
 ### The suite
 
-`bun run test` runs 343 tests across thirteen files.
+`bun run test` runs 362 tests across thirteen files.
 
 | File | Covers |
 |---|---|
 | `tests/domain.test.ts` | `calcEstimate`, `schedule`, catalog composition and helpers |
 | `tests/reducer.test.ts` | every state transition, selector and label |
 | `tests/router.test.ts` | URL to state and back, both directions |
-| `tests/schema.test.ts` | state to spreadsheet rows, chunking, round trip |
+| `tests/schema.test.ts` | state to spreadsheet rows, chunking, round trip, the sync key |
 | `tests/api.test.ts` | `/api/state` end to end, and the empty-payload guard |
 | `tests/handler.test.ts` | the Vercel and web request adapters |
 | `tests/storage.test.ts` | browser storage, the store layer, Vercel Blob |
@@ -161,17 +161,20 @@ reference.
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated:
+`bun run test:coverage`. Current state, measured rather than estimated (2026-09-26):
 
 | | |
 |---|---|
-| Statements | 94.7% |
-| Lines | 96.5% |
-| Functions | 96.2% |
-| Branches | 79.2% |
+| Statements | 94.9% |
+| Lines | 96.6% |
+| Functions | 96.3% |
+| Branches | 79.7% |
 
-The thresholds in `vitest.config.ts` are floors set just under those numbers, so a change that
-drops coverage fails the run. Raise them when you can. Do not lower them to make a change pass.
+The thresholds in `vitest.config.ts` are floors: 90% statements, 78% branches, 92% functions and
+92% lines. A change that drops coverage below them fails the run. Statements, functions and lines
+sit several points under the figures above, so for those the floor catches a collapse rather than
+a slow slide; branches is within two points of its floor. Raise them when you can. Do not lower
+them to make a change pass.
 
 Two things to know before you touch the coverage config:
 
@@ -451,7 +454,7 @@ everything else waiting on a server, are in DEFERRED.md.
 
 Say what changed, what you verified, and how. Name the tests you added and the paths you clicked.
 This is the right shape: *"added `setLineBuffer` cases to `tests/reducer.test.ts`, ran
-`bun run check` (343 pass) and `bun run test:coverage` (94.7% statements), drove builder to
+`bun run check` (362 pass) and `bun run test:coverage` (94.9% statements), drove builder to
 planner to export on localhost at 1280px. Not committed."*
 
 If something is broken, blocked or unverified, say that plainly instead of rounding it up to done.
