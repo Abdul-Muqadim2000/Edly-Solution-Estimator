@@ -169,8 +169,11 @@ vercel                 # links the project, first deploy
 vercel --prod
 ```
 
-`vercel.json` builds with Bun, serves `dist/`, and pins the functions to Node 22 (needed for
-`DecompressionStream` and `crypto.subtle`). `/api/tender` gets 300 seconds; the others 15.
+`vercel.json` builds with Bun, serves `dist/`, and gives `/api/tender` 300 seconds and the other
+functions 15. The Node version is the project's Node.js setting in Vercel (22.x and 24.x both
+work; the code needs 20 or later for `DecompressionStream` and `crypto.subtle`). Do not put a
+`runtime` key in `vercel.json` for it: that key is for community runtimes written as
+`package@version`, and anything else fails the build before it starts.
 
 ---
 

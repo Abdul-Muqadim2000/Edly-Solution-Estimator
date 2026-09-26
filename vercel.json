@@ -4,15 +4,12 @@
   "outputDirectory": "dist",
   "functions": {
     "api/state.ts": {
-      "runtime": "nodejs22.x",
       "maxDuration": 15
     },
     "api/catalog.ts": {
-      "runtime": "nodejs22.x",
       "maxDuration": 15
     },
     "api/tender.ts": {
-      "runtime": "nodejs22.x",
       "maxDuration": 300
     }
   },

@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 496 tests across sixteen files.
+`bun run test` runs 499 tests across seventeen files.
 
 | File | Covers |
 |---|---|
@@ -165,6 +165,7 @@ reference.
 | `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges, desk drafts |
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel and text tenders into uploads |
+| `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, and time limits for every endpoint |
 
 ### Coverage
 
