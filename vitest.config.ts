@@ -24,12 +24,15 @@ export default defineConfig({
         'src/lib/useViewport.ts',
         'src/state/AppProvider.tsx',
         'src/state/useSync.ts',
-        'src/state/useRouting.ts'
+        'src/state/useRouting.ts',
+        /* effect glue only: what to run next is `rangesToRun`/`needsMatching` in domain/tender.ts,
+           tested there, and the calls it makes are tested through /api/tender */
+        'src/state/useTenderRunner.ts'
       ],
       reporter: ['text', 'html'],
       /* Floors, not targets: they are set just under what the suite achieves today, so a change
          that drops coverage fails the gate instead of drifting. Raise them, never lower them. */
-      thresholds: { statements: 90, branches: 78, functions: 92, lines: 92 }
+      thresholds: { statements: 95, branches: 82, functions: 96, lines: 96 }
     }
   },
   resolve: {

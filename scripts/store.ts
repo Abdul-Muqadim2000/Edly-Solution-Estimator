@@ -60,4 +60,5 @@ const pending = state.requests.filter((request) => !(Number(request.est) > 0)).l
 console.log(`requests     ${state.requests.length}  (${pending} awaiting an estimate)`);
 console.log(`solutions    ${state.solutions.length} added at the desk`);
 console.log(`bundles      ${state.bundles.length} custom categories`);
+console.log(`tenders      ${state.tenders.length}  (${state.tenders.filter((tender) => tender.stage !== 'done').length} still in review)`);
 console.log(`settings     ${Object.keys(state.settings).length} keys`);

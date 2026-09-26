@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { PRACTICES, findPlatform } from '@/data/practices';
 import { useApp } from '@/state/AppProvider';
 import { color, font, radius, shadow } from '@/theme';
@@ -5,6 +6,8 @@ import { Mono, useRowHover } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
 import { plural } from '@/lib/format';
 import { AppHeader } from '@/components/AppHeader';
+import { TenderIntake } from '@/components/tender/TenderIntake';
+import { TenderStartCard } from '@/components/tender/TenderList';
 
 /**
  * Practice → platform, in two steps. Shown after every sign-in, with the last platform offered
@@ -160,6 +163,14 @@ export function PracticePicker(): JSX.Element {
   const { state, router } = useApp();
   const chosen = PRACTICES.find((practice) => practice.id === state.practice) ?? null;
   const last = findPlatform(state.lastPlatform);
+  /* before a platform is chosen is exactly when "which platform is this tender for?" is the question */
+  const [intake, setIntake] = useState(false);
+  const tenderEntry = (
+    <>
+      <TenderStartCard onStart={() => setIntake(true)} />
+      {intake ? <TenderIntake onClose={() => setIntake(false)} /> : null}
+    </>
+  );
 
   if (chosen) {
     return (
@@ -169,6 +180,7 @@ export function PracticePicker(): JSX.Element {
           <BackLink onClick={() => router.navigate({ screen: 'practices', practice: undefined })}>← All practices</BackLink>
           <h1 style={{ fontFamily: font.display, fontSize: 30, fontWeight: 700, letterSpacing: -0.5, margin: '14px 0 0' }}>{chosen.name}</h1>
           <p style={{ fontSize: 14, color: color.muted, lineHeight: 1.6, margin: '6px 0 0', maxWidth: 560 }}>{chosen.blurb}</p>
+          {tenderEntry}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 26 }}>
             {chosen.platforms.map((platform) => (
@@ -205,6 +217,8 @@ export function PracticePicker(): JSX.Element {
             onPick={() => router.navigate({ screen: 'hub', platform: last.platform.id })}
           />
         ) : null}
+
+        {tenderEntry}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14, marginTop: 28 }}>
           {PRACTICES.map((practice) => (

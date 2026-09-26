@@ -17,10 +17,15 @@ import {
   reducer,
   requestsFor,
   toPersisted,
+  findTender,
+  openTenderRecord,
+  platformTenders,
+  sentRequirementIds,
   type Action,
   type AppState
 } from '../src/state/reducer';
-import type { Catalog, EstimateRequest, Estimation, Solution } from '../src/types';
+import type { Catalog, EstimateRequest, Estimation, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
+import { NO_TOKENS, type DeskDraft, type ExtractedRequirement, type NewTenderInput } from '../src/domain/tender';
 
 /**
  * The reducer is every state transition in the app, and it is pure, so it is tested with plain
@@ -789,5 +794,291 @@ describe('where the catalog in play came from', () => {
 
   it('copes with a platform it has never heard of', () => {
     expect(catalogSourceLabel(workspace({ platform: 'nonesuch' }))).toBe('industry benchmark set for this platform');
+  });
+});
+
+/* ------------------------------------------------------------------ tenders */
+
+describe('tenders', () => {
+  const doc: TenderDocument = { n: 1, name: 'Acme RFP.pdf', kind: 'pdf', bytes: 1000, pages: 30, fileId: 'file_1', expiresAt: '2026-10-01T00:00:00Z' };
+  const input: NewTenderInput = {
+    plat: 'openedx',
+    name: 'Acme Academy tender',
+    client: 'Acme Academy',
+    due: '2026-11-30',
+    summary: 'A new LMS',
+    docs: [doc],
+    fit: null,
+    outline: [],
+    tokens: NO_TOKENS
+  };
+  const found = (text: string, page = 2): ExtractedRequirement => ({ doc: 1, page, section: 'Scope', text, quote: `"${text}"`, priority: 'must', outOfScope: false });
+  const aMatch = (over: Partial<RequirementMatch> = {}): RequirementMatch => ({
+    kind: 'catalog',
+    solutionIds: ['SSO-1'],
+    confidence: 'high',
+    reason: 'Covered',
+    remainder: '',
+    area: '',
+    integrations: '',
+    approved: false,
+    ...over
+  });
+
+  /** A tender with three requirements read from its first range. */
+  const withTender = (): AppState =>
+    run(
+      workspace(),
+      { type: 'createTender', id: 'TND-1', input },
+      { type: 'rangeDone', id: 'TND-1', key: '1:1-20', found: [found('Single sign-on'), found('Grade export', 9), found('Hardware for labs', 4)], tokens: { input: 100, output: 50 } }
+    );
+  const tender = (state: AppState): Tender => {
+    const one = state.tenders.find((candidate) => candidate.id === 'TND-1');
+    if (!one) throw new Error('no tender');
+    return one;
+  };
+  const reqIds = (state: AppState): string[] => tender(state).reqs.map((req) => req.id);
+
+  it('creates a tender on its platform with its extraction planned, without opening anything', () => {
+    const state = run(workspace(), { type: 'createTender', id: 'TND-1', input });
+    expect(tender(state).ranges.map((range) => range.key)).toEqual(['1:1-20', '1:21-30']);
+    expect(tender(state).stage).toBe('requirements');
+    expect(state.openTender).toBeNull();
+    /* the same id twice is a double click, not a second tender */
+    expect(run(state, { type: 'createTender', id: 'TND-1', input }).tenders).toHaveLength(1);
+  });
+
+  it('adds what a range found, marks the range done and counts its tokens', () => {
+    const state = withTender();
+    expect(reqIds(state)).toEqual(['R-01', 'R-03', 'R-02']);
+    expect(tender(state).ranges[0]).toMatchObject({ status: 'done', found: 3 });
+    expect(tender(state).tokens).toMatchObject({ input: 100, output: 50 });
+  });
+
+  it('ignores a second answer for a range that is already done', () => {
+    /* a slow duplicate call must not add the same requirements twice */
+    const state = withTender();
+    expect(run(state, { type: 'rangeDone', id: 'TND-1', key: '1:1-20', found: [found('Something new')] })).toBe(state);
+  });
+
+  it('marks a failed range with its reason, and puts it back in the queue on retry', () => {
+    const failed = run(withTender(), { type: 'rangeFailed', id: 'TND-1', key: '1:21-30', error: 'Rate limited', tokens: { input: 10 } });
+    expect(tender(failed).ranges[1]).toMatchObject({ status: 'failed', error: 'Rate limited' });
+    expect(tender(failed).tokens.input).toBe(110);
+    const retried = run(failed, { type: 'retryRange', id: 'TND-1', key: '1:21-30' });
+    expect(tender(retried).ranges[1]).toEqual({ key: '1:21-30', doc: 1, from: 21, to: 30, status: 'pending' });
+  });
+
+  it('splits a range one call could not finish, and gives up with a reason at a single page', () => {
+    const split = run(withTender(), { type: 'splitRange', id: 'TND-1', key: '1:21-30' });
+    expect(tender(split).ranges.map((range) => range.key)).toEqual(['1:1-20', '1:21-25', '1:26-30']);
+
+    const narrow = run(workspace(), { type: 'createTender', id: 'TND-1', input: { ...input, docs: [{ ...doc, pages: 1 }] } }, { type: 'splitRange', id: 'TND-1', key: '1:1-1' });
+    expect(tender(narrow).ranges[0]).toMatchObject({ status: 'failed' });
+    expect(tender(narrow).ranges[0]?.error).toContain('by hand');
+  });
+
+  it('approves, removes and restores requirements in bulk', () => {
+    const approved = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01', 'R-02'], status: 'approved' });
+    expect(tender(approved).reqs.filter((req) => req.status === 'approved').map((req) => req.id)).toEqual(['R-01', 'R-02']);
+    const removed = run(approved, { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-03'], status: 'removed' });
+    expect(tender(removed).reqs.find((req) => req.id === 'R-03')?.status).toBe('removed');
+    /* nothing to change is not an edit */
+    expect(run(removed, { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-03'], status: 'removed' })).toBe(removed);
+  });
+
+  it('adds a requirement a person wrote as already approved, and ignores a blank one', () => {
+    const state = run(withTender(), { type: 'addRequirement', id: 'TND-1', input: { text: '  Offline mobile access ', section: 'Mobile', priority: 'should' } });
+    const added = tender(state).reqs.find((req) => req.text === 'Offline mobile access');
+    expect(added).toMatchObject({ id: 'R-04', status: 'approved', edited: true, doc: 0, page: 0, quote: '' });
+    /* added by hand, so it sorts after everything read from the documents */
+    expect(reqIds(state).at(-1)).toBe('R-04');
+    expect(run(state, { type: 'addRequirement', id: 'TND-1', input: { text: '   ', section: '', priority: 'must' } })).toBe(state);
+  });
+
+  it('drops the match of a requirement whose wording or scope changes, but not for a priority flip', () => {
+    const matched = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' }, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch() } });
+    const flipped = run(matched, { type: 'editRequirement', id: 'TND-1', reqId: 'R-01', patch: { priority: 'should' } });
+    expect(tender(flipped).reqs[0]?.match).toBeDefined();
+    expect(tender(flipped).reqs[0]?.edited).toBe(true);
+
+    const reworded = run(matched, { type: 'editRequirement', id: 'TND-1', reqId: 'R-01', patch: { text: 'Single sign-on for staff only' } });
+    expect(tender(reworded).reqs[0]?.match).toBeUndefined();
+    const rescoped = run(matched, { type: 'editRequirement', id: 'TND-1', reqId: 'R-01', patch: { outOfScope: true } });
+    expect(tender(rescoped).reqs[0]?.match).toBeUndefined();
+  });
+
+  it('merges requirements into the first one, keeping every quote', () => {
+    const state = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-02'], status: 'approved' }, { type: 'combineRequirements', id: 'TND-1', reqIds: ['R-02', 'R-01'] });
+    expect(reqIds(state)).toEqual(['R-01', 'R-03']);
+    const merged = tender(state).reqs[0];
+    expect(merged?.text).toBe('Single sign-on Grade export');
+    expect(merged?.quote).toBe('"Single sign-on" / "Grade export"');
+    /* one of them was approved, so the merged requirement is */
+    expect(merged?.status).toBe('approved');
+    expect(run(state, { type: 'combineRequirements', id: 'TND-1', reqIds: ['R-01'] })).toBe(state);
+  });
+
+  it('splits a requirement by copying it next to itself, with no match and a fresh id', () => {
+    const matched = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' }, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch() } });
+    const state = run(matched, { type: 'duplicateRequirement', id: 'TND-1', reqId: 'R-01' });
+    expect(reqIds(state)).toEqual(['R-01', 'R-04', 'R-03', 'R-02']);
+    expect(tender(state).reqs[1]).toMatchObject({ text: 'Single sign-on', status: 'proposed', edited: true });
+    expect(tender(state).reqs[1]?.match).toBeUndefined();
+  });
+
+  it('only matches approved requirements, so one removed while matching ran stays unmatched', () => {
+    const state = run(
+      withTender(),
+      { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' },
+      { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch(), 'R-02': aMatch() }, tokens: { output: 5 } }
+    );
+    expect(tender(state).reqs.find((req) => req.id === 'R-01')?.match).toBeDefined();
+    expect(tender(state).reqs.find((req) => req.id === 'R-02')?.match).toBeUndefined();
+    expect(tender(state).tokens.output).toBe(55);
+  });
+
+  it('records a person changing a match, but not a person accepting it', () => {
+    const matched = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' }, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch() } });
+    const accepted = run(matched, { type: 'approveMatches', id: 'TND-1', reqIds: ['R-01'], approved: true });
+    expect(tender(accepted).reqs[0]?.match).toMatchObject({ approved: true });
+    expect(tender(accepted).reqs[0]?.match?.edited).toBeFalsy();
+
+    const changed = run(accepted, { type: 'editMatch', id: 'TND-1', reqId: 'R-01', patch: { kind: 'partial', remainder: 'SCIM' } });
+    expect(tender(changed).reqs[0]?.match).toMatchObject({ kind: 'partial', remainder: 'SCIM', edited: true, approved: true });
+
+    const reworded = run(accepted, { type: 'editMatch', id: 'TND-1', reqId: 'R-01', patch: { draft: { title: 'Better title' } } });
+    expect(tender(reworded).reqs[0]?.match?.edited).toBeFalsy();
+  });
+
+  it('lets a person set a match by hand where the AI has none', () => {
+    const state = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-03'], status: 'approved' }, { type: 'editMatch', id: 'TND-1', reqId: 'R-03', patch: { kind: 'out' } });
+    expect(tender(state).reqs.find((req) => req.id === 'R-03')?.match).toMatchObject({ kind: 'out', edited: true, approved: false, reason: 'Set by hand.' });
+  });
+
+  it('clears matches so they can be asked for again', () => {
+    const matched = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' }, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch() } });
+    const cleared = run(matched, { type: 'clearMatches', id: 'TND-1', reqIds: ['R-01'] });
+    expect(tender(cleared).reqs[0]?.match).toBeUndefined();
+    expect(run(cleared, { type: 'clearMatches', id: 'TND-1', reqIds: ['R-01'] })).toBe(cleared);
+  });
+
+  it('creates the estimation with the accepted solutions picked, on the tender platform, and leaves it closed', () => {
+    const state = run(withTender(), { type: 'applyTender', id: 'TND-1', input: { name: 'Acme deal', client: 'Acme Academy', tag: 'Active', due: '2026-11-30' }, solutionIds: ['SSO-1', 'AS-1'] });
+    const created = state.estimations.find((one) => one.name === 'Acme deal');
+    expect(created?.snap.sel).toEqual({ 'SSO-1': true, 'AS-1': true });
+    expect(created?.plat).toBe('openedx');
+    expect(tender(state).estId).toBe(created?.id);
+    /* the desk requests are the second confirmation, so nothing navigates away yet */
+    expect(state.openEstimation).toBeNull();
+    /* applying twice does not make a second deal */
+    expect(run(state, { type: 'applyTender', id: 'TND-1', input: { name: 'Again', client: '', tag: 'Active', due: '' }, solutionIds: [] })).toBe(state);
+  });
+
+  it('sends desk requests once, attached to the estimation, and never twice for one requirement', () => {
+    const applied = run(withTender(), { type: 'applyTender', id: 'TND-1', input: { name: 'Acme deal', client: 'Acme Academy', tag: 'Active', due: '' }, solutionIds: [] });
+    const draft = (reqId: string): DeskDraft => ({ reqId, kind: 'custom', title: `Custom ${reqId}`, details: 'Details', area: 'Assessment', integrations: '', source: '', skip: false, sent: false });
+    const contact = { name: 'Sara', email: 'sara@edly.io', org: 'Edly' };
+
+    const sent = run(applied, { type: 'sendTenderRequests', id: 'TND-1', drafts: [draft('R-01'), draft('R-02')], contact });
+    const made = sent.requests.filter((one) => one.tender === 'TND-1');
+    expect(made.map((one) => one.tenderReq)).toEqual(['R-01', 'R-02']);
+    expect(made[0]?.estId).toBe(tender(applied).estId);
+    expect(made[0]?.est).toBeUndefined();
+    expect(tender(sent).stage).toBe('done');
+    expect(tender(sent).sentAt).not.toBe('');
+
+    /* the screen offers R-01 again after a back-and-forth: the reducer still refuses it */
+    const again = run(sent, { type: 'sendTenderRequests', id: 'TND-1', drafts: [draft('R-01'), draft('R-03')], contact });
+    expect(again.requests.filter((one) => one.tender === 'TND-1').map((one) => one.tenderReq)).toEqual(['R-01', 'R-02', 'R-03']);
+    expect(sentRequirementIds(again, 'TND-1')).toEqual(new Set(['R-01', 'R-02', 'R-03']));
+  });
+
+  it('sends nothing before the estimation exists', () => {
+    const state = withTender();
+    expect(run(state, { type: 'sendTenderRequests', id: 'TND-1', drafts: [], contact: { name: '', email: '', org: '' } })).toBe(state);
+  });
+
+  it('lets the tender be applied again when its estimation is deleted', () => {
+    const applied = run(withTender(), { type: 'applyTender', id: 'TND-1', input: { name: 'Acme deal', client: '', tag: 'Active', due: '' }, solutionIds: [] }, { type: 'patchTender', id: 'TND-1', patch: { stage: 'done' } });
+    const state = run(applied, { type: 'deleteEstimation', id: tender(applied).estId });
+    expect(tender(state)).toMatchObject({ estId: '', sentAt: '', stage: 'apply' });
+  });
+
+  it('forgets the file ids that were deleted at Anthropic', () => {
+    const state = run(withTender(), { type: 'forgetTenderFiles', id: 'TND-1', fileIds: ['file_1'] });
+    expect(tender(state).docs[0]?.fileId).toBe('');
+    expect(run(state, { type: 'forgetTenderFiles', id: 'TND-1', fileIds: ['file_1'] })).toBe(state);
+  });
+
+  it('closes a tender that is deleted while open', () => {
+    const open = { ...withTender(), openTender: 'TND-1' };
+    const state = run(open, { type: 'deleteTender', id: 'TND-1' });
+    expect(state.tenders).toEqual([]);
+    expect(state.openTender).toBeNull();
+  });
+
+  it('closes the tender when an estimation opens, the platform changes or someone signs out', () => {
+    const open = { ...withTender(), estimations: [estimation('EST-1')], openTender: 'TND-1' };
+    expect(run(open, { type: 'openEstimation', id: 'EST-1' }).openTender).toBeNull();
+    expect(run(open, { type: 'createEstimation', input: { name: 'New', client: '', tag: 'Active', due: '' } }).openTender).toBeNull();
+    expect(run(open, { type: 'choosePlatform', practice: 'edtech', platform: 'moodle' }).openTender).toBeNull();
+    expect(run(open, { type: 'signOut' }).openTender).toBeNull();
+    expect(run(open, { type: 'signIn', user: 'admin', role: 'sales' }).openTender).toBeNull();
+  });
+
+  it('does not let a late match reply replace a match a person set while it was out', () => {
+    /* found in review: the person set R-01 by hand while matching ran, and the reply put the AI's back */
+    const asked = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01', 'R-02'], status: 'approved' });
+    const texts = { 'R-01': 'Single sign-on', 'R-02': 'Grade export' };
+    const byHand = run(asked, { type: 'editMatch', id: 'TND-1', reqId: 'R-01', patch: { kind: 'out' } });
+    const late = run(byHand, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch(), 'R-02': aMatch() }, texts });
+    expect(tender(late).reqs.find((req) => req.id === 'R-01')?.match).toMatchObject({ kind: 'out', edited: true });
+    /* the one nobody touched still takes the answer */
+    expect(tender(late).reqs.find((req) => req.id === 'R-02')?.match?.kind).toBe('catalog');
+  });
+
+  it('drops a match made for wording that has since changed', () => {
+    const asked = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' });
+    const reworded = run(asked, { type: 'editRequirement', id: 'TND-1', reqId: 'R-01', patch: { text: 'Single sign-on for staff only' } });
+    const late = run(reworded, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch() }, texts: { 'R-01': 'Single sign-on' } });
+    /* left unmatched, so the match step offers to ask again about the new wording */
+    expect(tender(late).reqs.find((req) => req.id === 'R-01')?.match).toBeUndefined();
+  });
+
+  it('claims ranges for a tab, and never claims one that is finished or failed', () => {
+    const failed = run(withTender(), { type: 'rangeFailed', id: 'TND-1', key: '1:21-30', error: 'x' });
+    expect(run(failed, { type: 'claimRanges', id: 'TND-1', keys: ['1:1-20', '1:21-30'], claim: { at: 5, by: 'tab-a' } })).toBe(failed);
+
+    const fresh = run(workspace(), { type: 'createTender', id: 'TND-1', input });
+    const claimed = run(fresh, { type: 'claimRanges', id: 'TND-1', keys: ['1:21-30'], claim: { at: 5, by: 'tab-a' } });
+    expect(tender(claimed).ranges[1]).toMatchObject({ status: 'running', startedAt: 5, by: 'tab-a' });
+    expect(tender(claimed).ranges[0]?.status).toBe('pending');
+    /* the answer finishes a claimed range as it does a pending one */
+    const done = run(claimed, { type: 'rangeDone', id: 'TND-1', key: '1:21-30', found: [found('Offline mobile', 22)] });
+    expect(tender(done).ranges[1]).toEqual({ key: '1:21-30', doc: 1, from: 21, to: 30, status: 'done', found: 1 });
+  });
+
+  it('hands a retried or split range straight to the tab that asked, so no other tab sees it unclaimed', () => {
+    const failed = run(withTender(), { type: 'rangeFailed', id: 'TND-1', key: '1:21-30', error: 'Rate limited' });
+    const retried = run(failed, { type: 'retryRange', id: 'TND-1', key: '1:21-30', claim: { at: 7, by: 'tab-a' } });
+    expect(tender(retried).ranges[1]).toEqual({ key: '1:21-30', doc: 1, from: 21, to: 30, status: 'running', startedAt: 7, by: 'tab-a' });
+
+    const split = run(withTender(), { type: 'splitRange', id: 'TND-1', key: '1:21-30', claim: { at: 8, by: 'tab-a' } });
+    expect(tender(split).ranges.slice(1)).toEqual([
+      { key: '1:21-25', doc: 1, from: 21, to: 25, status: 'running', startedAt: 8, by: 'tab-a' },
+      { key: '1:26-30', doc: 1, from: 26, to: 30, status: 'running', startedAt: 8, by: 'tab-a' }
+    ]);
+  });
+
+  it('keeps tenders to their platform and persists them with the rest', () => {
+    const state = { ...withTender(), tenders: [...withTender().tenders, { ...tender(withTender()), id: 'TND-2', plat: 'moodle', slug: 'elsewhere' }] };
+    expect(platformTenders(state).map((one) => one.id)).toEqual(['TND-1']);
+    expect(findTender(state, 'acme-academy-tender')?.id).toBe('TND-1');
+    expect(findTender(state, 'tnd-1')?.id).toBe('TND-1');
+    expect(findTender(state, 'elsewhere')).toBeNull();
+    expect(findTender(state, '  ')).toBeNull();
+    expect(openTenderRecord({ ...state, openTender: 'TND-1' })?.id).toBe('TND-1');
+    expect(toPersisted(state).tenders).toHaveLength(2);
   });
 });

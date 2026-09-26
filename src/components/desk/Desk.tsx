@@ -397,7 +397,13 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         </div>
       ) : null}
 
-      <p style={{ fontSize: 13, color: color.body, lineHeight: 1.6, margin: '10px 0 0' }}>{request.details}</p>
+      {request.tender ? (
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: color.violet, marginTop: 8 }}>
+          From a tender, requirement {request.tenderReq}. The tender&apos;s own wording is quoted below.
+        </div>
+      ) : null}
+      {/* pre-line: requests drafted from a tender keep their paragraphs and the quoted wording apart */}
+      <p style={{ fontSize: 13, color: color.body, lineHeight: 1.6, margin: '10px 0 0', whiteSpace: 'pre-line' }}>{request.details}</p>
       <div style={{ fontSize: 11.5, color: color.faint, marginTop: 8 }}>
         Requested by {[request.name, request.org, request.email].filter(Boolean).join(' · ') || 'Sales workspace'} · {request.at || '—'}
       </div>

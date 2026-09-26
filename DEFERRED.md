@@ -2,7 +2,7 @@
 
 Work we have agreed is worth doing but cannot do yet, and what is in the way. Most of it waits on
 a real server, because today there is no database and every save rewrites a whole spreadsheet.
-The rest waits on credentials or on data we do not have.
+The rest waits on credentials, on data we do not have, or on an agreement with a supplier.
 
 This is not the to-do list. Anything that can be done today belongs in *Worth adding next* in
 CLAUDE.md. When a blocker goes away, move what it unblocks back there (or just do it) and delete
@@ -78,6 +78,18 @@ can flip.
 included. That needs no server and is item 1 in CLAUDE.md. It answers "may this person open the
 app", not "who is this" or "may they change desk pricing".
 
+`/api/tender` makes this more urgent than it was. Anyone who finds the URL can upload files to
+Anthropic under Edly's key and run up its bill, and the endpoint has no rate limit (entry 3 is why).
+Deployment protection covers it along with everything else, so nothing in the code needs to change;
+it has to be switched on before `ANTHROPIC_API_KEY` is set on a public deployment. The user asked
+for this to be noted rather than built on 2026-09-26.
+
+Two things limit the damage in the meantime, and neither is sign-in. `op=discard` deletes only
+files whose name carries the `edly-tender-` prefix this endpoint gives its uploads, so it cannot be
+used to delete other files in the workspace. And the key should belong to an Anthropic workspace of
+its own with a monthly spend limit set in the Anthropic console: that caps what an open endpoint
+can cost, and keeps the tender files apart from anything else the organisation stores there.
+
 **When unblocked:** a users table, a session check in `server/handler.ts` before any store call,
 and the role checked on the server for every write. When choosing the proxy, check whether it
 forwards a verified identity header. If it does, part of this entry and the "who" in entry 5 can
@@ -114,6 +126,39 @@ been run for real and when.
 
 ---
 
+### 8. A real tender through the AI
+
+**Blocked by:** there is no `ANTHROPIC_API_KEY` on this machine. `tests/tenderApi.test.ts` drives
+`/api/tender` against a stubbed `fetch` that answers the way the Messages and Files APIs do,
+including a refusal, a cut-off answer, a 401, a 404 and a 429, and the screens were driven against a
+stand-in API. Neither proves how the model reads a real tender.
+
+**When unblocked:** put a key in `.env`, run one real tender through intake, extraction, matching
+and apply, and check four things. The extraction calls after the fit call should report
+`cacheRead` tokens close to the tender's size in the token line at the top of the tender; if they
+read zero, something is breaking the shared prefix (see the comment at the top of
+`server/ai/prompts.ts`). No single call should come near the 300 s limit; if one does, lower
+`RANGE_PAGES` in `src/domain/tender.ts`. Every quoted passage should be findable on the page it
+cites. And the platform recommendation should be the one a salesperson would have chosen. Build a
+small eval of three or four invented tenders with known requirements before tuning the prompts, so
+a change can be measured rather than eyeballed.
+
+### 9. Tenders over 4 MB
+
+**Blocked by:** Vercel refuses a function request body over 4.5 MB before the function runs, so a
+file has to fit in one request. Getting round that needs somewhere to stage the upload, and the
+natural place is Vercel Blob, which needs a `BLOB_READ_WRITE_TOKEN`. The user chose on 2026-09-26 to
+keep tenders under the limit for now.
+
+**Now:** the limit is enforced with a readable message in `src/lib/tenderFiles.ts` and again in
+`api/tender.ts`. Word and Excel files are converted to text in the browser first, so only their text
+counts, and a 20 MB Word file with images usually fits.
+
+**When unblocked:** the browser uploads the file to Blob in parts (Blob's multipart API, written by
+hand like the existing Blob provider), `/api/tender?op=upload` takes the Blob URL instead of the
+bytes, fetches the file server to server, uploads it to the Files API and deletes the Blob copy.
+Nothing downstream changes, because everything after upload works with the Files API id.
+
 ## Waiting on data
 
 ### 7. Client-proven catalogs for the other 19 platforms
@@ -124,3 +169,22 @@ hours from `src/data/practices.ts`, flagged `sample: true` and labelled *Sample*
 **When unblocked:** load each platform's real catalog sheet through the in-app Catalog panel, then
 drop its `sample` flag in `practices.ts`. Until then, do not present those numbers as delivery
 records.
+
+## Waiting on an agreement
+
+### 10. Zero data retention for tender documents
+
+**Blocked by:** a zero-data-retention agreement with Anthropic, which is a contract between Edly and
+Anthropic rather than a setting in the code. Without one, tender files and the requests that read
+them are kept by Anthropic for a limited period under its commercial terms, though not used for
+training. The user decided on 2026-09-26 to use the API under the standard terms for now and to
+consider zero retention later.
+
+**Now:** the code keeps what it sends to the minimum. Files are uploaded with a 72-hour expiry, are
+deleted when the desk requests go out, when the tender is deleted, and when intake is abandoned, and
+can be removed from the tender screen at any time. Nothing logs document contents or model output.
+The intake screen tells the person where the files go.
+
+**When unblocked:** no code change is needed for the agreement itself. Check which models it covers
+before relying on it, because some models require retention (the model is set by `EDLY_AI_MODEL`),
+and record the agreement's date and scope here, then delete this entry.

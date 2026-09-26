@@ -144,7 +144,7 @@ export async function unzip(input: ArrayBuffer | Uint8Array): Promise<Record<str
   return out;
 }
 
-function zipStored(files: { name: string; data: string | Uint8Array }[]): Uint8Array {
+export function zipStored(files: { name: string; data: string | Uint8Array }[]): Uint8Array {
   const parts: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;

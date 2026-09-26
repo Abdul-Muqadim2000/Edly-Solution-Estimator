@@ -9,6 +9,8 @@ import { findPlatform, isLiveCatalog } from '@/data/practices';
 import { AppHeader } from '@/components/AppHeader';
 import { Banner, Button, Empty, Field, Mono, Row, SearchInput, Select, Spacer, Stat, useRowHover } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
+import { TenderIntake } from '@/components/tender/TenderIntake';
+import { TenderStrip } from '@/components/tender/TenderList';
 
 /** The sales landing page: every deal for this platform, with the numbers that matter on the card. */
 
@@ -84,6 +86,7 @@ export function EstimationsHub(): JSX.Element {
   const [due, setDue] = useState('');
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState('');
+  const [intake, setIntake] = useState(false);
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -178,6 +181,9 @@ export function EstimationsHub(): JSX.Element {
             placeholder="Find an estimation or client…"
             style={{ flex: '0 1 260px', minWidth: 150, padding: '9px 15px', fontSize: 12.5 }}
           />
+          <Button tone="brand" pill onClick={() => setIntake(true)} style={{ padding: '9px 18px', fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' }}>
+            Start from a tender
+          </Button>
           <Button
             tone="primary"
             pill
@@ -206,6 +212,9 @@ export function EstimationsHub(): JSX.Element {
             </Row>
           </div>
         ) : null}
+
+        {intake ? <TenderIntake onClose={() => setIntake(false)} /> : null}
+        <TenderStrip />
 
         {rows.length === 0 ? (
           <div style={{ marginTop: 22 }}>

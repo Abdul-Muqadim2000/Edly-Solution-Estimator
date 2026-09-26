@@ -249,6 +249,10 @@ export interface EstimateRequest {
   catSub?: string;
   catAccount?: string;
   catLimits?: string;
+
+  /** Tender this request was drafted from, and the requirement within it. */
+  tender?: string;
+  tenderReq?: string;
 }
 
 /** A solution added to a catalog by the estimation desk. */
@@ -286,6 +290,153 @@ export interface AddedBundle {
   at: string;
 }
 
+/* ------------------------------------------------------------------- tenders */
+
+/**
+ * Where a tender is in its review. The AI proposes at every step; nothing reaches an estimation
+ * or the desk until a person approves it at the step that owns it.
+ */
+export type TenderStage = 'requirements' | 'match' | 'apply' | 'done';
+
+/** A file the tender arrived in, as held at Anthropic for the analysis. */
+export interface TenderDocument {
+  /** Position in the tender, from 1. The model and the UI both refer to documents by it. */
+  n: number;
+  name: string;
+  /** `pdf` is read page by page; `text` was converted in the browser and carries part markers. */
+  kind: 'pdf' | 'text';
+  bytes: number;
+  /** Pages of a PDF, or parts of converted text. 0 when not yet counted. */
+  pages: number;
+  /** Files API id. Blank once the file has been deleted at Anthropic. */
+  fileId: string;
+  /** When Anthropic deletes the file regardless, ISO timestamp. */
+  expiresAt: string;
+}
+
+/** A heading in a tender document and the pages it spans. */
+export interface TenderSection {
+  doc: number;
+  title: string;
+  from: number;
+  to: number;
+}
+
+export type Confidence = 'high' | 'medium' | 'low';
+
+/** Which platform the tender belongs on, as the AI read it. A person makes the choice. */
+export interface PlatformFit {
+  platform: string;
+  confidence: Confidence;
+  reasons: string[];
+  alternatives: { platform: string; reason: string }[];
+  /** Substantial parts of the tender that belong on another platform. */
+  elsewhere: { platform: string; what: string }[];
+}
+
+/** One slice of one document, extracted in one call so no call outlives a function's time limit. */
+export interface TenderRange {
+  key: string;
+  doc: number;
+  from: number;
+  /** Last page, inclusive. 0 means to the end, for a document whose length is unknown. */
+  to: number;
+  /** `running` is a claim: some tab is reading it, so no other tab starts the same call. */
+  status: 'pending' | 'running' | 'done' | 'failed';
+  /** When the claim was made, epoch ms. A stale claim belongs to a tab that went away. */
+  startedAt?: number;
+  /** Which tab holds the claim. Random per page load, never shown and never meaningful elsewhere. */
+  by?: string;
+  error?: string;
+  /** Requirements this range contributed. */
+  found?: number;
+}
+
+export type RequirementPriority = 'must' | 'should';
+export type RequirementStatus = 'proposed' | 'approved' | 'removed';
+/** catalog: fully covered. partial: covered in part, remainder to the desk. custom: all to the desk. out: not Edly's work. */
+export type MatchKind = 'catalog' | 'partial' | 'custom' | 'out';
+
+/** A draft desk request, as a person reworded it at the apply step. */
+export interface DeskDraftEdit {
+  title?: string;
+  details?: string;
+  area?: string;
+  integrations?: string;
+}
+
+export interface RequirementMatch {
+  kind: MatchKind;
+  /** Catalog solution ids. Hours are always read from the catalog, never from the AI. */
+  solutionIds: string[];
+  confidence: Confidence;
+  reason: string;
+  /** For a partial match: what the catalog does not cover. */
+  remainder: string;
+  /** Bundle id closest to the work, for the desk request. Blank for something new. */
+  area: string;
+  integrations: string;
+  /** A person accepted it. */
+  approved: boolean;
+  /** A person changed what the AI proposed. */
+  edited?: boolean;
+  draft?: DeskDraftEdit;
+  /** Leave this one out of the desk requests. */
+  skip?: boolean;
+}
+
+export interface TenderRequirement {
+  id: string;
+  doc: number;
+  /** Physical page in a PDF, or part in converted text. 0 when unknown. */
+  page: number;
+  section: string;
+  text: string;
+  /** The tender's own wording, so the desk and the bid team can check the paraphrase. */
+  quote: string;
+  priority: RequirementPriority;
+  /** Hardware, insurance, contract terms: obligations that are not software delivery. */
+  outOfScope: boolean;
+  status: RequirementStatus;
+  /** Added or reworded by a person. */
+  edited?: boolean;
+  match?: RequirementMatch;
+}
+
+/** Tokens the AI used on this tender, for cost visibility. */
+export interface TenderTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface Tender {
+  id: string;
+  /** Platform chosen at the fit step. Tenders never mix platforms, like everything else. */
+  plat: string;
+  name: string;
+  /** URL name, unique within the platform. Assigned once and never rewritten, as for estimations. */
+  slug: string;
+  client: string;
+  /** Submission deadline, ISO yyyy-mm-dd. */
+  due: string;
+  summary: string;
+  at: string;
+  up: string;
+  stage: TenderStage;
+  docs: TenderDocument[];
+  fit: PlatformFit | null;
+  outline: TenderSection[];
+  ranges: TenderRange[];
+  reqs: TenderRequirement[];
+  /** The estimation created at the apply step. */
+  estId: string;
+  /** When the desk requests went out, ISO yyyy-mm-dd. */
+  sentAt: string;
+  tokens: TenderTokens;
+}
+
 /* --------------------------------------------------------------- persistence */
 
 /** The shape the spreadsheet stores and /api/state exchanges. */
@@ -294,6 +445,7 @@ export interface PersistedState {
   requests: EstimateRequest[];
   solutions: AddedSolution[];
   bundles: AddedBundle[];
+  tenders: Tender[];
   /** UI preferences and per-platform loaded catalogs, keyed by storage key. */
   settings: Record<string, unknown>;
 }

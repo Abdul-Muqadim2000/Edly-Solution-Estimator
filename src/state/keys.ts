@@ -1,10 +1,12 @@
 /** Browser storage keys. The sync bridge mirrors all of these except `auth`. */
 export const STORAGE_KEYS = {
-  /** Estimations, requests, desk additions, custom bundles. */
+  /** Estimations, requests, desk additions, custom bundles, tenders. */
   estimations: 'edly-estimations-v2',
   requests: 'edly-requests-v2',
   solutions: 'edly-solutions-v2',
   bundles: 'edly-bundles-v2',
+  /** Tenders in review, with their extracted requirements and decisions. */
+  tenders: 'edly-tenders-v1',
   /** Working snapshot of the open estimation, plus display preferences. */
   workspace: 'edly-workspace-v2',
   /** Which estimation is open. */
@@ -26,7 +28,8 @@ export const SYNCED_DATA_KEYS = [
   STORAGE_KEYS.estimations,
   STORAGE_KEYS.requests,
   STORAGE_KEYS.solutions,
-  STORAGE_KEYS.bundles
+  STORAGE_KEYS.bundles,
+  STORAGE_KEYS.tenders
 ] as const;
 
 /** Keys stored in the workbook's Settings sheet. */
@@ -64,4 +67,16 @@ export function removeStorage(key: string): void {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * The slices whose value changed since this tab last wrote them, compared by reference.
+ *
+ * Writing only these is what keeps two tabs from fighting. A tab that rewrote every slice on any
+ * change echoed its stale copy of the slices it had not touched back over the other tab's newer
+ * ones, and because a storage event fires only when a value changes, the other tab then adopted
+ * the stale copy: a tender applied in one tab lost its estimation to an idle hub in the other.
+ */
+export function changedSlices(previous: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>): string[] {
+  return Object.keys(next).filter((key) => previous[key] !== next[key]);
 }

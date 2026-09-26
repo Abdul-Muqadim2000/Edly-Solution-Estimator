@@ -3,9 +3,17 @@
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/*.ts": {
+    "api/state.ts": {
       "runtime": "nodejs22.x",
       "maxDuration": 15
+    },
+    "api/catalog.ts": {
+      "runtime": "nodejs22.x",
+      "maxDuration": 15
+    },
+    "api/tender.ts": {
+      "runtime": "nodejs22.x",
+      "maxDuration": 300
     }
   },
   "headers": [

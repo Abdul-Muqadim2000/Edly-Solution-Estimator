@@ -14,7 +14,7 @@ import {
 import { slugify, uniqueSlug, withSlugs } from '../src/lib/format';
 import { INITIAL_STATE, reducer, type Action, type AppState } from '../src/state/reducer';
 import { routeOfState } from '../src/state/useRouting';
-import type { Estimation } from '../src/types';
+import type { Estimation, Tender } from '../src/types';
 
 /**
  * The router is pure string work, which is the point: a broken link is invisible until someone
@@ -369,5 +369,80 @@ describe('routeOfState', () => {
       expect(routeOfState(reducer(state, { type: 'applyRoute', route }))).toEqual(route);
       expect(formatRoute(route)).toBe(url);
     }
+  });
+});
+
+/* ------------------------------------------------------------------ tenders */
+
+describe('tender links', () => {
+  const tender = (id: string, plat: string, slug: string): Tender => ({
+    id,
+    plat,
+    name: slug,
+    slug,
+    client: '',
+    due: '',
+    summary: '',
+    at: '2026-01-01',
+    up: '2026-01-01',
+    stage: 'requirements',
+    docs: [],
+    fit: null,
+    outline: [],
+    ranges: [],
+    reqs: [],
+    estId: '',
+    sentAt: '',
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  });
+  const withTenders = (over: Partial<AppState> = {}): AppState =>
+    workspace({ tenders: [tender('TND-1', 'openedx', 'acme-lms-tender'), tender('TND-2', 'moodle', 'acme-lms-tender')], ...over });
+
+  it('reads and writes a tender link, and the two agree', () => {
+    expect(parseRoute('/p/openedx/t/acme-lms-tender')).toEqual({ screen: 'tender', platform: 'openedx', tender: 'acme-lms-tender' });
+    expect(formatRoute({ screen: 'tender', platform: 'openedx', tender: 'acme-lms-tender' })).toBe('/p/openedx/t/acme-lms-tender');
+    /* a tender link with no slug is not a tender screen */
+    expect(parseRoute('/p/openedx/t')).toEqual({ screen: 'hub', platform: 'openedx' });
+    expect(formatRoute({ screen: 'tender', platform: 'openedx' })).toBe('/');
+  });
+
+  it('opens the tender a link names, on the link platform, in sales', () => {
+    const state = apply(withTenders({ auth: { user: 'admin', role: 'estimator', at: 0 } }), '/p/moodle/t/acme-lms-tender');
+    expect(state.platform).toBe('moodle');
+    expect(state.openTender).toBe('TND-2');
+    expect(state.auth?.role).toBe('sales');
+  });
+
+  it('accepts the id as well as the slug, which is what the intake navigates with', () => {
+    expect(apply(withTenders(), '/p/openedx/t/TND-1').openTender).toBe('TND-1');
+  });
+
+  it('commits and closes the open deal before showing a tender', () => {
+    /* the tender replaces the builder, and the draft must not be lost on the way */
+    const building = run(apply(withTenders(), '/p/openedx/e/acme-academy'), { type: 'toggleSolution', id: 'OX-9' });
+    const state = apply(building, '/p/openedx/t/acme-lms-tender');
+    expect(state.openEstimation).toBeNull();
+    expect(state.openTender).toBe('TND-1');
+    expect(state.estimations.find((one) => one.id === 'EST-1')?.snap.sel).toEqual({ 'OX-9': true });
+  });
+
+  it('closes the tender for the builder, the hub and the picker', () => {
+    const open = apply(withTenders(), '/p/openedx/t/acme-lms-tender');
+    expect(apply(open, '/p/openedx/e/acme-academy').openTender).toBeNull();
+    expect(apply(open, '/p/openedx').openTender).toBeNull();
+    expect(apply(open, '/practices').openTender).toBeNull();
+  });
+
+  it('lands on the hub, not a blank screen, when the tender has been deleted', () => {
+    const state = apply(withTenders(), '/p/openedx/t/no-such-tender');
+    expect(state.openTender).toBeNull();
+    expect(routeOfState(state)).toEqual({ screen: 'hub', platform: 'openedx' });
+  });
+
+  it('names an open tender by its slug, and the link rebuilds the same screen', () => {
+    const state = apply(withTenders(), '/p/openedx/t/TND-1');
+    const route = routeOfState(state);
+    expect(route).toEqual({ screen: 'tender', platform: 'openedx', tender: 'acme-lms-tender' });
+    expect(routeOfState(reducer(state, { type: 'applyRoute', route }))).toEqual(route);
   });
 });
