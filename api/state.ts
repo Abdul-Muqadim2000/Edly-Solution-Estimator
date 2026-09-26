@@ -1,7 +1,7 @@
-import { discover, exportBytes, loadState, saveState, storeKind, storeLabel } from '../server/store';
-import { coerceState, countRows, EMPTY_STATE } from '../server/schema';
-import { json, universal } from '../server/handler';
-import { XLSX_MIME } from '../server/providers/types';
+import { discover, exportBytes, loadState, saveState, storeKind, storeLabel } from '../server/store.js';
+import { coerceState, countRows, EMPTY_STATE } from '../server/schema.js';
+import { json, universal } from '../server/handler.js';
+import { XLSX_MIME } from '../server/providers/types.js';
 
 /**
  * GET  /api/state              the whole store as JSON

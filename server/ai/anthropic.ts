@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { AiErrorCode } from '../../src/domain/tender';
-import type { TenderTokens } from '../../src/types';
+import type { AiErrorCode } from '../../src/domain/tender.js';
+import type { TenderTokens } from '../../src/types.js';
 
 /**
  * The only code that talks to Anthropic.

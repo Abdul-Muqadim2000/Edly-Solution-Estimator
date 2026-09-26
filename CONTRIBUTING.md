@@ -14,6 +14,12 @@ CI should run exactly that. `bun run test:watch` while you work.
 handle it. No `any` — `unknown` plus a narrowing function instead. Type imports use
 `import type`.
 
+**Server code imports its own files with `.js`.** Anything `api/` loads at runtime, which is
+`api/`, `server/` and the `src/` files they pull in, writes `from './schema.js'`, not
+`from './schema'`. Vercel compiles each file on its own and Node will not guess an extension, so
+one bare import takes down every endpoint while Bun, Vite and the tests carry on working.
+`tests/deploy.test.ts` walks the imports and names any that would fail.
+
 **Name things for what they are, not what they hold.** `platformEstimations`, not `filtered`.
 `ownedCatalogIds`, not `map2`.
 

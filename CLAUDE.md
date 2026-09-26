@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 499 tests across seventeen files.
+`bun run test` runs 502 tests across seventeen files.
 
 | File | Covers |
 |---|---|
@@ -165,7 +165,7 @@ reference.
 | `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges, desk drafts |
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel and text tenders into uploads |
-| `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, and time limits for every endpoint |
+| `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load |
 
 ### Coverage
 
@@ -401,6 +401,9 @@ The spreadsheets hold real deal names, client names and pricing.
 - `server/ai/prompts.ts`: every call sends the same system prompt and tools, with the tender
   documents first, so the fit call and every extraction call share one cached copy of the tender.
   Changing any of those per call re-bills the whole tender on every range.
+- **Relative imports in `api/`, `server/` and the `src/` files they load end in `.js`.** Vercel runs
+  them under Node, which refuses a bare `'./schema'`, and the whole API then answers with
+  FUNCTION_INVOCATION_FAILED. Nothing local notices; `tests/deploy.test.ts` does.
 - `index.html`: the `<base href>` is load-bearing. Without it a deep link makes every relative URL
   resolve against the route instead of the mount point, and the catalog sheet 404s.
 - **An un-estimated request round-trips with no hours at all, not `0`.** Zero reads as "estimated

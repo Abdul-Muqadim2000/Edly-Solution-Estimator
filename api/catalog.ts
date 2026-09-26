@@ -1,6 +1,6 @@
-import { readWorkbook } from '../src/lib/xlsx';
-import { json, universal } from '../server/handler';
-import { XLSX_MIME } from '../server/providers/types';
+import { readWorkbook } from '../src/lib/xlsx.js';
+import { json, universal } from '../server/handler.js';
+import { XLSX_MIME } from '../server/providers/types.js';
 
 /**
  * GET /api/catalog              what the served catalog workbook contains

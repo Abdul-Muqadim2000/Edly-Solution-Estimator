@@ -1,4 +1,4 @@
-import { env, TokenCache, XLSX_MIME, type DiscoveredTarget, type FileProvider, type SaveResult } from './types';
+import { env, TokenCache, XLSX_MIME, type DiscoveredTarget, type FileProvider, type SaveResult } from './types.js';
 
 /**
  * Microsoft 365 — OneDrive or SharePoint, via Graph.

@@ -9,11 +9,11 @@ import {
   type FitResult,
   type MatchInput,
   type PlatformDigest
-} from '../../src/domain/tender';
-import type { RequirementMatch, TenderTokens } from '../../src/types';
-import { record, text as str, whole as int } from '../../src/lib/narrow';
-import { AiError, aiModel, anthropic, callDeadlineMs, FILE_TTL_SECONDS, TENDER_FILE_PREFIX, toAiError, tokensOf } from './anthropic';
-import { catalogText, documentBlocks, extractInstruction, fitInstruction, matchInstruction, SYSTEM, TOOLS, type ToolName } from './prompts';
+} from '../../src/domain/tender.js';
+import type { RequirementMatch, TenderTokens } from '../../src/types.js';
+import { record, text as str, whole as int } from '../../src/lib/narrow.js';
+import { AiError, aiModel, anthropic, callDeadlineMs, FILE_TTL_SECONDS, TENDER_FILE_PREFIX, toAiError, tokensOf } from './anthropic.js';
+import { catalogText, documentBlocks, extractInstruction, fitInstruction, matchInstruction, SYSTEM, TOOLS, type ToolName } from './prompts.js';
 
 /**
  * The tender operations, each one call to Claude.

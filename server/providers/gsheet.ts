@@ -1,5 +1,5 @@
-import type { WriteSheets, Workbook } from '../../src/lib/xlsx';
-import { env, TokenCache, type DiscoveredTarget, type SaveResult, type SheetProvider } from './types';
+import type { WriteSheets, Workbook } from '../../src/lib/xlsx.js';
+import { env, TokenCache, type DiscoveredTarget, type SaveResult, type SheetProvider } from './types.js';
 
 /**
  * Google Sheets — the data lives in a spreadsheet in your own Drive, as real rows.

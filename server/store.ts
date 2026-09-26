@@ -1,8 +1,8 @@
-import type { PersistedState } from '../src/types';
-import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
-import { EMPTY_STATE, sheetsToState, stateToSheets } from './schema';
-import type { DiscoveredTarget, Provider } from './providers/types';
-import { blobProvider, localProvider } from './providers/builtin';
+import type { PersistedState } from '../src/types.js';
+import { readWorkbook, writeWorkbook } from '../src/lib/xlsx.js';
+import { EMPTY_STATE, sheetsToState, stateToSheets } from './schema.js';
+import type { DiscoveredTarget, Provider } from './providers/types.js';
+import { blobProvider, localProvider } from './providers/builtin.js';
 
 /**
  * Where the spreadsheet lives. One env var picks the provider:
@@ -38,11 +38,11 @@ export function storeKind(): StoreKind {
 async function provider(): Promise<Provider> {
   switch (storeKind()) {
     case 'graph':
-      return (await import('./providers/graph')).graphProvider;
+      return (await import('./providers/graph.js')).graphProvider;
     case 'gsheet':
-      return (await import('./providers/gsheet')).gsheetProvider;
+      return (await import('./providers/gsheet.js')).gsheetProvider;
     case 'dropbox':
-      return (await import('./providers/dropbox')).dropboxProvider;
+      return (await import('./providers/dropbox.js')).dropboxProvider;
     case 'blob':
       return blobProvider;
     default:
