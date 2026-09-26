@@ -43,7 +43,9 @@ server/                 runs in Node, never shipped to the browser
   providers/            graph | gsheet | dropbox | blob | local
   handler.ts            one endpoint, two calling conventions
 api/                    Vercel functions; thin wrappers over server/
-tests/                  Vitest: domain + schema round-trip
+tests/                  Vitest: domain, reducer, router, schema round-trip, the /api/state
+                        endpoint end to end, the .xlsx reader/writer, the catalog workbook
+                        and the client-facing quote. See CLAUDE.md for what a change owes.
 ```
 
 ## The five decisions worth knowing
