@@ -119,6 +119,9 @@ export interface Auth {
   at: number;
 }
 
+/** Which of the estimation desk's three tabs is showing. Lives here because the URL names it too. */
+export type DeskTab = 'queue' | 'estimations' | 'add';
+
 /** A line on the rate card. Hours are billed at the rate of the role assigned to them. */
 export interface RateRole {
   id: string;
@@ -181,6 +184,13 @@ export interface Estimation {
   /** Platform this estimation belongs to. Estimations never mix platforms. */
   plat: string;
   name: string;
+  /**
+   * URL name, unique within the platform — what a deep link is built from.
+   *
+   * Assigned once at creation and never rewritten, so a link pasted into Slack still resolves
+   * after the deal is renamed. Lookups accept the id too, for links made before slugs existed.
+   */
+  slug: string;
   client: string;
   /** Empty on the estimation seeded for a fresh workspace; the hub shows it as Active. */
   tag: EstimationTag | '';

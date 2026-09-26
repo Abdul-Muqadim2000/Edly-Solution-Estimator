@@ -72,7 +72,7 @@ function EstimationCard({
 }
 
 export function EstimationsHub(): JSX.Element {
-  const { state, dispatch, catalog } = useApp();
+  const { state, dispatch, router, catalog } = useApp();
   const estimations = usePlatformEstimations();
 
   const [filter, setFilter] = useState<Filter>('all');
@@ -232,7 +232,10 @@ export function EstimationsHub(): JSX.Element {
 
             return (
               <EstimationCard key={estimation.id} pending={pending} accent={style.co}>
-                <div onClick={() => dispatch({ type: 'openEstimation', id: estimation.id })} style={{ padding: '18px 20px 14px', cursor: 'pointer' }}>
+                <div
+                  onClick={() => router.navigate({ screen: 'builder', estimation: estimation.slug || estimation.id })}
+                  style={{ padding: '18px 20px 14px', cursor: 'pointer' }}
+                >
                   <Row gap={10} align="flex-start" wrap={false}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontFamily: font.display, fontSize: 17, fontWeight: 600, lineHeight: 1.28 }}>{estimation.name}</div>

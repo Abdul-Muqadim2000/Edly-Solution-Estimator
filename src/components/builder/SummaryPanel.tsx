@@ -85,12 +85,14 @@ function DarkButton({
   children,
   onClick,
   variant = 'grey',
-  style
+  style,
+  title
 }: {
   children: ReactNode;
   onClick: () => void;
   variant?: 'grey' | 'red' | 'brand' | 'dashed' | 'danger' | 'brandDashed';
   style?: CSSProperties;
+  title?: string;
 }): JSX.Element {
   const h = useHover();
   const base: Record<string, { rest: CSSProperties; hover: CSSProperties }> = {
@@ -106,6 +108,7 @@ function DarkButton({
     <button
       type="button"
       onClick={onClick}
+      title={title}
       {...h.bind}
       style={{
         cursor: 'pointer',
@@ -150,7 +153,7 @@ export function SummaryPanel({
   /** Confirms the request that was just submitted landed in the list above. */
   requestAdded?: boolean;
 }): JSX.Element {
-  const { state, dispatch, catalog, estimate, display, plan } = useApp();
+  const { state, dispatch, router, catalog, estimate, display, plan } = useApp();
   const estimation = openEstimationRecord(state);
   const requests = openRequests(state);
   const currency = state.draft.cur ?? 'USD';
@@ -579,7 +582,12 @@ export function SummaryPanel({
           </DarkButton>
           <DarkButton onClick={() => quoteInput && void copy(quoteText(quoteInput), 'sum')}>{flash === 'sum' ? '✓ Copied' : 'Copy summary'}</DarkButton>
           <DarkButton onClick={() => window.print()}>Print quote</DarkButton>
-          <DarkButton onClick={() => void copy(window.location.href, 'link')}>{flash === 'link' ? '✓ Link copied' : 'Copy link'}</DarkButton>
+          <DarkButton
+            title="A link straight back to this estimation, on this bundle — ids only, never hours or money"
+            onClick={() => void copy(router.href(), 'link')}
+          >
+            {flash === 'link' ? '✓ Link copied' : 'Copy link'}
+          </DarkButton>
           <DarkButton variant="danger" onClick={() => dispatch({ type: 'clearSelection' })}>
             Clear all
           </DarkButton>

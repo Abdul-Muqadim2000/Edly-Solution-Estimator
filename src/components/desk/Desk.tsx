@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { EstimateRequest } from '@/types';
 import { useApp } from '@/state/AppProvider';
+import type { AppState } from '@/state/reducer';
 import { platformEstimations, platformRequests, requestsFor } from '@/state/reducer';
 import { calcEstimate } from '@/domain/estimate';
 import { categories, guessBundle, subCategories } from '@/domain/catalog';
@@ -19,7 +20,7 @@ import { isLiveCatalog } from '@/data/practices';
  * what sales selected before pricing), and adding to the catalog directly.
  */
 export function Desk(): JSX.Element {
-  const { state, dispatch, catalog } = useApp();
+  const { state, catalog, router } = useApp();
   const openPage = state.deskView;
   const catChip = `${allSolutions(catalog).length} solutions · ${catalog.meta.compiled || 'catalog'}`;
 
@@ -34,11 +35,18 @@ export function Desk(): JSX.Element {
         </span>
       </AppHeader>
       <main style={{ maxWidth: 900, margin: '0 auto', padding: '34px 24px 80px' }}>
-        {openPage ? <EstimationPage id={openPage} onBack={() => dispatch({ type: 'setDeskView', id: null })} /> : <DeskTabs />}
+        {openPage ? (
+          <EstimationPage id={openPage} onBack={() => router.navigate({ screen: 'desk', estimation: undefined, tab: 'estimations' })} />
+        ) : (
+          <DeskTabs />
+        )}
       </main>
     </div>
   );
 }
+
+/** The URL name for an estimation id, so a desk link reads as a deal rather than as `EST-mf3k2j`. */
+const deskSlug = (state: AppState, id: string): string => state.estimations.find((one) => one.id === id)?.slug || id;
 
 /** The desk's filter and tab pills — 1.5px outline, brand wash when on. */
 function TabPill({ children, on, onClick, small }: { children: ReactNode; on: boolean; onClick: () => void; small?: boolean }): JSX.Element {
@@ -191,7 +199,7 @@ function SampleNotice(): JSX.Element | null {
 }
 
 function DeskTabs(): JSX.Element {
-  const { state, dispatch } = useApp();
+  const { state, router } = useApp();
   const tabs: { id: typeof state.deskTab; label: string }[] = [
     { id: 'queue', label: 'Request queue' },
     { id: 'estimations', label: 'Estimations' },
@@ -208,7 +216,7 @@ function DeskTabs(): JSX.Element {
       <SampleNotice />
       <Row gap={8} style={{ marginTop: 18 }}>
         {tabs.map((tab) => (
-          <TabPill key={tab.id} on={state.deskTab === tab.id} onClick={() => dispatch({ type: 'setDeskTab', tab: tab.id })}>
+          <TabPill key={tab.id} on={state.deskTab === tab.id} onClick={() => router.navigate({ screen: 'desk', tab: tab.id, estimation: undefined })}>
             {tab.label}
           </TabPill>
         ))}
@@ -289,7 +297,7 @@ function RequestQueue(): JSX.Element {
 }
 
 function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
-  const { state, dispatch, catalog } = useApp();
+  const { state, dispatch, router, catalog } = useApp();
   const done = Number(request.est) > 0;
 
   const [hoursValue, setHours] = useState(done ? String(request.est) : '');
@@ -350,7 +358,7 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         <span style={{ fontFamily: font.mono, fontSize: 11, fontWeight: 600, color: color.brandDeep, background: color.brandWash, borderRadius: radius.sm, padding: '3px 8px' }}>
           {request.id}
         </span>
-        <EstChip onClick={() => dispatch({ type: 'setDeskView', id: request.estId })}>
+        <EstChip onClick={() => router.navigate({ screen: 'desk', estimation: deskSlug(state, request.estId) })}>
           {(request.estName || 'General estimation') + (request.client ? ` · ${request.client}` : '')} ›
         </EstChip>
         {estimation?.tag ? (
@@ -396,7 +404,7 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
 
       <OpenPageButton
         onClick={() => {
-          dispatch({ type: 'setDeskView', id: request.estId });
+          router.navigate({ screen: 'desk', estimation: deskSlug(state, request.estId) });
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
       />
@@ -481,7 +489,7 @@ function DeskCard({ pending, onOpen, children }: { pending: number; onOpen: () =
 }
 
 function EstimationList(): JSX.Element {
-  const { state, dispatch, catalog } = useApp();
+  const { state, router, catalog } = useApp();
   const estimations = platformEstimations(state)
     .slice()
     .sort((a, b) => String(b.up).localeCompare(String(a.up)));
@@ -502,7 +510,7 @@ function EstimationList(): JSX.Element {
         const numbers = calcEstimate(catalog, estimation.snap, requests);
 
         return (
-          <DeskCard key={estimation.id} pending={pending} onOpen={() => dispatch({ type: 'setDeskView', id: estimation.id })}>
+          <DeskCard key={estimation.id} pending={pending} onOpen={() => router.navigate({ screen: 'desk', estimation: estimation.slug || estimation.id })}>
             <div style={{ fontFamily: font.display, fontSize: 15.5, fontWeight: 600, lineHeight: 1.3 }}>{estimation.name}</div>
             {estimation.client ? <div style={{ fontSize: 12, color: color.muted, marginTop: 2 }}>{estimation.client}</div> : null}
             <Mono block size={11} style={{ marginTop: 10 }}>

@@ -11,13 +11,19 @@ import { QuoteSheet } from '@/components/QuoteSheet';
 import { color } from '@/theme';
 
 /**
- * Routing, such as it is: which screen shows follows from state, not a URL.
+ * Which screen shows still follows from state, and deliberately so. The URL is a projection of
+ * that state rather than a second source of truth: `state/useRouting.ts` reads a link once, turns
+ * it into a single `applyRoute` action, and thereafter keeps the address bar in step. So this
+ * stayed a plain list of conditions when deep links arrived.
  *
- *   not signed in            → SignIn
- *   no platform chosen       → PracticePicker  (always after sign-in; last choice is a shortcut)
- *   estimator               → Desk
- *   sales, no estimation open → SiteHeader + EstimationsHub + SiteFooter
- *   sales, estimation open   → SiteHeader + Builder (Hero + sticky bar) + SiteFooter
+ *   not signed in             → SignIn                          /
+ *   no platform chosen        → PracticePicker                  /practices[/:practice]
+ *   estimator                 → Desk                            /p/:platform/desk[/…]
+ *   sales, no estimation open → SiteHeader + EstimationsHub      /p/:platform
+ *   sales, estimation open    → SiteHeader + Builder             /p/:platform/e/:slug[/b/:bundle]
+ *
+ * Sign-in is a client-side gate, so a deep link is not an access grant — it only decides which
+ * screen someone who has already signed in lands on. See the README on putting real auth in front.
  */
 function Screens(): JSX.Element {
   const { state } = useApp();

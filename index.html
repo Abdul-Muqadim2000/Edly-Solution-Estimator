@@ -2,6 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!--
+      Do not remove. Routes are real paths now, so without this every relative URL would
+      resolve against the route you happen to be on: from /p/openedx/e/acme the catalog
+      sheet would be fetched from /p/openedx/e/catalog-source.xlsx and 404. Both the sheet
+      and the router read document.baseURI, so this one line is where the app is mounted.
+      Deploying under a sub-path means changing this href and vite.config's `base` together.
+    -->
+    <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Edly — Solution Estimator</title>
     <meta name="description" content="Configure a client solution bundle, price it against a rate card, and plan delivery." />

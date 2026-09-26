@@ -11,11 +11,27 @@
   "headers": [
     {
       "source": "/catalog-source.xlsx",
-      "headers": [{ "key": "cache-control", "value": "public, max-age=0, must-revalidate" }]
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
     },
     {
       "source": "/api/(.*)",
-      "headers": [{ "key": "cache-control", "value": "no-store" }]
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/"
     }
   ]
 }

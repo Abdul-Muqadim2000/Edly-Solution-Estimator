@@ -64,6 +64,10 @@ Two notes on reading the results:
   re-renders between probes. Read its detail line, not just the tick.
 - This page links `../src/index.css` directly, because it mounts `<App />` without going through
   `main.tsx` (which is where the real app imports the stylesheet).
+- **Routing runs in the hash here, and that is correct.** A plain static server has no rewrite to
+  serve `index.html` for `/p/openedx/e/…`, so `usesHash` sees a named `.html` document and puts
+  routes in the fragment: you will see `verify-app.html#/p/openedx/e/…` in the address bar rather
+  than the clean paths production serves. Both are covered by `tests/router.test.ts`.
 - The shell assertion prints the viewport it ran at. Under ~1020px the builder is *meant* to be a
   single column with the rail as a wrapping row and no "Std deploy" column — a narrow run is not a
   regression. The preview frame here is usually ~920px, so that is the path you will normally see.

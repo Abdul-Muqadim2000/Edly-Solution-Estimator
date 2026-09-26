@@ -13,6 +13,7 @@ src/
   lib/
     useHover.ts         hover + focus state, because inline styles cannot do :hover
     useViewport.ts      viewport width, for layout that must branch on it
+    router.ts           the URL as a value — parse, format, base path, hash fallback (pure)
     xlsx.ts             dependency-free .xlsx reader and writer (browser + server)
     catalogSheet.ts     parses the master catalog workbook into a Catalog
     format.ts           money, hours, ids, dates
@@ -23,8 +24,9 @@ src/
   state/
     keys.ts             browser storage keys, and which are synced
     reducer.ts          all workspace state and every transition (pure, exported)
-    AppProvider.tsx     context: reducer + persistence + sync + derived values
+    AppProvider.tsx     context: reducer + persistence + sync + routing + derived values
     useSync.ts          spreadsheet ↔ browser, with the three safety rules
+    useRouting.ts       address bar ↔ reducer, in that direction
   api/client.ts         the only place the app calls the server
   components/
     SiteHeader.tsx      edly.io marketing header — part of the product, not decoration
@@ -41,7 +43,9 @@ server/                 runs in Node, never shipped to the browser
   providers/            graph | gsheet | dropbox | blob | local
   handler.ts            one endpoint, two calling conventions
 api/                    Vercel functions; thin wrappers over server/
-tests/                  Vitest: domain + schema round-trip
+tests/                  Vitest: domain, reducer, router, schema round-trip, the /api/state
+                        endpoint end to end, the .xlsx reader/writer, the catalog workbook
+                        and the client-facing quote. See CLAUDE.md for what a change owes.
 ```
 
 ## The five decisions worth knowing
@@ -73,6 +77,37 @@ Two rules there exist because they failed in production:
 **5. Nothing writes before a read succeeds.** See `useSync.ts`. An empty browser must never be able
 to blank the spreadsheet, and a background refresh must never discard local edits. The API adds a
 server-side guard: a zero-row `PUT` is refused while the store holds data.
+
+**6. The URL is a projection of state, not a second source of truth.** `lib/router.ts` turns a
+path into a `Route` and back; `state/useRouting.ts` reads a URL in exactly three places — on boot,
+on Back/Forward, and when something calls `navigate` — and each becomes one `applyRoute` action.
+After that, state drives the screen exactly as it always did and the address bar follows. This is
+why `App.tsx` is still a list of conditions rather than a route table, and why the routing logic is
+unit-tested with plain objects instead of clicked.
+
+```
+/                                        sign in
+/practices[/:practice]                   practice → platform picker
+/p/:platform                             estimations hub
+/p/:platform/e/:slug[/b/:bundle]         builder      ?q=…  ?plan=1
+/p/:platform/desk[/:tab]                 estimation desk
+/p/:platform/desk/e/:slug                one deal at the desk
+```
+
+Three things worth knowing before you touch it:
+
+- **Estimations are addressed by `slug`, not by id.** A slug is assigned once at creation and
+  never rewritten, so a link pasted into Slack survives the deal being renamed. Lookups accept the
+  id too, for links made before slugs existed. Rows from an older spreadsheet are backfilled by
+  `withSlugs` on the way in, uniquely per platform.
+- **A link may switch role.** `/p/openedx/desk` opens the desk even if you were last in sales.
+  Role is a one-click toggle in the chrome, so honouring the link is less surprising than ignoring
+  it. A link is not an access grant: the sign-in gate is unchanged and still client-side.
+- **Clean paths need the host to serve `index.html` for unknown paths.** `vercel.json` has the
+  rewrite, and `index.html` carries a `<base href>` so relative URLs — the catalog sheet above all
+  — keep resolving against the mount point rather than against the route you are on. Where neither
+  can be true (a plain static server, the runners in VERIFY.md), `usesHash` puts routing in the
+  fragment instead.
 
 ## Data flow
 
@@ -111,8 +146,9 @@ lost, which is the point.
 **A storage provider** → a file in `server/providers/` implementing `FileProvider` or
 `SheetProvider`, then a case in `server/store.ts` and a block in `.env.example`.
 
-**A screen** → a component under `src/components/`, and a branch in `src/App.tsx`. Routing follows
-from state, not from a URL; there is no router.
+**A screen** → a component under `src/components/`, a branch in `src/App.tsx`, and a case in
+`parseRoute`/`formatRoute` plus `routeOfState` so it has a URL. The round-trip test in
+`tests/router.test.ts` fails if the two disagree.
 
 **The builder is a three-column app shell**, not a page that scrolls as one. At ≥1320px the grid
 is `280px minmax(0,1fr) 400px` at `calc(100vh - 62px)`, so the rail and the running total stay
@@ -127,8 +163,6 @@ if you restructure the shell, keep those four steps green.
 
 ## What is deliberately not here
 
-- **No router.** Which screen shows is a function of state. Adding deep links means adding a router
-  and reflecting it into state — worth doing when sharing a link to one estimation matters.
 - **No server-side auth.** The sign-in is a client-side demo gate. Put a proxy in front.
 - **No optimistic concurrency.** Last write wins on the whole workbook.
 - **No i18n.** Copy is inline English.

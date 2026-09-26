@@ -8,6 +8,7 @@ import type {
   PersistedState
 } from '../src/types';
 import type { CellValue, SheetTable, WriteSheets, Workbook } from '../src/lib/xlsx';
+import { withSlugs } from '../src/lib/format';
 
 /**
  * The bridge between app state and spreadsheet rows.
@@ -26,7 +27,10 @@ export const SHEETS = {
 } as const;
 
 export const COLUMNS = {
-  estimations: ['id', 'plat', 'name', 'client', 'tag', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions', 'snapshotJson'],
+  /* `slug` sits beside `name` rather than at the end: every column is read by name, so inserting
+     one cannot break an older file, and burying it past the 28 KB snapshotJson cell would defeat
+     the point of keeping the scalar columns scannable in Excel. */
+  estimations: ['id', 'plat', 'name', 'slug', 'client', 'tag', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions', 'snapshotJson'],
   requests: [
     'id', 'plat', 'estimationId', 'estimationName', 'client', 'title', 'details', 'area', 'urgency',
     'integrations', 'requestedBy', 'email', 'org', 'submitted', 'estimateHours', 'repeatHours',
@@ -89,7 +93,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
   const estimations = header('estimations');
   for (const e of state.estimations ?? []) {
     estimations.push([
-      str(e.id), str(e.plat || 'openedx'), str(e.name), str(e.client), str(e.tag || 'Active'), str(e.due),
+      str(e.id), str(e.plat || 'openedx'), str(e.name), str(e.slug), str(e.client), str(e.tag || 'Active'), str(e.due),
       str(e.at), str(e.up), Number(e.total ?? 0), Number(e.cost ?? 0), Number(e.items ?? 0), toJson(e.snap)
     ]);
   }
@@ -166,11 +170,15 @@ function objects(table: SheetTable | undefined): Record<string, string>[] {
 }
 
 export function sheetsToState(workbook: Workbook): PersistedState {
-  const estimations: Estimation[] = objects(workbook[SHEETS.estimations])
+  /* Rows written before the slug column existed come back blank; `withSlugs` fills those in,
+     uniquely per platform, without ever recomputing one that is already set. */
+  const estimations: Estimation[] = withSlugs(
+    objects(workbook[SHEETS.estimations])
     .map((r) => ({
       id: r.id ?? '',
       plat: r.plat || 'openedx',
       name: r.name ?? '',
+      slug: r.slug ?? '',
       client: r.client ?? '',
       tag: asTag(r.tag),
       due: r.due ?? '',
@@ -181,7 +189,8 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       items: num(r.solutions) ?? 0,
       snap: fromJson<EstimationSnapshot>(r.snapshotJson) ?? { sel: {}, buf: {}, bufPct: 0 }
     }))
-    .filter((e) => e.id);
+      .filter((e) => e.id)
+  );
 
   const requests: EstimateRequest[] = objects(workbook[SHEETS.requests])
     .map((r) => {
@@ -296,6 +305,10 @@ export function coerceState(body: unknown): PersistedState {
     requests: array<EstimateRequest>(raw.requests),
     solutions: array<AddedSolution>(raw.solutions),
     bundles: array<AddedBundle>(raw.bundles),
-    settings: raw.settings && typeof raw.settings === 'object' ? (raw.settings as Record<string, unknown>) : {}
+    /* an array is an object, and one here would write numbered junk into the Settings sheet */
+    settings:
+      raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)
+        ? (raw.settings as Record<string, unknown>)
+        : {}
   };
 }

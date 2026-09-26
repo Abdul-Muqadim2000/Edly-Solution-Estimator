@@ -125,7 +125,7 @@ the in-app **📚 Catalog** panel to replace it.
 
 | Sheet | Holds |
 |---|---|
-| `Estimations` | One row per deal, with selections/buffers/rates/plan in a `snapshotJson` column |
+| `Estimations` | One row per deal, with a URL `slug` and selections/buffers/rates/plan in a `snapshotJson` column |
 | `Requests` | The custom-estimate queue, including hours the desk returned |
 | `EstimatedSolutions` | Anything the desk added to a catalog |
 | `CustomBundles` | Bundle categories created in the app |
@@ -177,11 +177,16 @@ vercel --prod
 ## Notes and limits
 
 - **Sign-in is a demo gate** (`admin` / `admin`, client-side). Put Vercel Authentication or an SSO
-  proxy in front of the deployment before it holds live client numbers.
+  proxy in front of the deployment before it holds live client numbers. Deep links make this more
+  urgent, not less: a shared link names a deal, so the gate in front of it has to be real.
 - **`/api/state` is unauthenticated.** Anyone with the URL can read or overwrite your spreadsheet.
   The same gate fixes this.
 - **Estimations are scoped per platform.** An Open edX estimation is invisible under Moodle; the desk
-  only sees the platform it has open.
+  only sees the platform it has open. A URL carries the platform, so a link never crosses that line.
+- **Every screen has a URL, and "Copy link" gives you one.** `/p/openedx/e/acme-academy/b/B03`
+  opens that deal on that bundle. A link carries ids and slugs only — never hours, money or client
+  names — so forwarding one cannot leak what "Present to client" hides. It is not an access grant
+  either: whoever opens it still meets the same sign-in gate.
 - **Benchmark catalogs are not delivery records.** Everything except Open edX carries sample hours
   gathered as industry benchmarks, labelled *Sample* in the UI.
 - **Rate cards are per estimation** — set them on a deal and they travel with it.
