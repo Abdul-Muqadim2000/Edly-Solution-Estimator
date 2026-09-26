@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 502 tests across seventeen files.
+`bun run test` runs 514 tests across seventeen files.
 
 | File | Covers |
 |---|---|
@@ -291,7 +291,7 @@ columns stay readable so a human can scan the sheet in Excel, and nested state s
 column per row so the app round-trips losslessly. A tender's requirements run past one cell, so
 its `detailJson` splits across rows keyed `id##2/3`, pipe-wrapped like the long settings.
 
-### Five data-safety rules that are not negotiable
+### Six data-safety rules that are not negotiable
 
 Each of these exists because it failed once. Do not weaken one to make a feature easier.
 
@@ -309,6 +309,13 @@ Each of these exists because it failed once. Do not weaken one to make a feature
    build from before a collection existed sends no key for it; `api/state.ts` keeps the stored
    tenders in that case, after the empty-payload guard has run. Do the same for any collection
    added later. `tests/api.test.ts` covers it.
+6. **A save never passes through an empty sheet, and one "empty" read is never acted on.** The
+   Google Sheets provider used to clear every tab and then write it, two requests apart; a read in
+   between saw an empty workbook, and the tab that read it saved its own few rows over
+   everything. A page reload was enough to trigger it. It now writes once, with blanks over any
+   rows the new data no longer reaches. On the client, `pullStep` in `src/state/syncPolicy.ts`
+   reads again before a tab believes an empty store at boot, and never applies an empty read over
+   rows a tab already holds. `tests/providers.test.ts` and `tests/storage.test.ts` cover both.
 
 ### Writing code that survives the move to a real server
 
@@ -383,6 +390,8 @@ The spreadsheets hold real deal names, client names and pricing.
 ## Where to be careful
 
 - `src/state/useSync.ts`: the data-safety rules. Read the comments before editing.
+- `server/providers/gsheet.ts`: a save is one `values:batchUpdate`. Do not add a clear step before
+  it, however tidy it looks: that is the window in which the whole workbook reads as empty.
 - `api/state.ts`: the empty-payload guard.
 - `server/store.ts`: `populated()` decides whether a store counts as empty, and all five providers
   must answer identically.

@@ -87,6 +87,19 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : {}) as T;
 }
 
+/** The new rows, padded with empty strings to cover the old ones. Google clears a cell given "". */
+function covering(rows: WriteSheets[string], old: { rows: number; cols: number } | undefined): (string | number)[][] {
+  /* numbers stay numbers, so the sheet can still sum and pivot them */
+  const values = (rows ?? []).map((row) => (row ?? []).map((cell) => cell ?? ''));
+  if (!old) return values;
+  const width = values.reduce((widest, row) => Math.max(widest, row.length), old.cols);
+  const height = Math.max(values.length, old.rows);
+  return Array.from({ length: height }, (_, index) => {
+    const row = values[index] ?? [];
+    return [...row, ...Array<string>(width - row.length).fill('')];
+  });
+}
+
 interface SheetMeta {
   properties?: { title?: string };
   sheets?: { properties: { title: string; sheetId?: number } }[];
@@ -125,8 +138,23 @@ export const gsheetProvider: SheetProvider = {
       });
     }
 
-    /* clear then write, so deleted rows actually disappear */
-    await api('/values:batchClear', { method: 'POST', body: JSON.stringify({ ranges: names.map(quote) }) });
+    /* One write, never a clear and then a write. Between those two requests the whole workbook
+       read as empty, and a tab that read it then took it for an empty store and saved its own
+       few rows over everything. So measure what each tab holds now and write blanks over
+       whatever the new rows no longer reach: a deleted record still disappears, in the same
+       request. */
+    const present = names.filter((name) => existing.has(name));
+    const extent = new Map<string, { rows: number; cols: number }>();
+    if (present.length > 0) {
+      const query = present.map((name) => `ranges=${encodeURIComponent(quote(name))}`).join('&');
+      const held = await api<{ valueRanges?: { values?: unknown[][] }[] }>(`/values:batchGet?${query}&majorDimension=ROWS`);
+      (held.valueRanges ?? []).forEach((range, index) => {
+        const name = present[index];
+        const rows = range.values ?? [];
+        if (name) extent.set(name, { rows: rows.length, cols: rows.reduce((widest, row) => Math.max(widest, row.length), 0) });
+      });
+    }
+
     await api('/values:batchUpdate', {
       method: 'POST',
       body: JSON.stringify({
@@ -134,7 +162,7 @@ export const gsheetProvider: SheetProvider = {
         data: names.map((name) => ({
           range: `${quote(name)}!A1`,
           majorDimension: 'ROWS',
-          values: (sheets[name] ?? []).map((row) => (row ?? []).map((cell) => cell ?? ''))
+          values: covering(sheets[name] ?? [], extent.get(name))
         }))
       })
     });

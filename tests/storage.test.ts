@@ -16,6 +16,7 @@ import { discover, exportBytes, loadState, saveState, storeLabel } from '../serv
 import { EMPTY_STATE } from '../server/schema';
 import { readWorkbook } from '../src/lib/xlsx';
 import type { Estimation } from '../src/types';
+import { pullStep, type PullInput } from '../src/state/syncPolicy';
 
 /**
  * Browser storage, and the store layer above the providers.
@@ -407,5 +408,55 @@ describe('Vercel Blob', () => {
     const blob = await provider();
     expect(blob.discover).toBeDefined();
     expect(await blob.discover!()).toEqual([{ kind: 'blob', name: 'edly-state.xlsx', url: 'https://blob.example/x' }]);
+  });
+});
+
+/* ------------------------------------------------ what a read does to a tab */
+
+describe('what a read of the store does to a tab', () => {
+  const read = (overrides: Partial<PullInput>): PullInput => ({
+    hydrated: true,
+    empty: false,
+    rechecked: false,
+    incoming: 'store',
+    lastSynced: 'agreed',
+    local: 'agreed',
+    localRows: 3,
+    ...overrides
+  });
+
+  it('loads a first read that holds data', () => {
+    expect(pullStep(read({ hydrated: false, lastSynced: '' }))).toBe('hydrate');
+  });
+
+  it('reads again before believing a first read that says the store is empty', () => {
+    /* this tab's own rows are all it keeps, and its next save goes over the whole sheet, so one
+       "empty" answer is not enough to act on */
+    expect(pullStep(read({ hydrated: false, empty: true, lastSynced: '' }))).toBe('recheck');
+  });
+
+  it('starts fresh once a second read agrees the store is empty', () => {
+    expect(pullStep(read({ hydrated: false, empty: true, rechecked: true, lastSynced: '' }))).toBe('start-fresh');
+  });
+
+  it('ignores a background read of what this tab last saved', () => {
+    expect(pullStep(read({ incoming: 'agreed' }))).toBe('ignore');
+  });
+
+  it('takes a change from elsewhere when nothing here is unsaved', () => {
+    expect(pullStep(read({}))).toBe('update');
+  });
+
+  it('says so rather than overwrite edits this tab has not saved yet', () => {
+    expect(pullStep(read({ local: 'edited here' }))).toBe('conflict');
+  });
+
+  it('keeps its rows when a background read says the store is empty', () => {
+    /* applying it blanked the screen, and the next edit then saved that blank over the sheet */
+    expect(pullStep(read({ empty: true }))).toBe('keep-local');
+  });
+
+  it('follows a store that really was emptied when this tab holds nothing either', () => {
+    expect(pullStep(read({ empty: true, localRows: 0 }))).toBe('update');
   });
 });
