@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PersistedState } from '@/types';
 import { beaconSave, fetchState, saveState } from '@/api/client';
-import { syncKey } from '@server/schema';
+import { countRows, syncKey } from '@server/schema';
 import { ALL_SYNCED_KEYS, readStorage, STORAGE_KEYS, SYNCED_SETTING_KEYS, writeStorage } from '@/state/keys';
+import { pullStep } from '@/state/syncPolicy';
 
 /**
  * Keeps the spreadsheet and the browser in step.
  *
- * Two rules keep data safe, both learned the hard way:
+ * Three rules keep data safe, each learned the hard way:
  *   1. Never push before a read has succeeded. An empty browser must not be able to overwrite
  *      the spreadsheet just because the network was down at boot.
  *   2. Never overwrite local edits with a background pull. If both sides changed, say so and let
  *      the person reload rather than silently picking a winner.
+ *   3. Never act on one read that says the store is empty. At boot, read again first; later, keep
+ *      this tab's rows rather than blank them. See `pullStep` for why.
  */
 
 export type SyncTone = 'good' | 'busy' | 'warn' | 'bad';
@@ -41,6 +44,9 @@ const SETTINGS_SNAPSHOT = (): Record<string, unknown> => {
 };
 
 const shortStore = (label: string): string => label.split(':')[0] ?? 'store';
+
+/** How long to wait before asking again after a first read that says the store is empty. */
+const RECHECK_MS = 2000;
 
 export interface UseSyncOptions {
   /** Current app data, already in persisted shape. */
@@ -100,7 +106,7 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
     }
   }, [current]);
 
-  const pull = useCallback(async () => {
+  const pull = useCallback(async (rechecked = false) => {
     try {
       const result = await fetchState();
       const store = shortStore(result.label);
@@ -113,8 +119,24 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
         settings: result.state.settings ?? {}
       });
 
-      if (!hydrated.current) {
-        if (!result.empty) {
+      const local = current();
+      const step = pullStep({
+        hydrated: hydrated.current,
+        empty: result.empty === true,
+        rechecked,
+        incoming,
+        lastSynced: lastSynced.current,
+        local: syncKey(local),
+        localRows: countRows(local)
+      });
+
+      if (step === 'recheck') {
+        setTimeout(() => void pull(true), RECHECK_MS);
+        return;
+      }
+
+      if (step === 'hydrate' || step === 'start-fresh') {
+        if (step === 'hydrate') {
           /* settings land in storage first, so the app reads them as it mounts */
           for (const [key, value] of Object.entries(result.state.settings ?? {})) {
             if ((ALL_SYNCED_KEYS as readonly string[]).includes(key) && value !== null && value !== undefined) {
@@ -124,19 +146,23 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
           hydrateRef.current(result.state);
         }
         hydrated.current = true;
-        lastSynced.current = result.empty ? '' : incoming;
+        lastSynced.current = step === 'start-fresh' ? '' : incoming;
         setStatus({
           tone: 'good',
           store,
           hydrated: true,
-          message: result.empty ? `${store} is empty — starting fresh` : `loaded from ${store}`
+          message: step === 'start-fresh' ? `${store} is empty, starting fresh` : `loaded from ${store}`
         });
         return;
       }
 
-      if (incoming === lastSynced.current) return;
-      if (syncKey(current()) !== lastSynced.current) {
+      if (step === 'ignore') return;
+      if (step === 'conflict') {
         setStatus({ tone: 'warn', store, hydrated: true, message: `changed in ${store} by someone else — reload to merge` });
+        return;
+      }
+      if (step === 'keep-local') {
+        setStatus({ tone: 'warn', store, hydrated: true, message: `${store} read as empty, so this tab kept its copy. Reload to check` });
         return;
       }
       hydrateRef.current(result.state);

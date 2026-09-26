@@ -225,8 +225,14 @@ describe('Google Sheets', () => {
     await expect((await provider()).loadSheets()).rejects.toThrow(/Sheets 403.*does not have permission/s);
   });
 
-  it('creates missing tabs, then clears, then writes', async () => {
-    replies = [authReply, { json: { sheets: [{ properties: { title: 'Estimations', sheetId: 0 } }] } }, { json: {} }, { json: {} }, { json: {} }];
+  it('creates missing tabs, reads what the others hold, then writes once', async () => {
+    replies = [
+      authReply,
+      { json: { sheets: [{ properties: { title: 'Estimations', sheetId: 0 } }] } },
+      { json: {} },
+      { json: { valueRanges: [{ values: [['id'], ['EST-1']] }] } },
+      { json: {} }
+    ];
 
     const result = await (await provider()).saveSheets({
       Estimations: [['id'], ['EST-1']],
@@ -236,12 +242,108 @@ describe('Google Sheets', () => {
     const urls = calls.map((call) => call.url);
     expect(urls[2]).toContain(':batchUpdate');
     expect(JSON.parse(calls[2]!.body)).toEqual({ requests: [{ addSheet: { properties: { title: 'Requests' } } }] });
-
-    /* clear before write, or a shorter list leaves the deleted rows sitting underneath it */
-    expect(urls[3]).toContain('/values:batchClear');
+    expect(urls[3]).toContain('/values:batchGet');
     expect(urls[4]).toContain('/values:batchUpdate');
+    /* no clear step at all: that is where the workbook used to read as empty */
+    expect(urls.some((url) => url.includes('batchClear'))).toBe(false);
 
     expect(result.url).toBe('https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz');
+  });
+
+  describe('against a spreadsheet held in memory', () => {
+    /**
+     * Enough of the Sheets API to replay a save and look at the spreadsheet between its requests,
+     * which is what another tab's read sees if it lands there. Reads trim trailing blanks the way
+     * Google does, so a blanked row reads as gone.
+     */
+    const fakeSheets = (initial: Record<string, string[][]>) => {
+      const tabs = new Map(Object.entries(initial).map(([name, rows]) => [name, rows.map((row) => [...row])]));
+      const seen: Record<string, string[][]>[] = [];
+      const unquote = (range: string) => range.replace(/!.*$/, '').replace(/^'|'$/g, '').replace(/''/g, "'");
+      const trimmed = (rows: string[][]) => {
+        const out = rows.map((row) => {
+          const copy = [...row];
+          while (copy.length > 0 && copy[copy.length - 1] === '') copy.pop();
+          return copy;
+        });
+        while (out.length > 0 && out[out.length - 1]!.length === 0) out.pop();
+        return out;
+      };
+      const snapshot = () => seen.push(Object.fromEntries([...tabs].map(([name, rows]) => [name, trimmed(rows)])));
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = decodeURIComponent(String(input));
+        const body = (typeof init?.body === 'string' ? JSON.parse(init.body) : {}) as {
+          ranges?: string[];
+          data?: { range: string; values: string[][] }[];
+          requests?: { addSheet: { properties: { title: string } } }[];
+        };
+        let json: unknown = {};
+        if (url.includes('oauth2.googleapis.com')) json = { access_token: 'ya29.test', expires_in: 3600 };
+        else if (url.includes('/values:batchGet')) {
+          const names = [...url.matchAll(/ranges=([^&]+)/g)].map((match) => unquote(match[1]!));
+          json = { valueRanges: names.map((name) => ({ values: trimmed(tabs.get(name) ?? []) })) };
+        } else if (url.includes('/values:batchClear')) {
+          for (const range of body.ranges ?? []) tabs.set(unquote(range), []);
+          snapshot();
+        } else if (url.includes('/values:batchUpdate')) {
+          for (const entry of body.data ?? []) tabs.set(unquote(entry.range), entry.values.map((row) => [...row]));
+          snapshot();
+        } else if (url.includes(':batchUpdate')) {
+          for (const request of body.requests ?? []) tabs.set(request.addSheet.properties.title, []);
+          snapshot();
+        } else json = { sheets: [...tabs.keys()].map((title, sheetId) => ({ properties: { title, sheetId } })) };
+        return { ok: true, status: 200, json: async () => json, text: async () => JSON.stringify(json) } as unknown as Response;
+      }) as typeof fetch;
+
+      return { seen, now: () => Object.fromEntries([...tabs].map(([name, rows]) => [name, trimmed(rows)])) };
+    };
+
+    it('never leaves the workbook empty while a save is in flight', async () => {
+      /* It cleared every tab and then wrote them, two requests apart. A tab that read in between
+         was told the store was empty, kept only the few rows it had made itself, and its next
+         save wrote those over everything. A page reload does it: the beacon's save and the new
+         page's first read overlap. */
+      const sheets = fakeSheets({ Estimations: [['id', 'name'], ['EST-1', 'Acme Academy'], ['EST-2', 'Nordic University']] });
+
+      await (await provider()).saveSheets({ Estimations: [['id', 'name'], ['EST-1', 'Acme Academy'], ['EST-2', 'Nordic University'], ['EST-3', 'Acme Academy']] });
+
+      expect(sheets.seen.length).toBeGreaterThan(0);
+      for (const moment of sheets.seen) expect(moment.Estimations?.length ?? 0).toBeGreaterThan(1);
+    });
+
+    it('blanks the rows a shorter list no longer fills, so a deleted record is gone', async () => {
+      const sheets = fakeSheets({ Estimations: [['id', 'name', 'client'], ['EST-1', 'Acme Academy', 'Acme'], ['EST-2', 'Nordic University', 'Nordic']] });
+
+      await (await provider()).saveSheets({ Estimations: [['id', 'name'], ['EST-2', 'Nordic University']] });
+
+      expect(sheets.now().Estimations).toEqual([['id', 'name'], ['EST-2', 'Nordic University']]);
+    });
+
+    it('writes hours as numbers, so the sheet can still sum and pivot them', async () => {
+      fakeSheets({ Estimations: [['id', 'total'], ['EST-1', '40'], ['EST-2', '12']] });
+      const writes: string[] = [];
+      const inner = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes('/values:batchUpdate') && typeof init?.body === 'string') writes.push(init.body);
+        return inner(input, init);
+      }) as typeof fetch;
+
+      await (await provider()).saveSheets({ Estimations: [['id', 'total'], ['EST-1', 64]] });
+
+      const values = (JSON.parse(writes[0]!) as { data: { values: unknown[][] }[] }).data[0]!.values;
+      expect(values[1]).toEqual(['EST-1', 64]);
+      /* the row that went away is written as blanks, not left behind */
+      expect(values[2]).toEqual(['', '']);
+    });
+
+    it('writes a tab it has just created without reading it first', async () => {
+      const sheets = fakeSheets({ Estimations: [['id'], ['EST-1']] });
+
+      await (await provider()).saveSheets({ Estimations: [['id'], ['EST-1']], Tenders: [['id'], ['TEN-1']] });
+
+      expect(sheets.now()).toEqual({ Estimations: [['id'], ['EST-1']], Tenders: [['id'], ['TEN-1']] });
+    });
   });
 
   it('does not add a tab that is already there', async () => {
