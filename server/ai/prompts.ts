@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import type { CatalogLine, DocRef, MatchInput, PlatformDigest } from '../../src/domain/tender';
+import type { CatalogLine, DocRef, MatchInput, PlatformDigest } from '../../src/domain/tender.js';
 
 /**
  * What the model is told, in one place.

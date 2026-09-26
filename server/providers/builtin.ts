@@ -1,4 +1,4 @@
-import { XLSX_MIME, type DiscoveredTarget, type FileProvider, type SaveResult } from './types';
+import { XLSX_MIME, type DiscoveredTarget, type FileProvider, type SaveResult } from './types.js';
 
 /** Vercel Blob — for when you would rather not connect an account of your own. */
 export const blobProvider: FileProvider = {

@@ -1,4 +1,4 @@
-import type { WriteSheets, Workbook } from '../../src/lib/xlsx';
+import type { WriteSheets, Workbook } from '../../src/lib/xlsx.js';
 
 /** A store that keeps a .xlsx file — we serialise, it stores bytes. */
 export interface FileProvider {

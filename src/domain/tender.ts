@@ -18,8 +18,8 @@ import type {
   TenderTokens
 } from '@/types';
 /* relative, not '@/': the server imports this module, and the function bundler does not read tsconfig paths */
-import { plural, uniqueSlug } from '../lib/format';
-import { list, record, text as str, whole as int } from '../lib/narrow';
+import { plural, uniqueSlug } from '../lib/format.js';
+import { list, record, text as str, whole as int } from '../lib/narrow.js';
 
 /**
  * Tender intake, as pure functions.

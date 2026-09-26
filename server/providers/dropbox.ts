@@ -1,4 +1,4 @@
-import { env, TokenCache, type DiscoveredTarget, type FileProvider, type SaveResult } from './types';
+import { env, TokenCache, type DiscoveredTarget, type FileProvider, type SaveResult } from './types.js';
 
 /**
  * Dropbox — the simplest to set up: one token, one path.

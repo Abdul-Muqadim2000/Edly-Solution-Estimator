@@ -1,6 +1,6 @@
-import { json, universal } from '../server/handler';
-import { whole } from '../src/lib/narrow';
-import { AiError, aiConfigured, aiModel, toAiError } from '../server/ai/anthropic';
+import { json, universal } from '../server/handler.js';
+import { whole } from '../src/lib/narrow.js';
+import { AiError, aiConfigured, aiModel, toAiError } from '../server/ai/anthropic.js';
 import {
   discardDocuments,
   extractRange,
@@ -11,7 +11,7 @@ import {
   readMatchInputs,
   readPlatforms,
   uploadDocument
-} from '../server/ai/tender';
+} from '../server/ai/tender.js';
 
 /**
  * GET  /api/tender?probe=1                           whether the AI is set up here, and the model

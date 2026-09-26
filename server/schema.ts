@@ -8,9 +8,9 @@ import type {
   PersistedState,
   Tender,
   TenderStage
-} from '../src/types';
-import type { CellValue, SheetTable, WriteSheets, Workbook } from '../src/lib/xlsx';
-import { withSlugs } from '../src/lib/format';
+} from '../src/types.js';
+import type { CellValue, SheetTable, WriteSheets, Workbook } from '../src/lib/xlsx.js';
+import { withSlugs } from '../src/lib/format.js';
 
 /**
  * The bridge between app state and spreadsheet rows.
