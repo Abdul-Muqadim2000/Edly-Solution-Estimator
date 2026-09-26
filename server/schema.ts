@@ -36,9 +36,12 @@ export const COLUMNS = {
     'integrations', 'requestedBy', 'email', 'org', 'submitted', 'estimateHours', 'repeatHours',
     'catalogId', 'bundleId', 'estimatedBy', 'estimatedOn', 'note', 'extraJson'
   ],
+  /* `integrations` and `estimationName` came later. Both are read by name and default when absent,
+     so a sheet written before them still loads. */
   solutions: [
     'id', 'plat', 'bundleId', 'name', 'description', 'firstHours', 'repeatHours', 'form', 'deploy',
-    'category', 'subCategory', 'account', 'limits', 'note', 'fromRequest', 'addedOn', 'direct'
+    'integrations', 'category', 'subCategory', 'account', 'limits', 'note', 'fromRequest', 'estimationName',
+    'addedOn', 'direct'
   ],
   bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn'],
   settings: ['key', 'valueJson']
@@ -123,8 +126,8 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       str(s.id), str(s.plat || 'openedx'), str(s.bundleId), str(s.name), str(s.desc),
       s.first !== undefined && s.first !== null ? Number(s.first) : '',
       s.repeat !== undefined && s.repeat !== null ? Number(s.repeat) : '',
-      str(s.form), str(s.deploy), str(s.category), str(s.subCategory), str(s.account), str(s.limits),
-      str(s.note), str(s.from), str(s.estAt), s.direct ? 'yes' : ''
+      str(s.form), str(s.deploy), str(s.integrations), str(s.category), str(s.subCategory), str(s.account),
+      str(s.limits), str(s.note), str(s.from), str(s.estName), str(s.estAt), s.direct ? 'yes' : ''
     ]);
   }
   sheets[SHEETS.solutions] = solutions;
@@ -231,26 +234,31 @@ export function sheetsToState(workbook: Workbook): PersistedState {
     .filter((r) => r.id);
 
   const solutions: AddedSolution[] = objects(workbook[SHEETS.solutions])
-    .map((r) => ({
-      id: r.id ?? '',
-      plat: r.plat || 'openedx',
-      bundleId: r.bundleId ?? '',
-      name: r.name ?? '',
-      desc: r.description ?? '',
-      first: num(r.firstHours) ?? 0,
-      repeat: num(r.repeatHours) ?? 0,
-      form: r.form ?? '',
-      deploy: r.deploy ?? '',
-      integrations: '',
-      category: r.category ?? '',
-      subCategory: r.subCategory ?? '',
-      account: r.account ?? '',
-      limits: r.limits ?? '',
-      note: r.note ?? '',
-      from: r.fromRequest ?? '',
-      estAt: r.addedOn ?? '',
-      direct: String(r.direct ?? '').toLowerCase() === 'yes'
-    }))
+    .map((r) => {
+      const out: AddedSolution = {
+        id: r.id ?? '',
+        plat: r.plat || 'openedx',
+        bundleId: r.bundleId ?? '',
+        name: r.name ?? '',
+        desc: r.description ?? '',
+        first: num(r.firstHours) ?? 0,
+        repeat: num(r.repeatHours) ?? 0,
+        form: r.form ?? '',
+        deploy: r.deploy ?? '',
+        integrations: r.integrations ?? '',
+        category: r.category ?? '',
+        subCategory: r.subCategory ?? '',
+        account: r.account ?? '',
+        limits: r.limits ?? '',
+        note: r.note ?? '',
+        from: r.fromRequest ?? '',
+        estAt: r.addedOn ?? '',
+        direct: String(r.direct ?? '').toLowerCase() === 'yes'
+      };
+      /* only a solution priced from a request belongs to a deal; one entered at the desk has none */
+      if (r.estimationName) out.estName = r.estimationName;
+      return out;
+    })
     .filter((s) => s.id);
 
   const bundles: AddedBundle[] = objects(workbook[SHEETS.bundles])

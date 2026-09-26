@@ -319,6 +319,33 @@ describe('spreadsheet round-trip', () => {
     expect(back.solutions[1]?.plat).toBe('moodle');
   });
 
+  it('keeps the integrations of a desk solution and the deal it was priced for', async () => {
+    /* both show in the catalog row's detail, and both used to vanish on the first reload */
+    const original = sample();
+    const priced = original.solutions[0];
+    if (priced) Object.assign(priced, { integrations: 'Proctorio', estName: 'Acme Corporate Academy' });
+
+    const back = await roundTrip(original);
+    expect(back.solutions[0]?.integrations).toBe('Proctorio');
+    expect(back.solutions[0]?.estName).toBe('Acme Corporate Academy');
+    /* a solution entered straight at the desk belongs to no deal, and must not come back with one */
+    expect(back.solutions[1]?.estName).toBeUndefined();
+  });
+
+  it('reads a solutions sheet written before the integrations and estimationName columns', async () => {
+    /* exactly what an older build wrote: columns are read by name, so this must still load */
+    const columns = [
+      'id', 'plat', 'bundleId', 'name', 'description', 'firstHours', 'repeatHours', 'form', 'deploy',
+      'category', 'subCategory', 'account', 'limits', 'note', 'fromRequest', 'addedOn', 'direct'
+    ];
+    const row = ['CS-01', 'openedx', 'B05', 'Proctored exam integration', 'Live proctoring', 48, 12, 'Custom development',
+      '3 days', 'Assessment', '', 'Proctorio', '', '', 'RQ-01', '2026-09-12', ''];
+    const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.solutions]: [columns, row] })));
+
+    expect(back.solutions[0]).toMatchObject({ id: 'CS-01', name: 'Proctored exam integration', first: 48, account: 'Proctorio', from: 'RQ-01', integrations: '' });
+    expect(back.solutions[0]?.estName).toBeUndefined();
+  });
+
   it('keeps custom bundle categories', async () => {
     const back = await roundTrip(sample());
     expect(back.bundles[0]?.name).toBe('Deployment & Infrastructure');
@@ -398,7 +425,7 @@ describe('the sync key', () => {
     /* the desk left the note blank: '' here, and no cell at all in the sheet */
     if (priced) priced.estNote = '';
     const custom = state.solutions[0];
-    /* two fields the reducer sets that the sheet has no column for */
+    /* set the way `submitEstimate` sets them for a desk-priced request */
     if (custom) Object.assign(custom, { integrations: 'Proctorio', estName: 'Acme Corporate Academy' });
     /* the order `SYNCED_SETTING_KEYS` produces, with the split catalog in the middle */
     const catalogs = state.settings['edly-loaded-catalogs-v2'];
