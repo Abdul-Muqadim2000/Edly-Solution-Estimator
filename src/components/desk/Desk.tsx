@@ -116,6 +116,33 @@ function BackPill({ children, onClick }: { children: string; onClick: () => void
   );
 }
 
+/** Jumps from a queue item to the whole deal behind it. */
+function OpenPageButton({ onClick }: { onClick: () => void }): JSX.Element {
+  const h = useHover();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      {...h.bind}
+      style={{
+        marginTop: 12,
+        border: `1px solid ${h.on ? color.brand : color.rule}`,
+        background: h.on ? color.brandWash : color.surface,
+        cursor: 'pointer',
+        borderRadius: 8,
+        padding: '8px 12px',
+        fontSize: 12,
+        fontWeight: 600,
+        fontFamily: font.body,
+        color: color.brandDeep,
+        transition: 'border-color 120ms ease, background 120ms ease'
+      }}
+    >
+      Open estimation page — full selections &amp; items ›
+    </button>
+  );
+}
+
 /** The brand pill that opens a request's estimation page. */
 function EstChip({ children, onClick }: { children: ReactNode; onClick: () => void }): JSX.Element {
   const h = useHover();
@@ -227,7 +254,8 @@ function RequestQueue(): JSX.Element {
           value={deal}
           options={[{ value: '', label: 'All estimations' }, ...deals.map((one) => ({ value: one.id, label: one.client ? `${one.name} · ${one.client}` : one.name }))]}
           onChange={setDeal}
-          flex="0 1 320px"
+          /* sized by its content, capped — as the source does, so the Status pills sit beside it */
+          style={{ width: 'auto', maxWidth: 320, padding: '8px 10px', fontSize: 12.5, borderRadius: 8 }}
         />
         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.muted, marginLeft: 8 }}>Status</span>
         {(
@@ -276,6 +304,7 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
   const [limits, setLimits] = useState(request.catLimits ?? '');
   const [note, setNote] = useState(request.estNote ?? '');
   const [error, setError] = useState('');
+  const [sent, setSent] = useState(false);
 
   const estimation = state.estimations.find((candidate) => candidate.id === request.estId);
   const due = dueInfo(estimation?.due);
@@ -288,6 +317,8 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
       return;
     }
     setError('');
+    setSent(true);
+    window.setTimeout(() => setSent(false), 2200);
     dispatch({
       type: 'submitEstimate',
       id: request.id,
@@ -363,6 +394,13 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         Requested by {[request.name, request.org, request.email].filter(Boolean).join(' · ') || 'Sales workspace'} · {request.at || '—'}
       </div>
 
+      <OpenPageButton
+        onClick={() => {
+          dispatch({ type: 'setDeskView', id: request.estId });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
+
       <div
         style={{
           marginTop: 12,
@@ -370,34 +408,35 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
           border: `1px solid ${color.hairlineSoft}`,
           borderRadius: 10,
           padding: 12,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-          gap: 10,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 8,
           alignItems: 'flex-end'
         }}
       >
-        <Field label="Hours" hint="Enter the hours returned by the team — they join the total" type="number" min={0} mono value={hoursValue} onChange={setHours} placeholder="0" />
-        <Field label="Repeat h" type="number" min={0} mono value={repeat} onChange={setRepeat} placeholder="same" />
-        <Select label="Belongs to bundle" value={bundleId} options={bundleOptions} onChange={setBundleId} />
+        <Field label="Hours" flex="0 0 118px" hint="Enter the hours returned by the team — they join the total" type="number" min={0} mono value={hoursValue} onChange={setHours} placeholder="0" />
+        <Field label="Repeat h" flex="0 0 96px" type="number" min={0} mono value={repeat} onChange={setRepeat} placeholder="same" />
+        <Select label="Belongs to bundle" flex="0 0 210px" value={bundleId} options={bundleOptions} onChange={setBundleId} />
         <Select
-          label="Delivery form"
+          label="Delivery form" flex="0 0 170px"
           value={form}
           options={['Custom development', 'Plugin / extension', 'Theme / branding', 'MFE customization', 'Service integration', 'Configuration'].map((value) => ({ value, label: value }))}
           onChange={setForm}
         />
-        <Field label="Std deploy" value={deploy} onChange={setDeploy} placeholder="e.g. 2–3 days" />
-        <Field label="Category" value={category} onChange={setCategory} list="edly-categories" placeholder="e.g. Core Platform" />
-        <Field label="Sub-category" value={subCategory} onChange={setSubCategory} list="edly-subcategories" placeholder="e.g. Custom" />
-        <Field label="Integrations / vendors" value={integrations} onChange={setIntegrations} placeholder="e.g. MS Graph API, Zoom" />
-        <Field label="3rd-party account (client-held)" value={account} onChange={setAccount} placeholder="e.g. Stripe, Zoom — or leave blank" />
-        <Field label="Notes &amp; limits (goes to the catalog)" value={limits} onChange={setLimits} placeholder="Scope boundaries future clients must know" />
-        <Field label="Note to sales (optional)" value={note} onChange={setNote} placeholder="Assumptions, exclusions, risks…" />
+        <Field label="Std deploy" flex="0 0 120px" value={deploy} onChange={setDeploy} placeholder="e.g. 2–3 days" />
+        <Field label="Category" flex="0 0 180px" value={category} onChange={setCategory} list="edly-categories" placeholder="e.g. Core Platform" />
+        <Field label="Sub-category" flex="0 0 160px" value={subCategory} onChange={setSubCategory} list="edly-subcategories" placeholder="e.g. Custom" />
+        <Field label="Integrations / vendors" flex="1 1 180px" value={integrations} onChange={setIntegrations} placeholder="e.g. MS Graph API, Zoom" />
+        <Field label="3rd-party account (client-held)" flex="1 1 180px" value={account} onChange={setAccount} placeholder="e.g. Stripe, Zoom — or leave blank" />
+        <Field label="Notes &amp; limits (goes to the catalog)" flex="1 1 220px" value={limits} onChange={setLimits} placeholder="Scope boundaries future clients must know" />
+        <Field label="Note to sales (optional)" flex="1 1 200px" value={note} onChange={setNote} placeholder="Assumptions, exclusions, risks…" />
+
+        <Button tone="primary" onClick={submit} style={{ borderRadius: 9, padding: '11px 16px', fontSize: 12 }}>
+          {sent ? '✓ Sent to sales' : done ? 'Update estimate' : 'Submit estimate'}
+        </Button>
       </div>
 
-      <Row gap={10} style={{ marginTop: 12 }}>
-        <Button tone="primary" onClick={submit}>
-          {done ? 'Update estimate' : 'Submit estimate'}
-        </Button>
+      <Row gap={10} style={{ marginTop: 8 }}>
         {error ? <span style={{ fontSize: 12, fontWeight: 600, color: color.redInk }}>{error}</span> : null}
         <Spacer />
         {done ? (
@@ -466,11 +505,9 @@ function EstimationList(): JSX.Element {
           <DeskCard key={estimation.id} pending={pending} onOpen={() => dispatch({ type: 'setDeskView', id: estimation.id })}>
             <div style={{ fontFamily: font.display, fontSize: 15.5, fontWeight: 600, lineHeight: 1.3 }}>{estimation.name}</div>
             {estimation.client ? <div style={{ fontSize: 12, color: color.muted, marginTop: 2 }}>{estimation.client}</div> : null}
-            <div style={{ marginTop: 10 }}>
-              <Mono size={11}>
+            <Mono block size={11} style={{ marginTop: 10 }}>
                 {hours(numbers.grand)} h · {plural(numbers.selIds.length, 'solution')} · {plural(requests.length, 'custom item')}
-              </Mono>
-            </div>
+            </Mono>
             <Row gap={6} style={{ marginTop: 10 }}>
               <Chip bg={style.bg} co={style.co}>
                 {estimation.tag}
@@ -715,6 +752,8 @@ function AddToCatalog(): JSX.Element {
   const [bundle, setBundle] = useState({ name: '', pitch: '', offerWhen: '' });
   const [solutionError, setSolutionError] = useState('');
   const [bundleError, setBundleError] = useState('');
+  const [solutionAdded, setSolutionAdded] = useState(false);
+  const [bundleAdded, setBundleAdded] = useState(false);
 
   const bundleOptions = useMemo(
     () => [
@@ -757,6 +796,8 @@ function AddToCatalog(): JSX.Element {
       }
     });
     setSolution({ ...solution, name: '', desc: '', first: '', repeat: '', deploy: '', limits: '', note: '' });
+    setSolutionAdded(true);
+    window.setTimeout(() => setSolutionAdded(false), 2200);
   };
 
   const addBundle = (): void => {
@@ -771,6 +812,8 @@ function AddToCatalog(): JSX.Element {
     setBundleError('');
     dispatch({ type: 'addBundle', name: bundle.name.trim(), pitch: bundle.pitch.trim(), offerWhen: bundle.offerWhen.trim() });
     setBundle({ name: '', pitch: '', offerWhen: '' });
+    setBundleAdded(true);
+    window.setTimeout(() => setBundleAdded(false), 2200);
   };
 
   const set = (key: keyof typeof solution) => (value: string) => setSolution((prev) => ({ ...prev, [key]: value }));
@@ -826,8 +869,8 @@ function AddToCatalog(): JSX.Element {
           <Field label="Note to sales (optional)" value={solution.note} onChange={set('note')} placeholder="Assumptions, exclusions, risks…" />
         </div>
         <Row gap={10} style={{ marginTop: 14 }}>
-          <Button tone="primary" onClick={addSolution}>
-            Add estimated solution
+          <Button tone="primary" onClick={addSolution} style={{ borderRadius: 9, padding: '11px 18px', fontSize: 12 }}>
+            {solutionAdded ? '✓ Added to catalog' : 'Add estimated solution'}
           </Button>
           {solutionError ? <span style={{ fontSize: 12, fontWeight: 600, color: color.redInk }}>{solutionError}</span> : null}
         </Row>
@@ -845,8 +888,8 @@ function AddToCatalog(): JSX.Element {
           <Field label="Offer when they ask about" value={bundle.offerWhen} onChange={(value) => setBundle((prev) => ({ ...prev, offerWhen: value }))} placeholder="e.g. zero-downtime releases" />
         </div>
         <Row gap={10} style={{ marginTop: 14 }}>
-          <Button tone="brand" onClick={addBundle}>
-            Add bundle
+          <Button tone="brand" onClick={addBundle} hover={{ background: color.brandWashHover }} style={{ borderRadius: 9, padding: '11px 18px', fontSize: 12 }}>
+            {bundleAdded ? '✓ Bundle added' : 'Add bundle'}
           </Button>
           {bundleError ? <span style={{ fontSize: 12, fontWeight: 600, color: color.redInk }}>{bundleError}</span> : null}
         </Row>

@@ -17,6 +17,65 @@ export type Workbook = Record<string, SheetTable>;
 export type CellValue = string | number | null | undefined;
 export type WriteSheets = Record<string, CellValue[][]>;
 
+/** A styled cell. `s` indexes STYLES below; plain values still work unstyled. */
+export interface StyledCell {
+  v?: string | number | null;
+  /** Numeric value, written as a real number Excel can sum. */
+  n?: number | null;
+  s?: StyleId;
+}
+
+export type SheetCell = CellValue | StyledCell;
+
+export interface SheetRow {
+  cells?: (SheetCell | null)[];
+  /** Row height in points. */
+  h?: number;
+}
+
+/**
+ * The branded style slots, matching the source workbook 1:1.
+ *
+ *   1 title band · 2 grey caption · 3 dark header · 4 brand-wash subtotal
+ *   5 bold total · 6 brand-green note
+ */
+export type StyleId = 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface StyledSheet {
+  rows: SheetRow[];
+  /** A1-notation ranges, e.g. "A1:E1". */
+  merges?: string[];
+  /** Column widths in characters. */
+  widths?: number[];
+}
+
+const STYLES =
+  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+  '<fonts count="7">' +
+  '<font><sz val="11"/><name val="Calibri"/><color rgb="FF252525"/></font>' +
+  '<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF252525"/></font>' +
+  '<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>' +
+  '<font><b/><sz val="15"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>' +
+  '<font><sz val="10"/><name val="Calibri"/><color rgb="FF666666"/></font>' +
+  '<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF0A6B5B"/></font>' +
+  '<font><b/><sz val="12"/><name val="Calibri"/><color rgb="FF252525"/></font>' +
+  '</fonts>' +
+  '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FF252525"/><bgColor rgb="FF252525"/></patternFill></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FFEBF9F6"/><bgColor rgb="FFEBF9F6"/></patternFill></fill></fills>' +
+  '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+  '<cellXfs count="7">' +
+  '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>' +
+  '<xf numFmtId="0" fontId="3" fillId="2" borderId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" applyFont="1"/>' +
+  '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" applyFont="1" applyFill="1"/>' +
+  '<xf numFmtId="0" fontId="1" fillId="3" borderId="0" applyFont="1" applyFill="1"/>' +
+  '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/>' +
+  '<xf numFmtId="0" fontId="5" fillId="0" borderId="0" applyFont="1"/>' +
+  '</cellXfs></styleSheet>';
+
 /* ----------------------------------------------------------------- zip ---- */
 
 const CRC_TABLE = (() => {
@@ -268,25 +327,44 @@ const columnRef = (index: number): string => {
   return ref;
 };
 
-function worksheetXml(rows: CellValue[][]): string {
+function worksheetXml(sheet: StyledSheet): string {
+  const { rows, merges = [], widths = [] } = sheet;
+  const cols =
+    widths.length > 0
+      ? `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`
+      : '';
+
   let out =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${cols}<sheetData>`;
+
   rows.forEach((row, rowIndex) => {
-    out += `<row r="${rowIndex + 1}">`;
-    (row ?? []).forEach((cell, cellIndex) => {
-      if (cell === null || cell === undefined || cell === '') return;
+    out += `<row r="${rowIndex + 1}"${row?.h ? ` ht="${row.h}" customHeight="1"` : ''}>`;
+    (row?.cells ?? []).forEach((cell, cellIndex) => {
+      if (cell === null || cell === undefined) return;
       const ref = columnRef(cellIndex) + (rowIndex + 1);
-      if (typeof cell === 'number' && Number.isFinite(cell)) out += `<c r="${ref}"><v>${cell}</v></c>`;
-      else out += `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(cell)}</t></is></c>`;
+      const styled: StyledCell = typeof cell === 'object' ? cell : typeof cell === 'number' ? { n: cell } : { v: cell };
+      const st = styled.s ? ` s="${styled.s}"` : '';
+      if (styled.n !== null && styled.n !== undefined && Number.isFinite(styled.n)) {
+        out += `<c r="${ref}"${st}><v>${styled.n}</v></c>`;
+      } else if (styled.v !== null && styled.v !== undefined && styled.v !== '') {
+        out += `<c r="${ref}" t="inlineStr"${st}><is><t xml:space="preserve">${escapeXml(String(styled.v))}</t></is></c>`;
+      } else if (styled.s) {
+        out += `<c r="${ref}"${st}/>`;
+      }
     });
     out += '</row>';
   });
-  return `${out}</sheetData></worksheet>`;
+
+  out += '</sheetData>';
+  if (merges.length > 0) {
+    out += `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>`;
+  }
+  return `${out}</worksheet>`;
 }
 
 /** `{ name: rows }` → the bytes of a .xlsx. */
-export function writeWorkbook(sheets: WriteSheets): Uint8Array {
+export function writeWorkbook(sheets: Record<string, CellValue[][] | StyledSheet>): Uint8Array {
   const names = Object.keys(sheets);
   if (names.length === 0) throw new Error('writeWorkbook needs at least one sheet');
 
@@ -305,6 +383,7 @@ export function writeWorkbook(sheets: WriteSheets): Uint8Array {
               `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
           )
           .join('') +
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
         '</Types>'
     },
     {
@@ -336,15 +415,24 @@ export function writeWorkbook(sheets: WriteSheets): Uint8Array {
               `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`
           )
           .join('') +
+        `<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
         '</Relationships>'
-    }
+    },
+    { name: 'xl/styles.xml', data: STYLES }
   ];
 
   names.forEach((name, i) => {
-    files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: worksheetXml(sheets[name] ?? []) });
+    files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: worksheetXml(normalise(sheets[name])) });
   });
 
   return zipStored(files);
+}
+
+/** Accepts either a plain grid or the styled form. */
+function normalise(sheet: CellValue[][] | StyledSheet | undefined): StyledSheet {
+  if (!sheet) return { rows: [] };
+  if (Array.isArray(sheet)) return { rows: sheet.map((cells) => ({ cells })) };
+  return sheet;
 }
 
 /** Stable fingerprint of a file, to notice when a served sheet changes. */

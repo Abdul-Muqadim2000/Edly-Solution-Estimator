@@ -7,6 +7,7 @@ import { EstimationsHub } from '@/components/EstimationsHub';
 import { Builder } from '@/components/builder/Builder';
 import { Desk } from '@/components/desk/Desk';
 import { SyncPill } from '@/components/AppHeader';
+import { QuoteSheet } from '@/components/QuoteSheet';
 import { color } from '@/theme';
 
 /**
@@ -40,8 +41,12 @@ function Screens(): JSX.Element {
 export function App(): JSX.Element {
   return (
     <AppProvider>
-      <Screens />
-      <SyncPill />
+      <div data-app="true">
+        <Screens />
+        <SyncPill />
+      </div>
+      {/* Hidden on screen; the print stylesheet swaps it in for the app. */}
+      <QuoteSheet />
     </AppProvider>
   );
 }

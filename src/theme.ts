@@ -9,11 +9,15 @@ export const color = {
   /** The deepest ink, reserved for the dark estimate column. */
   inkDeep: '#1B1B1B',
   body: '#4A4A4A',
+  /** The printed quote's secondary text. */
+  bodyDim: '#5A5A5A',
   /** Long-form body copy that should sit back from `body` — the hero blurb. */
   bodySoft: '#5A5A5A',
   muted: '#6E6E6E',
   faint: '#8F8F8B',
   ghost: '#9C9C97',
+  /** A hair warmer than `ghost`. The source design uses both; they are not interchangeable. */
+  ghostCool: '#9C9C9C',
   /** The quietest label tone — hero footnotes and buffer bars. */
   dim: '#8A8A85',
   /** Disclosure chevrons and the resting edge of a toggle. */
@@ -47,6 +51,8 @@ export const color = {
   brandInkSoft: '#3D6B62',
   brandWash: '#EBF9F6',
   brandWashDeep: '#E2F7F1',
+  /** Hover on the brand-filled "Add bundle" button. */
+  brandWashHover: '#DCF4EF',
   /** The brand washes, palest first — row hovers, picked rows, callout panels. */
   brandWashTint: '#FAFDFC',
   brandWashSoft: '#F5FCFA',

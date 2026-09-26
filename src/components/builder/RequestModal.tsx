@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { mailRequests } from '@/lib/mail';
+import { mailOne } from '@/lib/mail';
 import { useApp } from '@/state/AppProvider';
+import { nextId, today } from '@/lib/format';
 import { color, font } from '@/theme';
 import { Button, Field, Modal, Row, Select, Spacer, TextArea } from '@/components/ui';
 
 /** Sales asks for something the catalog does not cover. It lands on the estimation desk. */
-export function RequestModal({ onClose }: { onClose: () => void }): JSX.Element {
-  const { dispatch, catalog } = useApp();
+export function RequestModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitted?: () => void }): JSX.Element {
+  const { state, dispatch, catalog } = useApp();
+  /* the mail quotes the id the reducer is about to assign, so both agree */
+  const nextRequestId = nextId('RQ', state.requests, 'id');
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
   const [area, setArea] = useState('');
@@ -39,11 +42,17 @@ export function RequestModal({ onClose }: { onClose: () => void }): JSX.Element 
     };
     dispatch({ type: 'addRequest', input });
     setSent(true);
+    onSubmitted?.();
     /* the desk already has it; the email is a courtesy copy for the team's inbox */
-    void mailRequests(
-      [{ ...input, id: 'new', plat: '', estId: '', estName: '', client: '', at: '' }],
-      { name: input.title, client: input.org }
-    ).finally(() => onClose());
+    void mailOne({
+      ...input,
+      id: nextRequestId,
+      plat: '',
+      estId: '',
+      estName: '',
+      client: '',
+      at: today()
+    }).finally(() => onClose());
   };
 
   const header = (

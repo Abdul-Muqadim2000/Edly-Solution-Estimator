@@ -1,6 +1,6 @@
 import type { CurrencyCode, EstimateRequest, EstimateResult, Estimation, Schedule } from '@/types';
 import type { DisplayPrefs } from '@/state/reducer';
-import { writeWorkbook, type CellValue } from '@/lib/xlsx';
+import { writeWorkbook, type SheetCell, type SheetRow, type StyledSheet } from '@/lib/xlsx';
 import { hours, hours1, longDate, money, plural, rateLabel } from '@/lib/format';
 
 /**
@@ -9,8 +9,9 @@ import { hours, hours1, longDate, money, plural, rateLabel } from '@/lib/format'
  * Both respect the display preferences: if sales has hidden the economics, the export hides them
  * too. Otherwise "Present to client" would be undone the moment someone downloaded the quote.
  *
- * Note: this writes structure and values, not cell formatting — lib/xlsx.ts is a minimal writer
- * with no style table. Excel opens it cleanly; it just isn't brand-styled.
+ * The workbook is brand-styled: a dark title band, brand-wash subtotals and fixed column widths,
+ * written through the style table in lib/xlsx.ts. It is what a client receives, so it should not
+ * look like a raw data dump.
  */
 
 export interface QuoteInput {
@@ -25,105 +26,177 @@ export interface QuoteInput {
 
 const SHEET = 'Estimate';
 
-export function quoteRows({ estimation, estimate, requests, plan, display, currency, platformName }: QuoteInput): CellValue[][] {
+export function quoteSheet({ estimation, estimate, requests, plan, display, currency, platformName }: QuoteInput): StyledSheet {
   const factor = display.blendBuffer ? 1 + estimate.bufPct / 100 : 1;
-  const rows: CellValue[][] = [];
+  const buf = estimation.snap.buf ?? {};
+  const bufOf = (id: string): number => (Number(buf[id]) > 0 ? Number(buf[id]) : 0);
+  const rows: SheetRow[] = [];
+  const merges: string[] = [];
+  const band = (v: string): SheetCell[] => [{ v, s: 3 }, { v: '', s: 3 }, { v: '', s: 3 }, { v: '', s: 3 }, { v: '', s: 3 }];
 
-  rows.push([`${platformName} Solution Bundle — Estimate`]);
-  rows.push([
-    `Prepared ${longDate()}` +
-      (estimate.pm ? ` · +${estimate.pm}% PM overhead` : '') +
-      (estimate.qa ? ` · +${estimate.qa}% QA overhead` : '') +
-      (!display.blendBuffer && estimate.bufH ? ` · +${hours(estimate.bufH)} h risk buffer` : '') +
-      (display.money ? ` · rate ${rateLabel(estimate.rate, currency)}` : '')
-  ]);
-  rows.push([estimation.name + (estimation.client ? ` · ${estimation.client}` : '')]);
-  rows.push([]);
+  rows.push({
+    h: 30,
+    cells: [{ v: `EDLY — ${platformName.toUpperCase()} SOLUTION BUNDLE ESTIMATE`, s: 1 }, { v: '', s: 1 }, { v: '', s: 1 }, { v: '', s: 1 }, { v: '', s: 1 }]
+  });
+  merges.push('A1:E1');
+  rows.push({
+    cells: [
+      {
+        v:
+          `Prepared ${longDate()}` +
+          (estimate.pm ? ` · +${estimate.pm}% PM overhead` : '') +
+          (estimate.qa ? ` · +${estimate.qa}% QA overhead` : '') +
+          (display.blendBuffer || !estimate.bufH ? '' : ` · +${hours(estimate.bufH)} h risk buffer`) +
+          (display.money ? ` · rate ${rateLabel(estimate.rate, currency)}` : '') +
+          ' · Edly by Arbisoft, core Open edX contributor since 2013',
+        s: 2
+      }
+    ]
+  });
+  merges.push('A2:E2');
+  rows.push({});
+  rows.push({ cells: [{ v: estimation.name + (estimation.client ? ` · ${estimation.client}` : ''), s: 6 }] });
+  rows.push({});
 
-  rows.push(['Bundle', 'Solution', 'What it does', 'Hours', 'Std deployment']);
+  rows.push({ cells: [{ v: 'Bundle', s: 3 }, { v: 'Solution ID', s: 3 }, { v: 'Solution', s: 3 }, { v: 'Est. hours', s: 3 }, { v: 'Client-held account', s: 3 }] });
   for (const group of estimate.groups) {
-    for (const item of group.items) {
-      const buffer = Number(estimation.snap.buf?.[item.id]) || 0;
-      rows.push([
-        group.name,
-        `${item.id} — ${item.name}`,
-        item.desc,
-        Number((((item.first ?? 0) + (display.blendBuffer ? buffer : 0)) * factor).toFixed(2)),
-        item.deploy ?? ''
-      ]);
-    }
-    rows.push([`${group.name} subtotal`, '', '', Number((group.first * factor).toFixed(2)), '']);
-    rows.push([]);
+    group.items.forEach((item, index) => {
+      rows.push({
+        cells: [
+          { v: index === 0 ? `${group.id} · ${group.name}` : '' },
+          { v: item.id },
+          { v: item.name },
+          item.first === null
+            ? { v: item.status === 'In Development' ? 'in development' : 'no estimate' }
+            : { n: Number((((item.first ?? 0) + (display.blendBuffer ? bufOf(item.id) : 0)) * factor).toFixed(2)) },
+          { v: item.account ?? '' }
+        ]
+      });
+    });
+    const subtotal = group.items.reduce((sum, item) => sum + (item.first ?? 0) + (display.blendBuffer ? bufOf(item.id) : 0), 0);
+    rows.push({
+      cells: [{ v: '', s: 4 }, { v: '', s: 4 }, { v: `${group.name} — subtotal`, s: 4 }, { n: Number((subtotal * factor).toFixed(2)), s: 4 }, { v: '', s: 4 }]
+    });
   }
+  rows.push({
+    cells: [
+      { v: '', s: 3 },
+      { v: '', s: 3 },
+      { v: 'TOTAL — solution hours', s: 3 },
+      { n: Number(((estimate.first + (display.blendBuffer ? estimate.itemBufSum : 0)) * factor).toFixed(2)), s: 3 },
+      { v: '', s: 3 }
+    ]
+  });
+  rows.push({});
 
-  if (requests.length > 0) {
-    const pending = requests.filter((request) => !(Number(request.est) > 0)).length;
-    rows.push([
-      `CUSTOM DEVELOPMENT — estimated items are already in the total below${pending ? `; ${pending} still awaiting hours and excluded` : ''}`
-    ]);
-    rows.push(['ID', 'Area', 'Item', 'Hours', 'Requested by']);
-    for (const request of requests) {
-      rows.push([
-        request.id,
-        request.area || 'Custom',
-        request.title + (request.details ? ` — ${request.details}` : ''),
-        Number(request.est) > 0 ? Number((Number(request.est) * factor).toFixed(2)) : 'awaiting estimate',
-        [request.name, request.org, request.email].filter(Boolean).join(' · ')
-      ]);
-    }
-    rows.push([]);
+  if (estimate.estSum) {
+    rows.push({
+      cells: [null, null, { v: 'Custom development (estimated)', s: 5 }, { v: `+${hours(display.blendBuffer ? estimate.estSum * factor : estimate.estSum)} h`, s: 5 }]
+    });
   }
-
-  if (!display.blendBuffer && estimate.bufH > 0) rows.push(['', '', 'Risk buffer', Number(estimate.bufH.toFixed(2)), '']);
-  if (estimate.pm > 0) rows.push(['', '', `PM overhead (${estimate.pm}%)`, Number(estimate.pmH.toFixed(2)), '']);
-  if (estimate.qa > 0) rows.push(['', '', `QA overhead (${estimate.qa}%)`, Number(estimate.qaH.toFixed(2)), '']);
-  rows.push(['', '', 'TOTAL ENGINEERING HOURS', Number(estimate.grand.toFixed(2)), '']);
-  rows.push(['', '', 'Person-days (8 h)', Number(estimate.days.toFixed(1)), '']);
-  rows.push(['', '', 'Delivery span', `${hours1(plan.end)} weeks at peak ${plural(plan.peak, 'person')}`, '']);
+  if (!display.blendBuffer && estimate.bufH) {
+    rows.push({ cells: [null, null, { v: `Risk buffer${estimate.bufPct ? ` (incl. ${estimate.bufPct}%)` : ''}`, s: 5 }, { v: `+${hours(estimate.bufH)} h`, s: 5 }] });
+  }
+  if (estimate.pm) rows.push({ cells: [null, null, { v: `PM overhead (${estimate.pm}%)`, s: 5 }, { v: `+${hours(estimate.pmH)} h`, s: 5 }] });
+  if (estimate.qa) rows.push({ cells: [null, null, { v: `QA overhead (${estimate.qa}%)`, s: 5 }, { v: `+${hours(estimate.qaH)} h`, s: 5 }] });
+  rows.push({ cells: [null, null, { v: 'Total estimate', s: 5 }, { v: `${hours(estimate.grand)} h  (≈ ${hours1(estimate.days)} person-days)`, s: 5 }] });
 
   if (display.money) {
-    rows.push([]);
-    rows.push(['', '', `Estimate at ${rateLabel(estimate.rate, currency)} (${currency})`, money(estimate.usd, currency), '']);
+    rows.push({
+      cells: [
+        null,
+        null,
+        {
+          v:
+            estimate.assignedH > 0
+              ? `Estimate at ${money(estimate.effRate, currency)}/h blended across roles (${currency})`
+              : `Estimate at ${rateLabel(estimate.rate, currency)} (${currency})`,
+          s: 5
+        },
+        { v: money(estimate.usd, currency), s: 5 }
+      ]
+    });
     if (estimate.assignedH > 0) {
-      rows.push([]);
-      rows.push(['COST BY ROLE']);
-      rows.push(['Role', 'Rate', 'Hours', 'Cost', '']);
+      rows.push({});
+      rows.push({ cells: band('COST BY ROLE') });
       for (const role of estimate.roleRows) {
-        rows.push([role.name, money(role.rate, currency), Number(role.hrs.toFixed(2)), money(role.cost, currency), '']);
+        rows.push({ cells: [{ v: role.name }, { v: `${money(role.rate, currency)}/h` }, { v: '' }, { n: Number(role.hrs.toFixed(2)) }, { v: money(role.cost, currency) }] });
       }
     }
   }
 
   if (display.savings && estimate.savedPct !== null) {
-    rows.push([]);
-    rows.push(['', '', 'Effort saved vs building new', `${estimate.savedPct}%`, '']);
-    rows.push(['', '', 'Engineering already built', Number(estimate.build.toFixed(2)), '']);
+    rows.push({ cells: [null, null, { v: `Reusing ${hours(estimate.build)} engineered hours — ${estimate.savedPct}% effort saved vs building new`, s: 6 }] });
   }
-
   if (estimate.accts.length > 0) {
-    rows.push([]);
-    rows.push([`Client-held accounts required: ${estimate.accts.join(' · ')}`]);
+    rows.push({ cells: [null, null, { v: `Client-held accounts: ${estimate.accts.join(', ')}`, s: 2 }] });
+  }
+  const caveats: string[] = [];
+  if (estimate.inDev) caveats.push(`${estimate.inDev} item(s) in development — sold with a delivery-date caveat`);
+  if (estimate.noEst) caveats.push(`${estimate.noEst} item(s) without recorded estimates — totals understate`);
+  if (caveats.length > 0) rows.push({ cells: [null, null, { v: `Caveats: ${caveats.join('; ')}`, s: 2 }] });
+
+  if (requests.length > 0) {
+    rows.push({});
+    const pending = requests.filter((request) => !(Number(request.est) > 0)).length;
+    rows.push({
+      cells: band(
+        `CUSTOM DEVELOPMENT — estimated items are already in the total above${pending ? `; ${pending} still awaiting hours and excluded` : ''}`
+      )
+    });
+    for (const request of requests) {
+      rows.push({
+        cells: [
+          { v: request.id },
+          { v: request.area || 'Custom' },
+          { v: request.title + (request.details ? ` — ${request.details}` : '') },
+          Number(request.est) > 0 ? { n: Number(request.est) } : { v: 'awaiting estimate' },
+          { v: [request.name, request.org, request.email].filter(Boolean).join(' · ') }
+        ]
+      });
+    }
   }
 
-  rows.push([]);
-  rows.push([
-    'Engineering hours only — add PM, QA and support overhead per delivery standards unless applied above. Third-party vendor fees are payable by the client and are not included.'
-  ]);
+  if (plan.bars.length > 0) {
+    rows.push({});
+    rows.push({ cells: band(`DELIVERY TIMELINE — ${plan.cap} people at once, ${plan.weeks} weeks`) });
+    for (const bar of plan.bars) {
+      rows.push({
+        cells: [
+          { v: bar.name },
+          { v: '' },
+          { v: bar.span ? 'Runs across full delivery' : `Week ${bar.start + 1} – ${Math.ceil(bar.start + bar.dur)}` },
+          { n: Number(bar.hrs.toFixed(1)) },
+          { v: `${hours1(bar.dur)} wks` }
+        ]
+      });
+    }
+  }
 
-  return rows;
+  rows.push({});
+  rows.push({
+    cells: [
+      {
+        v: 'Engineering hours only — PM, QA and support overhead per delivery standards unless applied above. Third-party vendor fees are payable by the client. Edly by Arbisoft · edly.io · Open edX® is a registered trademark of edX Inc. This estimate covers pre-built solutions only — Edly also builds fully custom Open edX solutions: edly.io/contact-us.',
+        s: 2
+      }
+    ]
+  });
+
+  return { rows, merges, widths: [30, 12, 56, 14, 34] };
 }
 
 /** Triggers a download of the estimate as .xlsx. */
 export function downloadQuote(input: QuoteInput): void {
-  const bytes = writeWorkbook({ [SHEET]: quoteRows(input) });
-  const safe = (input.estimation.name || 'estimate').replace(/[^\w\-. ]+/g, '').trim() || 'estimate';
+  const bytes = writeWorkbook({ [SHEET]: quoteSheet(input) });
+  const safe = (input.estimation.name || 'Bundle-Estimate').replace(/[^\w-]+/g, '-') || 'Bundle-Estimate';
   const blob = new Blob([bytes as unknown as BlobPart], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${safe} — estimate.xlsx`;
+  link.download = `Edly-${safe}-${new Date().toISOString().slice(0, 10)}.xlsx`;
   document.body.appendChild(link);
   link.click();
   link.remove();

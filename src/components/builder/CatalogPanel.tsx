@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react';
 import { useApp } from '@/state/AppProvider';
+import { catalogSourceLabel } from '@/state/reducer';
 import { allSolutions, diffCatalogs } from '@/domain/catalog';
 import { benchmarkCatalog, isLiveCatalog } from '@/data/practices';
 import { color, font, radius } from '@/theme';
 import { Button, Mono, Popover, Row, useRowHover } from '@/components/ui';
 
 /** Where the catalog came from, and how to replace it with your own sheet. */
-export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element {
-  const { state, catalog, importCatalog, resetCatalog } = useApp();
+export function CatalogPanel({ onClose, onLoaded }: { onClose: () => void; onLoaded?: () => void }): JSX.Element {
+  const { state, catalog, importCatalog, resetCatalog, reloadCatalog } = useApp();
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -17,14 +18,8 @@ export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element 
   const live = isLiveCatalog(state.platform);
   const loaded = state.loadedCatalogs[state.platform];
   const source = state.catalogSource;
-
-  const sourceLine = (): string => {
-    if (!live && !loaded) return `industry benchmark set for this platform`;
-    if (source?.source === 'file') return `loaded from ${source.name ?? 'your sheet'}`;
-    if (source?.source === 'builtin') return 'built-in copy of the master sheet';
-    if (source?.source === 'auto') return `live from ${source.name ?? '/catalog-source.xlsx'}`;
-    return 'from the master sales sheet';
-  };
+  /* offered whenever the copy in play did not come from the served sheet, or a newer one is out */
+  const canReadLive = live && (source?.source === 'builtin' || source?.source === 'file' || state.autoAvail);
 
   const pick = async (file: File): Promise<void> => {
     setBusy(true);
@@ -43,6 +38,7 @@ export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element 
       }
       for (const warning of result?.warnings ?? []) lines.push(`⚠ ${warning}`);
       setChanges(lines.length > 0 ? lines : ['Loaded. No differences from what was already in play.']);
+      onLoaded?.();
     } catch (problem) {
       setError((problem as Error).message || 'That workbook could not be read.');
     } finally {
@@ -59,14 +55,12 @@ export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element 
         </Button>
       </Row>
       <div style={{ fontSize: 12.5, color: color.ink, fontWeight: 600, marginTop: 8 }}>
-        {sourceLine()}
+        {catalogSourceLabel(state)}
         {source?.at ? ` · ${source.at}` : ''}
       </div>
-      <div style={{ marginTop: 3 }}>
-        <Mono size={11}>
-          {allSolutions(catalog).length} solutions · {catalog.bundles.length} bundles · sheet compiled {catalog.meta.compiled || '—'}
-        </Mono>
-      </div>
+      <Mono block size={11} style={{ marginTop: 3 }}>
+        {allSolutions(catalog).length} solutions · {catalog.bundles.length} bundles · sheet compiled {catalog.meta.compiled || '—'}
+      </Mono>
 
       {changes.length > 0 ? (
         <div style={{ marginTop: 10, background: color.brandWashPale, border: `1px solid ${color.brandEdgePale}`, borderRadius: radius.md, padding: '9px 11px', display: 'grid', gap: 4 }}>
@@ -118,10 +112,27 @@ export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element 
         </div>
       ) : null}
 
-      {loaded ? (
-        <Row gap={6} style={{ marginTop: 10 }}>
+      <Row gap={6} style={{ marginTop: 10 }}>
+        {canReadLive ? (
           <Button
             size="sm"
+            hover={{ borderColor: color.brand, background: color.brandWash }}
+            onClick={() => {
+              setBusy(true);
+              setError('');
+              void reloadCatalog()
+                .then(() => setChanges(['Re-read the sheet served beside the app.']))
+                .catch((problem: Error) => setError(problem.message || 'That sheet could not be read.'))
+                .finally(() => setBusy(false));
+            }}
+          >
+            {state.autoAvail ? 'A newer sheet sits beside the app — use it' : 'Re-read the sheet beside the app'}
+          </Button>
+        ) : null}
+        {loaded ? (
+          <Button
+            size="sm"
+            hover={{ borderColor: color.ghost, color: color.ink }}
             onClick={() => {
               resetCatalog();
               setChanges([]);
@@ -129,8 +140,8 @@ export function CatalogPanel({ onClose }: { onClose: () => void }): JSX.Element 
           >
             {live ? 'Use built-in copy' : 'Back to the benchmark set'}
           </Button>
-        </Row>
-      ) : null}
+        ) : null}
+      </Row>
 
       <div style={{ fontSize: 11, color: color.faint, lineHeight: 1.55, borderTop: `1px solid ${color.hairlineSoft}`, marginTop: 10, paddingTop: 9 }}>
         Saved estimations keep their selections. A solution dropped from the sheet leaves the totals; new rows appear straight

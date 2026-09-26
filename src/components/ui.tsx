@@ -233,7 +233,8 @@ export function Select<T extends string>({
   options,
   onChange,
   hint,
-  flex
+  flex,
+  style
 }: {
   label?: string;
   value: T;
@@ -241,6 +242,8 @@ export function Select<T extends string>({
   onChange: (value: T) => void;
   hint?: string;
   flex?: string;
+  /** Overrides the field styling — used where the source sizes a select to its content. */
+  style?: CSSProperties;
 }): JSX.Element {
   const focus = useFocus();
   const select = (
@@ -249,7 +252,9 @@ export function Select<T extends string>({
       title={hint}
       onChange={(event) => onChange(event.target.value as T)}
       {...focus.bind}
-      style={{ ...inputStyle, padding: '10px 9px', fontSize: 13, ...(focus.on ? FOCUS_RING : null) }}
+      /* No fontFamily: the source design leaves selects in the platform's form font, and its
+         metrics set the control's width and height. */
+      style={{ ...inputStyle, fontFamily: undefined, padding: '10px 9px', fontSize: 13, ...style, ...(focus.on ? FOCUS_RING : null) }}
     >
       {options.map((option) => (
         <option key={option.value} value={option.value}>
@@ -497,9 +502,27 @@ export function useRowHover(hovered: CSSProperties): { bind: HoverState['bind'];
   return { bind: h.bind, style: h.on ? hovered : {} };
 }
 
-export const Mono = ({ children, size = 11, tone = color.muted }: { children: ReactNode; size?: number; tone?: string }): JSX.Element => (
-  <span style={{ fontFamily: font.mono, fontSize: size, color: tone }}>{children}</span>
-);
+/**
+ * `block` renders a div with the type set on the block itself. That matters: a small inline span
+ * inside a normal-sized block still gets the parent's line box, which made every card carrying a
+ * mono meta line a few pixels taller than the source design.
+ */
+export const Mono = ({
+  children,
+  size = 11,
+  tone = color.muted,
+  block,
+  style
+}: {
+  children: ReactNode;
+  size?: number;
+  tone?: string;
+  block?: boolean;
+  style?: CSSProperties;
+}): JSX.Element => {
+  const type: CSSProperties = { fontFamily: font.mono, fontSize: size, color: tone, ...style };
+  return block ? <div style={type}>{children}</div> : <span style={type}>{children}</span>;
+};
 
 export const Row = ({ children, gap = 10, align = 'center', wrap = true, style }: { children: ReactNode; gap?: number; align?: CSSProperties['alignItems']; wrap?: boolean; style?: CSSProperties }): JSX.Element => (
   <div style={{ display: 'flex', flexWrap: wrap ? 'wrap' : 'nowrap', alignItems: align, gap, ...style }}>{children}</div>

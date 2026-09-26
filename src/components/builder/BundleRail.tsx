@@ -152,7 +152,7 @@ export function BundleRail({
           fontWeight: 700,
           letterSpacing: 1.4,
           textTransform: 'uppercase',
-          color: color.ghost,
+          color: color.ghostCool,
           padding: '0 12px 8px',
           flex: narrow ? '0 0 100%' : 'none'
         }}
@@ -283,7 +283,7 @@ export function BundleHeader({
 
       {chips.length > 0 ? (
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: color.ghost }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: color.ghostCool }}>
             Offer when they ask about
           </span>
           {chips.map((chip) => (
@@ -309,7 +309,7 @@ export function BundleHeader({
         <span>{stat}</span>
         {pairs.length > 0 ? (
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: font.body }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: color.ghost }}>Pairs with</span>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: color.ghostCool }}>Pairs with</span>
             {pairs.map((pair) => (
               <span
                 key={pair.label}

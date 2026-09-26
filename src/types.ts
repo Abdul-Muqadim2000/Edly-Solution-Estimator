@@ -182,7 +182,8 @@ export interface Estimation {
   plat: string;
   name: string;
   client: string;
-  tag: EstimationTag;
+  /** Empty on the estimation seeded for a fresh workspace; the hub shows it as Active. */
+  tag: EstimationTag | '';
   /** Deadline, ISO yyyy-mm-dd. */
   due: string;
   /** Created, ISO yyyy-mm-dd. */

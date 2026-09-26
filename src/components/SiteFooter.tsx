@@ -1,6 +1,7 @@
-import { color, font, radius } from '@/theme';
+import { color, font } from '@/theme';
 import { Link } from '@/components/ui';
 import { useLayout } from '@/lib/useViewport';
+import { useHover } from '@/lib/useHover';
 
 /**
  * The edly.io footer, matching the marketing site. Renders below the sales screens.
@@ -61,6 +62,34 @@ const COLUMNS: FooterColumn[] = [
 
 const linkStyle = { fontSize: 13, color: color.onDarkQuiet, textDecoration: 'none' } as const;
 
+/** Presentational, like the field beside it — this tool has no mailing-list backend. */
+function SubscribeButton(): JSX.Element {
+  const h = useHover();
+  return (
+    <button
+      type="button"
+      {...h.bind}
+      style={{
+        border: 'none',
+        cursor: 'pointer',
+        background: h.on ? color.redDeep : color.red,
+        color: color.onSolid,
+        borderRadius: 8,
+        padding: '10px 16px',
+        fontSize: 12,
+        fontWeight: 700,
+        fontFamily: font.body,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+        transition: 'background 120ms ease'
+      }}
+    >
+      Subscribe
+    </button>
+  );
+}
+
 export function SiteFooter(): JSX.Element {
   const { footCols } = useLayout();
 
@@ -100,24 +129,7 @@ export function SiteFooter(): JSX.Element {
                   fontFamily: font.body
                 }}
               />
-              <Link
-                href="https://edly.io/resources/news-and-updates/"
-                hover={{ background: color.redDeep, color: color.onSolid }}
-                style={{
-                  background: color.red,
-                  color: color.onSolid,
-                  borderRadius: 8,
-                  padding: '10px 16px',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  letterSpacing: 0.8,
-                  textTransform: 'uppercase',
-                  textDecoration: 'none',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                Subscribe
-              </Link>
+              <SubscribeButton />
             </div>
             <div style={{ display: 'flex', gap: 14, marginTop: 14 }}>
               <Link href="https://twitter.com/edly_inc" hover={{ color: color.onSolid }} style={{ ...linkStyle, fontSize: 12.5, fontWeight: 600 }}>
@@ -132,7 +144,7 @@ export function SiteFooter(): JSX.Element {
                 marginTop: 16,
                 background: color.footerField,
                 border: `1px solid ${color.footerFieldEdge}`,
-                borderRadius: radius.md,
+                borderRadius: 10,
                 padding: '12px 14px',
                 fontSize: 12,
                 lineHeight: 1.6,

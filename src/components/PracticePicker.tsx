@@ -36,12 +36,10 @@ function PracticeCard({ practice, onPick }: { practice: (typeof PRACTICES)[numbe
       <div style={{ fontSize: 26, color: color.brand, lineHeight: 1 }}>{practice.icon}</div>
       <div style={{ fontFamily: font.display, fontSize: 18, fontWeight: 600, marginTop: 12 }}>{practice.name}</div>
       <div style={{ fontSize: 13, color: color.muted, lineHeight: 1.55, marginTop: 5 }}>{practice.blurb}</div>
-      <div style={{ marginTop: 12 }}>
-        <Mono size={10.5} tone={color.ghost}>
-          {plural(practice.platforms.length, 'platform')}
-          {practice.platforms.some((platform) => platform.live) ? ' · 1 live catalog' : ''}
-        </Mono>
-      </div>
+      <Mono block size={10.5} tone={color.ghost} style={{ marginTop: 12 }}>
+        {plural(practice.platforms.length, 'platform')}
+        {practice.platforms.some((platform) => platform.live) ? ' · 1 live catalog' : ''}
+      </Mono>
     </div>
   );
 }

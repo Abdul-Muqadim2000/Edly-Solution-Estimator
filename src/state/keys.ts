@@ -13,6 +13,8 @@ export const STORAGE_KEYS = {
   platform: 'edly-platform-v2',
   /** A catalog loaded by hand, per platform. */
   loadedCatalogs: 'edly-loaded-catalogs-v2',
+  /** Where the catalog in play came from — pins a hand-loaded sheet across reloads. */
+  catalogSource: 'edly-catalog-source-v2',
   /** Signed-in user. Deliberately NOT synced: a session belongs to its browser. */
   auth: 'edly-auth-v2'
 } as const;
@@ -32,7 +34,8 @@ export const SYNCED_SETTING_KEYS = [
   STORAGE_KEYS.workspace,
   STORAGE_KEYS.openEstimation,
   STORAGE_KEYS.platform,
-  STORAGE_KEYS.loadedCatalogs
+  STORAGE_KEYS.loadedCatalogs,
+  STORAGE_KEYS.catalogSource
 ] as const;
 
 export const ALL_SYNCED_KEYS: readonly string[] = [...SYNCED_DATA_KEYS, ...SYNCED_SETTING_KEYS];

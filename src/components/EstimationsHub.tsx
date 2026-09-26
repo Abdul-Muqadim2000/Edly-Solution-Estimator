@@ -7,12 +7,40 @@ import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
 import { hours, money } from '@/lib/format';
 import { findPlatform, isLiveCatalog } from '@/data/practices';
 import { AppHeader } from '@/components/AppHeader';
-import { Banner, Button, Chip, Empty, Field, Mono, Row, SearchInput, Select, Spacer, Stat, useRowHover } from '@/components/ui';
+import { Banner, Button, Empty, Field, Mono, Row, SearchInput, Select, Spacer, Stat, useRowHover } from '@/components/ui';
+import { useHover } from '@/lib/useHover';
 
 /** The sales landing page: every deal for this platform, with the numbers that matter on the card. */
 
 const TAGS: EstimationTag[] = ['Active', 'Urgent', 'On hold', 'Closed'];
 type Filter = 'all' | 'open' | 'urgent' | 'pending' | 'closed';
+
+/** The status filters above the card grid. */
+function FilterPill({ children, on, onClick }: { children: string; on: boolean; onClick: () => void }): JSX.Element {
+  const h = useHover();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      {...h.bind}
+      style={{
+        border: `1px solid ${on ? color.brand : color.rule}`,
+        cursor: 'pointer',
+        borderRadius: radius.pill,
+        padding: '7px 15px',
+        fontSize: 12,
+        fontWeight: 600,
+        fontFamily: font.body,
+        background: on ? color.brandWash : color.surface,
+        color: on ? color.brandDeep : h.on ? color.ink : color.muted,
+        whiteSpace: 'nowrap',
+        transition: 'color 120ms ease, border-color 120ms ease'
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
 /** One deal on the hub. Lifts on hover, because the whole card is a click target. */
 function EstimationCard({
@@ -139,18 +167,23 @@ export function EstimationsHub(): JSX.Element {
               ['closed', 'Closed']
             ] as [Filter, string][]
           ).map(([key, label]) => (
-            <Button key={key} pill size="sm" tone={filter === key ? 'brand' : 'secondary'} onClick={() => setFilter(key)} style={{ fontWeight: 600 }}>
+            <FilterPill key={key} on={filter === key} onClick={() => setFilter(key)}>
               {label}
-            </Button>
+            </FilterPill>
           ))}
           <Spacer />
           <SearchInput
             value={query}
             onChange={setQuery}
             placeholder="Find an estimation or client…"
-            style={{ flex: '0 1 260px', minWidth: 150 }}
+            style={{ flex: '0 1 260px', minWidth: 150, padding: '9px 15px', fontSize: 12.5 }}
           />
-          <Button tone="primary" pill onClick={() => setCreating((value) => !value)} style={{ letterSpacing: 0.6, textTransform: 'uppercase' }}>
+          <Button
+            tone="primary"
+            pill
+            onClick={() => setCreating((value) => !value)}
+            style={{ padding: '10px 20px', fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase' }}
+          >
             {creating ? '× Close' : '+ New estimation'}
           </Button>
         </Row>
@@ -191,7 +224,8 @@ export function EstimationsHub(): JSX.Element {
           {rows.map((estimation) => {
             const requests = requestsFor(state, estimation.id);
             const pending = requests.filter((request) => !request.manual && !(Number(request.est) > 0)).length;
-            const style = tagStyle(estimation.tag);
+            const shown = estimation.tag || 'Active';
+            const style = tagStyle(shown);
             const due = dueInfo(estimation.due);
             const numbers = calcEstimate(catalog, estimation.snap, requests);
             const asking = confirmDelete === estimation.id;
@@ -204,9 +238,21 @@ export function EstimationsHub(): JSX.Element {
                       <div style={{ fontFamily: font.display, fontSize: 17, fontWeight: 600, lineHeight: 1.28 }}>{estimation.name}</div>
                       <div style={{ fontSize: 12.5, color: color.faint, marginTop: 3 }}>{estimation.client || 'No client set'}</div>
                     </div>
-                    <Chip bg={style.bg} co={style.co}>
-                      {estimation.tag}
-                    </Chip>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: 0.5,
+                        textTransform: 'uppercase',
+                        borderRadius: radius.pill,
+                        padding: '4px 10px',
+                        whiteSpace: 'nowrap',
+                        background: style.bg,
+                        color: style.co
+                      }}
+                    >
+                      {shown}
+                    </span>
                   </Row>
 
                   <Row gap={8} align="baseline" style={{ marginTop: 16 }}>
@@ -215,9 +261,11 @@ export function EstimationsHub(): JSX.Element {
                     </span>
                     <span style={{ fontSize: 11.5, color: color.faint }}>hours</span>
                     <Spacer />
-                    <Mono size={12.5} tone={color.brandDeep}>
-                      {money(numbers.usd, estimation.snap.cur ?? 'USD')}
-                    </Mono>
+                    {numbers.usd > 0 ? (
+                      <Mono size={12.5} tone={color.brandDeep}>
+                        {money(numbers.usd, estimation.snap.cur ?? 'USD')}
+                      </Mono>
+                    ) : null}
                   </Row>
 
                   <Row gap={14} style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${color.hairlineSoft}` }}>
@@ -235,9 +283,9 @@ export function EstimationsHub(): JSX.Element {
 
                   {due ? (
                     <div style={{ marginTop: 12 }}>
-                      <Chip bg={due.bg} co={due.co}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, borderRadius: radius.pill, padding: '4px 10px', background: due.bg, color: due.co }}>
                         {due.label}
-                      </Chip>
+                      </span>
                     </div>
                   ) : null}
                 </div>
@@ -247,7 +295,7 @@ export function EstimationsHub(): JSX.Element {
                   style={{ padding: '11px 20px', background: color.surfaceSoft, borderTop: `1px solid ${color.hairlineSoft}` }}
                 >
                   <Select
-                    value={estimation.tag}
+                    value={shown}
                     options={TAGS.map((value) => ({ value, label: value }))}
                     onChange={(value) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { tag: value } })}
                     hint="Status tag"

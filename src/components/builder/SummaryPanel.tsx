@@ -9,6 +9,7 @@ import { color, font, roleColor } from '@/theme';
 import { CURRENCIES, hours, hours1, money, plural, rateLabel } from '@/lib/format';
 import { downloadQuote, quoteText } from '@/lib/quoteExport';
 import { mailRequests } from '@/lib/mail';
+import { copyText } from '@/lib/clipboard';
 import { Link } from '@/components/ui';
 import { useFocus, useHover } from '@/lib/useHover';
 
@@ -139,7 +140,16 @@ function Remove({ onClick }: { onClick: () => void }): JSX.Element {
   );
 }
 
-export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: () => void; onOpenRequest: () => void }): JSX.Element {
+export function SummaryPanel({
+  onOpenPlanner,
+  onOpenRequest,
+  requestAdded
+}: {
+  onOpenPlanner: () => void;
+  onOpenRequest: () => void;
+  /** Confirms the request that was just submitted landed in the list above. */
+  requestAdded?: boolean;
+}): JSX.Element {
   const { state, dispatch, catalog, estimate, display, plan } = useApp();
   const estimation = openEstimationRecord(state);
   const requests = openRequests(state);
@@ -167,12 +177,7 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
   const quoteInput = estimation ? { estimation, estimate, requests, plan, display, currency, platformName } : null;
 
   const copy = async (text: string, key: string): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text);
-      ping(key);
-    } catch {
-      ping('');
-    }
+    if (await copyText(text)) ping(key);
   };
 
   const addManual = (): void => {
@@ -426,7 +431,12 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
               variant="grey"
               style={{ width: '100%', marginTop: 6, padding: 8, fontSize: 12 }}
               onClick={() => {
-                void mailRequests(requests, { name: estimation?.name ?? '', client: estimation?.client ?? '' }).then(() => ping('mail'));
+                void mailRequests(requests, {
+                name: estimation?.name ?? '',
+                client: estimation?.client ?? '',
+                selected: estimate.selIds.length,
+                hours: hours(estimate.grand)
+              }).then(() => ping('mail'));
               }}
             >
               {flash === 'mail' ? '✓ Email copied — paste into your mail app' : '✉ Email requests to Edly'}
@@ -620,7 +630,7 @@ export function SummaryPanel({ onOpenPlanner, onOpenRequest }: { onOpenPlanner: 
         ) : null}
 
         <DarkButton variant="brandDashed" style={{ width: '100%', marginTop: 8 }} onClick={onOpenRequest}>
-          + Can’t find it? Request an estimate
+          {requestAdded ? '✓ Request added below' : '+ Can’t find it? Request an estimate'}
         </DarkButton>
 
         <div style={{ marginTop: 10, fontSize: 11.5, lineHeight: 1.6, color: color.onDarkMuted, textAlign: 'center' }}>

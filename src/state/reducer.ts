@@ -15,6 +15,7 @@ import type {
 } from '@/types';
 import { DEFAULT_ROLES } from '@/domain/estimate';
 import { nextId, today } from '@/lib/format';
+import { findPlatform, isLiveCatalog } from '@/data/practices';
 
 /**
  * All workspace state, and the only functions that change it.
@@ -90,6 +91,8 @@ export interface AppState {
   catalogError: string | null;
   /** Where the catalog in play came from, for the Catalog panel. */
   catalogSource: { source: 'auto' | 'file' | 'builtin'; name?: string; hash?: string; at?: string; warnings?: string[] } | null;
+  /** A sheet is sitting beside the app that differs from the one in play. */
+  autoAvail: boolean;
 
   deskTab: DeskTab;
   /** An estimation opened as a full page at the desk. */
@@ -113,6 +116,7 @@ export const INITIAL_STATE: AppState = {
   loadedCatalogs: {},
   catalogError: null,
   catalogSource: null,
+  autoAvail: false,
   deskTab: 'queue',
   deskView: null
 };
@@ -168,6 +172,7 @@ export interface NewSolutionInput {
 
 export type Action =
   | { type: 'hydrate'; payload: Partial<AppState> }
+  | { type: 'mergeEstimations'; estimations: Estimation[] }
   | { type: 'ready' }
   | { type: 'signIn'; user: string; role: Role }
   | { type: 'signOut' }
@@ -202,6 +207,7 @@ export type Action =
   | { type: 'addBundle'; name: string; pitch: string; offerWhen: string }
   | { type: 'removeBundle'; id: string }
   | { type: 'setLoadedCatalog'; platform: string; catalog: Catalog | null; source: AppState['catalogSource'] }
+  | { type: 'setAutoAvail'; available: boolean }
   | { type: 'setCatalogError'; message: string | null }
   | { type: 'setDeskTab'; tab: DeskTab }
   | { type: 'setDeskView'; id: string | null };
@@ -230,8 +236,23 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'hydrate':
       return { ...state, ...action.payload };
 
+    /* A sibling tab rewrote the list. Anything open here keeps its local copy — the draft in
+       this tab is unsaved work, and the other tab could not have known about it. */
+    case 'mergeEstimations': {
+      if (!state.openEstimation || state.auth?.role === 'estimator') return { ...state, estimations: action.estimations };
+      const mine = state.estimations.find((estimation) => estimation.id === state.openEstimation);
+      if (!mine) return { ...state, estimations: action.estimations };
+      const merged = action.estimations.some((estimation) => estimation.id === state.openEstimation)
+        ? action.estimations.map((estimation) => (estimation.id === state.openEstimation ? mine : estimation))
+        : [...action.estimations, mine];
+      return { ...state, estimations: merged };
+    }
+
     case 'ready':
       return { ...state, ready: true };
+
+    case 'setAutoAvail':
+      return { ...state, autoAvail: action.available };
 
     /* Signing in and out both clear the platform, so you always land on the picker.
        The choice survives as lastPlatform for the one-click shortcut. */
@@ -559,7 +580,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const loadedCatalogs = { ...state.loadedCatalogs };
       if (action.catalog) loadedCatalogs[action.platform] = action.catalog;
       else delete loadedCatalogs[action.platform];
-      return { ...state, loadedCatalogs, catalogSource: action.source, catalogError: action.catalog ? null : state.catalogError };
+      return { ...state, loadedCatalogs, catalogSource: action.source, autoAvail: false, catalogError: action.catalog ? null : state.catalogError };
     }
 
     case 'setDeskTab':
@@ -593,6 +614,22 @@ export const requestsFor = (state: AppState, estimationId: string): EstimateRequ
 
 export const openEstimationRecord = (state: AppState): Estimation | null =>
   state.estimations.find((estimation) => estimation.id === state.openEstimation) ?? null;
+
+/**
+ * Where the catalog in play came from, in the phrasing the rail and the catalog panel share.
+ */
+export function catalogSourceLabel(state: AppState): string {
+  const live = isLiveCatalog(state.platform);
+  const source = state.catalogSource;
+  if (!live) {
+    if (state.loadedCatalogs[state.platform]) return `loaded from ${source?.name ?? 'your sheet'}`;
+    return `industry benchmark set for ${findPlatform(state.platform)?.platform.name ?? 'this platform'}`;
+  }
+  if (source?.source === 'file') return `loaded from ${source.name ?? 'your sheet'}`;
+  if (source?.source === 'builtin') return 'built-in copy of the master sheet';
+  if (source?.source === 'auto') return `live from ${source.name ?? 'the sheet beside the app'}`;
+  return 'from the master sales sheet';
+}
 
 /** What sales may see right now — presentation mode hides the economics. */
 export function effectiveDisplay(state: AppState): DisplayPrefs {

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useApp } from '@/state/AppProvider';
-import { openEstimationRecord } from '@/state/reducer';
+import { catalogSourceLabel, openEstimationRecord } from '@/state/reducer';
 import { allSolutions } from '@/domain/catalog';
 import { color, dueInfo, font, radius, tagStyle } from '@/theme';
 import { hours } from '@/lib/format';
@@ -31,6 +31,8 @@ import { SummaryPanel } from '@/components/builder/SummaryPanel';
  */
 
 const ALL = 'ALL';
+/** Matches shown before the list is truncated, as in the source design. */
+const SEARCH_LIMIT = 60;
 const HEADER_H = 62;
 
 export function Builder(): JSX.Element {
@@ -39,9 +41,13 @@ export function Builder(): JSX.Element {
   const layout = useLayout();
   const { narrow } = layout;
 
-  const [active, setActive] = useState<string>(ALL);
+  /* Empty means "the first bundle": the builder opens on a bundle, not on the whole catalogue,
+     and the catalogue is not loaded yet on the first render. */
+  const [active, setActive] = useState<string>('');
   const [search, setSearch] = useState('');
   const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display'>('');
+  const [catalogFlash, setCatalogFlash] = useState(false);
+  const [requestFlash, setRequestFlash] = useState(false);
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -56,17 +62,36 @@ export function Builder(): JSX.Element {
     }
     if (searching) {
       const needle = search.trim().toLowerCase();
-      return flat.filter((row) =>
-        `${row.item.name} ${row.item.desc} ${row.item.id} ${row.item.category ?? ''} ${row.item.integrations ?? ''}`
-          .toLowerCase()
-          .includes(needle)
-      );
+      /* The haystack is deliberately wide — people search by bundle, by the phrase a client used
+         ("offer when they ask about…"), or by an integration name, not just the solution title.
+         Capped at 60 so a one-letter query cannot render the whole catalogue. */
+      const byId = new Map(catalog.bundles.map((bundle) => [bundle.id, bundle]));
+      const out: CatalogRow[] = [];
+      for (const row of flat) {
+        if (out.length >= SEARCH_LIMIT) break;
+        const bundle = byId.get(row.bundleId);
+        const hay = [
+          row.item.name,
+          row.item.id,
+          row.item.desc,
+          row.item.category ?? '',
+          row.item.subCategory ?? '',
+          bundle?.name ?? '',
+          bundle?.offerWhen ?? '',
+          row.item.integrations ?? ''
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (hay.includes(needle)) out.push(row);
+      }
+      return out;
     }
     if (active === ALL) return flat;
-    return flat.filter((row) => row.bundleId === active);
+    const bundle = catalog.bundles.find((entry) => entry.id === active) ?? catalog.bundles[0];
+    return bundle ? flat.filter((row) => row.bundleId === bundle.id) : flat;
   }, [catalog, active, search, searching]);
 
-  const activeBundle = catalog.bundles.find((bundle) => bundle.id === active) ?? null;
+  const activeBundle = active === ALL ? null : (catalog.bundles.find((bundle) => bundle.id === active) ?? catalog.bundles[0] ?? null);
   const platformRef = findPlatform(state.platform);
   const platformLabel = platformRef?.platform.name ?? '';
   const crumb = platformRef ? `${platformRef.practice.name} / ${platformRef.platform.name}` : '';
@@ -169,9 +194,17 @@ export function Builder(): JSX.Element {
             on={panel === 'catalog'}
             onClick={() => setPanel(panel === 'catalog' ? '' : 'catalog')}
           >
-            📚 Catalog
+            {catalogFlash ? '✓ Catalog updated' : state.autoAvail ? '📚 Catalog •' : '📚 Catalog'}
           </HeaderPill>
-          {panel === 'catalog' ? <CatalogPanel onClose={() => setPanel('')} /> : null}
+          {panel === 'catalog' ? (
+            <CatalogPanel
+              onClose={() => setPanel('')}
+              onLoaded={() => {
+                setCatalogFlash(true);
+                window.setTimeout(() => setCatalogFlash(false), 2200);
+              }}
+            />
+          ) : null}
           {!state.presenting ? (
             <HeaderPill
               title="Rate card — price senior, DevOps and QA hours separately instead of one blended rate"
@@ -201,10 +234,14 @@ export function Builder(): JSX.Element {
       >
         <BundleRail
           entries={entries}
-          active={searching ? '' : active}
+          active={searching ? '' : active || catalog.bundles[0]?.id || ALL}
           narrow={narrow}
           metaLine={`${everySolution.length} solutions · ${catalog.bundles.length} bundles · ${hours(catalog.meta.totals.buildHrs ?? 0)} h engineered`}
-          metaFoot={`Compiled ${catalog.meta.compiled || '—'}`}
+          metaFoot={
+            state.presenting
+              ? `Catalog compiled ${catalog.meta.compiled || '—'}`
+              : `Compiled ${catalog.meta.compiled || '—'} · ${catalogSourceLabel(state)}`
+          }
           estimationLabel={estimation?.name ?? ''}
           onPick={(key) => {
             setSearch('');
@@ -219,7 +256,7 @@ export function Builder(): JSX.Element {
               <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>Search results</div>
               <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>
                 {rows.length}
-                {rows.length === 60 ? '+' : ''} matches across all bundles
+                {rows.length === SEARCH_LIMIT ? '+' : ''} matches across all bundles
               </div>
             </div>
           ) : null}
@@ -310,7 +347,7 @@ export function Builder(): JSX.Element {
 
           {display.notes && !searching && catalog.meta.notes.length > 0 ? (
             <div style={{ maxWidth: 1000, marginTop: 18, padding: '14px 18px', background: color.surfaceSoft, border: `1px dashed ${color.hairline}`, borderRadius: 12 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.ghost, marginBottom: 6 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.ghostCool, marginBottom: 6 }}>
                 How to read these numbers — internal
               </div>
               {catalog.meta.notes.map((note) => (
@@ -332,14 +369,26 @@ export function Builder(): JSX.Element {
             minHeight: 0
           }}
         >
-          <SummaryPanel onOpenPlanner={() => setPlannerOpen(true)} onOpenRequest={() => setRequestOpen(true)} />
+          <SummaryPanel
+            onOpenPlanner={() => setPlannerOpen(true)}
+            onOpenRequest={() => setRequestOpen(true)}
+            requestAdded={requestFlash}
+          />
         </aside>
       </div>
 
       <div style={{ height: 48, background: color.page }} />
 
       {plannerOpen ? <Planner onClose={() => setPlannerOpen(false)} /> : null}
-      {requestOpen ? <RequestModal onClose={() => setRequestOpen(false)} /> : null}
+      {requestOpen ? (
+        <RequestModal
+          onClose={() => setRequestOpen(false)}
+          onSubmitted={() => {
+            setRequestFlash(true);
+            window.setTimeout(() => setRequestFlash(false), 2200);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
