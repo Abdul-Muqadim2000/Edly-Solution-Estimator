@@ -305,6 +305,10 @@ export function coerceState(body: unknown): PersistedState {
     requests: array<EstimateRequest>(raw.requests),
     solutions: array<AddedSolution>(raw.solutions),
     bundles: array<AddedBundle>(raw.bundles),
-    settings: raw.settings && typeof raw.settings === 'object' ? (raw.settings as Record<string, unknown>) : {}
+    /* an array is an object, and one here would write numbered junk into the Settings sheet */
+    settings:
+      raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)
+        ? (raw.settings as Record<string, unknown>)
+        : {}
   };
 }

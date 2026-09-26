@@ -58,6 +58,22 @@ export async function storeLabel(): Promise<string> {
   }
 }
 
+/**
+ * Has anything actually been stored, as opposed to a workbook merely existing?
+ *
+ * A seeded-but-empty file is not data. `useSync` hydrates the browser from any read it is not
+ * told is empty, so calling an empty workbook populated makes the app replace the browser's own
+ * rows with nothing — and `bun run state:seed`, which the quick start tells everyone to run,
+ * writes exactly such a workbook. Every provider has to answer this the same way, or the bug
+ * exists on the four file-backed ones and not on Google Sheets.
+ */
+const populated = (state: PersistedState): boolean =>
+  state.estimations.length > 0 ||
+  state.requests.length > 0 ||
+  state.solutions.length > 0 ||
+  state.bundles.length > 0 ||
+  Object.keys(state.settings).length > 0;
+
 /** The stored state, or null when nothing has been written yet. */
 export async function loadState(): Promise<PersistedState | null> {
   const store = await provider();
@@ -65,17 +81,12 @@ export async function loadState(): Promise<PersistedState | null> {
     const tables = await store.loadSheets();
     if (!tables) return null;
     const state = sheetsToState(tables);
-    const populated =
-      state.estimations.length > 0 ||
-      state.requests.length > 0 ||
-      state.solutions.length > 0 ||
-      state.bundles.length > 0 ||
-      Object.keys(state.settings).length > 0;
-    return populated ? state : null;
+    return populated(state) ? state : null;
   }
   const bytes = await store.load();
   if (!bytes) return null;
-  return sheetsToState(await readWorkbook(bytes));
+  const state = sheetsToState(await readWorkbook(bytes));
+  return populated(state) ? state : null;
 }
 
 export interface SaveOutcome {

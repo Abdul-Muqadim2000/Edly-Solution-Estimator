@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Catalog, EstimateRequest, EstimationSnapshot, Solution } from '../src/types';
 import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { peopleForDuration, reorder, schedule } from '../src/domain/planner';
-import { composeCatalog, diffCatalogs, guessBundle, toSolution } from '../src/domain/catalog';
+import { allSolutions, categories, composeCatalog, diffCatalogs, guessBundle, subCategories, toSolution } from '../src/domain/catalog';
 import { nextId } from '../src/lib/format';
 
 const solution = (id: string, first: number | null, extra: Partial<Solution> = {}): Solution => ({
@@ -271,5 +271,33 @@ describe('nextId', () => {
     expect(nextId('RQ', [{ id: 'RQ-01' }, { id: 'RQ-07' }], 'id')).toBe('RQ-08');
     expect(nextId('CS', [], 'id')).toBe('CS-01');
     expect(nextId('CB', [{ id: 'other' }], 'id')).toBe('CB-01');
+  });
+});
+
+describe('reading a catalog', () => {
+  const book = catalog([
+    solution('A', 40, { category: 'Integration', subCategory: 'Out-of-the-box' }),
+    solution('B', 60, { category: 'Assessment', subCategory: null }),
+    solution('C', 20, { category: 'Integration', subCategory: 'Bespoke' })
+  ]);
+
+  it('flattens every bundle into one list', () => {
+    expect(allSolutions(book).map((one) => one.id)).toEqual(['A', 'B', 'C']);
+    expect(allSolutions({ ...book, bundles: [] })).toEqual([]);
+  });
+
+  it('offers each category once, sorted, with Custom always available', () => {
+    /* the desk types into this: a duplicate or a missing Custom is a dead end mid-estimate */
+    expect(categories(book)).toEqual(['Assessment', 'Integration', 'Custom']);
+  });
+
+  it('does not offer Custom twice when the catalog already uses it', () => {
+    const withCustom = catalog([solution('A', 10, { category: 'Custom' })]);
+    expect(categories(withCustom)).toEqual(['Custom']);
+  });
+
+  it('offers the sub-categories in use, and nothing for a catalog without any', () => {
+    expect(subCategories(book)).toEqual(['Bespoke', 'Out-of-the-box']);
+    expect(subCategories(catalog([solution('A', 10)]))).toEqual([]);
   });
 });
