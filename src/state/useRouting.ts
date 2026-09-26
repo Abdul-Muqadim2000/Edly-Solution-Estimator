@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Action, AppState } from '@/state/reducer';
-import { openEstimationRecord } from '@/state/reducer';
+import { openEstimationRecord, openTenderRecord } from '@/state/reducer';
 import { basePath, formatRoute, parseRoute, readAddress, routeHref, withoutSearch, type Route } from '@/lib/router';
 
 /**
@@ -62,22 +62,25 @@ export function routeOfState(state: AppState): Route {
     return { screen: 'desk', platform: state.platform, tab: state.deskTab };
   }
 
+  const tender = openTenderRecord(state);
+  if (tender) return { screen: 'tender', platform: state.platform, tender: tender.slug || tender.id };
+
   const open = openEstimationRecord(state);
   if (open) return { screen: 'builder', platform: state.platform, estimation: open.slug || open.id };
   return { screen: 'hub', platform: state.platform };
 }
 
 /**
- * Whether a route's estimation is present yet. Scoped by the route's own platform, because the
- * reducer has not switched to it at the point this is asked.
+ * Whether a route's estimation or tender is present yet. Scoped by the route's own platform,
+ * because the reducer has not switched to it at the point this is asked.
  */
 function resolves(state: AppState, want: Route): boolean {
-  if (!want.estimation) return true;
   const plat = want.platform || state.platform || 'openedx';
-  const key = want.estimation.toLowerCase();
-  return state.estimations.some(
-    (one) => (one.plat || 'openedx') === plat && ((one.slug ?? '').toLowerCase() === key || one.id.toLowerCase() === key)
-  );
+  const named = (key: string) => (one: { plat: string; slug: string; id: string }): boolean =>
+    (one.plat || 'openedx') === plat && ((one.slug ?? '').toLowerCase() === key || one.id.toLowerCase() === key);
+  if (want.tender) return state.tenders.some(named(want.tender.toLowerCase()));
+  if (!want.estimation) return true;
+  return state.estimations.some(named(want.estimation.toLowerCase()));
 }
 
 /**

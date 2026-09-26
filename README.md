@@ -170,7 +170,31 @@ vercel --prod
 ```
 
 `vercel.json` builds with Bun, serves `dist/`, and pins the functions to Node 22 (needed for
-`DecompressionStream` and `crypto.subtle`).
+`DecompressionStream` and `crypto.subtle`). `/api/tender` gets 300 seconds; the others 15.
+
+---
+
+## Starting from a tender
+
+"Start from a tender" on the practice picker or the estimations hub takes an RFP (PDF, Word, Excel
+or text) and walks it through three steps: the AI reads it and recommends a platform, extracts the
+requirements with the tender's own wording beside each, and matches them against the catalog. A
+person approves each step. The last step creates the estimation with the accepted catalog solutions
+picked, then sends whatever is custom to the estimation desk.
+
+It needs one variable on the server:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...     # from console.anthropic.com; never sent to the browser
+EDLY_AI_MODEL=                   # optional, defaults to claude-opus-5
+```
+
+Before you set the key on a public deployment, turn on Vercel Authentication (or put an SSO proxy
+in front): `/api/tender` is as open as `/api/state`, and it spends money. Give the key its own
+Anthropic workspace with a monthly spend limit, so an open endpoint has a ceiling. Tender files go
+to Anthropic's API and are deleted there when the desk requests go out (once every part has been
+read), or after 72 hours at the latest. PDFs are limited to 4 MB for now. The details, and what is
+still to come, are in DEFERRED.md.
 
 ---
 

@@ -6,6 +6,7 @@ import { PracticePicker } from '@/components/PracticePicker';
 import { EstimationsHub } from '@/components/EstimationsHub';
 import { Builder } from '@/components/builder/Builder';
 import { Desk } from '@/components/desk/Desk';
+import { TenderWorkspace } from '@/components/tender/TenderWorkspace';
 import { SyncPill } from '@/components/AppHeader';
 import { QuoteSheet } from '@/components/QuoteSheet';
 import { color } from '@/theme';
@@ -21,6 +22,7 @@ import { color } from '@/theme';
  *   estimator                 → Desk                            /p/:platform/desk[/…]
  *   sales, no estimation open → SiteHeader + EstimationsHub      /p/:platform
  *   sales, estimation open    → SiteHeader + Builder             /p/:platform/e/:slug[/b/:bundle]
+ *   sales, tender open        → SiteHeader + TenderWorkspace     /p/:platform/t/:slug
  *
  * Sign-in is a client-side gate, so a deep link is not an access grant — it only decides which
  * screen someone who has already signed in lands on. See the README on putting real auth in front.
@@ -38,7 +40,7 @@ function Screens(): JSX.Element {
   return (
     <>
       <SiteHeader />
-      {state.openEstimation ? <Builder /> : <EstimationsHub />}
+      {state.openTender ? <TenderWorkspace /> : state.openEstimation ? <Builder /> : <EstimationsHub />}
       <SiteFooter />
     </>
   );

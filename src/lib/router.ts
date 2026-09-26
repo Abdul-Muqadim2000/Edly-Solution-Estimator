@@ -14,7 +14,7 @@ import type { DeskTab } from '@/types';
  */
 
 /** Which screen a URL asks for. `root` is "/" — the bridge decides where that lands. */
-export type Screen = 'root' | 'practices' | 'hub' | 'builder' | 'desk';
+export type Screen = 'root' | 'practices' | 'hub' | 'builder' | 'desk' | 'tender';
 
 /** "All solutions" in the bundle rail, spelled for a URL. */
 export const ALL_BUNDLES = 'all';
@@ -28,6 +28,8 @@ export interface Route {
   platform?: string;
   /** An estimation's slug. Its id is accepted too, so links made before slugs still resolve. */
   estimation?: string;
+  /** A tender's slug, or its id. Tender screen only. */
+  tender?: string;
   /** Active bundle id, or `all`. Builder only. */
   bundle?: string;
   /** The delivery planner is open over the builder. Builder only. */
@@ -76,6 +78,8 @@ export function parseRoute(url: string): Route {
       return { screen: 'desk', platform, tab: isTab(fourth) ? fourth : 'queue' };
     }
 
+    if (third === 't' && fourth) return { screen: 'tender', platform, tender: fourth };
+
     if (third === 'e' && fourth) {
       const route: Route = { screen: 'builder', platform, estimation: fourth };
       if (fifth === 'b' && sixth) route.bundle = sixth;
@@ -118,6 +122,10 @@ export function formatRoute(route: Route): string {
         if (route.estimation) seg.push('e', route.estimation);
         else if (route.tab && route.tab !== 'queue') seg.push(route.tab);
       }
+      break;
+
+    case 'tender':
+      if (route.platform && route.tender) seg.push('p', route.platform, 't', route.tender);
       break;
 
     case 'root':

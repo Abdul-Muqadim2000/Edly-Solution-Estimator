@@ -109,6 +109,7 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
         requests: result.state.requests ?? [],
         solutions: result.state.solutions ?? [],
         bundles: result.state.bundles ?? [],
+        tenders: result.state.tenders ?? [],
         settings: result.state.settings ?? {}
       });
 

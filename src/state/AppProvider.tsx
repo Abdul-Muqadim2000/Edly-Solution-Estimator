@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import type { Catalog, EstimateResult, Estimation, PersistedState, Schedule } from '@/types';
 import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, catalogReady, commitDraft, effectiveDisplay, openRequests, platformEstimations, platformTotals, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
-import { readStorage, removeStorage, STORAGE_KEYS, writeStorage } from '@/state/keys';
+import { changedSlices, readStorage, removeStorage, STORAGE_KEYS, writeStorage } from '@/state/keys';
 import { useSync, type SyncApi } from '@/state/useSync';
 import { useRouting, type RouterApi } from '@/state/useRouting';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
@@ -86,6 +86,7 @@ function hydrateFromStorage(): Partial<AppState> {
     requests: readStorage(STORAGE_KEYS.requests, []),
     solutions: readStorage(STORAGE_KEYS.solutions, []),
     bundles: readStorage(STORAGE_KEYS.bundles, []),
+    tenders: readStorage(STORAGE_KEYS.tenders, []),
     loadedCatalogs: readStorage(STORAGE_KEYS.loadedCatalogs, {}),
     catalogSource: readStorage(STORAGE_KEYS.catalogSource, null),
     display: workspace?.display ?? INITIAL_STATE.display,
@@ -99,9 +100,27 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   const sheetCatalog = useRef<Map<string, Catalog>>(new Map());
   const catalogRequested = useRef(false);
 
-  /* boot from storage once */
+  /* What this tab last wrote to browser storage, or last took from it, per key. */
+  const written = useRef<Record<string, unknown>>({});
+
+  /* Boot from storage once. What was just read is already in storage, so it counts as written:
+     writing it straight back could only overwrite something a sibling tab saved in the meantime,
+     which is how a tab opening mid-extraction put a failed range back to "claimed". Estimations
+     are the exception when the list was seeded or slugs were filled in, because then the written
+     copy really is new. */
   useEffect(() => {
-    dispatch({ type: 'hydrate', payload: hydrateFromStorage() });
+    const payload = hydrateFromStorage();
+    const stored = readStorage<Estimation[]>(STORAGE_KEYS.estimations, []);
+    Object.assign(written.current, {
+      [STORAGE_KEYS.requests]: payload.requests,
+      [STORAGE_KEYS.solutions]: payload.solutions,
+      [STORAGE_KEYS.bundles]: payload.bundles,
+      [STORAGE_KEYS.tenders]: payload.tenders,
+      [STORAGE_KEYS.loadedCatalogs]: payload.loadedCatalogs,
+      [STORAGE_KEYS.catalogSource]: payload.catalogSource,
+      ...(stored.length > 0 && stored.every((one) => one.slug) ? { [STORAGE_KEYS.estimations]: payload.estimations } : {})
+    });
+    dispatch({ type: 'hydrate', payload });
   }, []);
 
   /* Another tab in the same browser — sales in one, the desk in the other — is the workflow this
@@ -117,36 +136,52 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
           return null;
         }
       };
+      /* A slice taken from another tab is already in storage, so it counts as written here. Writing
+         it back echoed it over anything newer the other tab had written since, and that tab then
+         took the older copy: a retried range went back to "claimed" and was read a second time. */
+      const adopt = <T,>(value: T): T => {
+        written.current[event.key as string] = value;
+        return value;
+      };
       if (event.key === STORAGE_KEYS.requests) {
         const requests = parse<AppState['requests']>();
-        if (Array.isArray(requests)) dispatch({ type: 'hydrate', payload: { requests } });
+        if (Array.isArray(requests)) dispatch({ type: 'hydrate', payload: { requests: adopt(requests) } });
       } else if (event.key === STORAGE_KEYS.estimations) {
         const incoming = parse<AppState['estimations']>();
         if (Array.isArray(incoming)) dispatch({ type: 'mergeEstimations', estimations: incoming });
       } else if (event.key === STORAGE_KEYS.solutions) {
         const solutions = parse<AppState['solutions']>();
-        if (Array.isArray(solutions)) dispatch({ type: 'hydrate', payload: { solutions } });
+        if (Array.isArray(solutions)) dispatch({ type: 'hydrate', payload: { solutions: adopt(solutions) } });
       } else if (event.key === STORAGE_KEYS.bundles) {
         const bundles = parse<AppState['bundles']>();
-        if (Array.isArray(bundles)) dispatch({ type: 'hydrate', payload: { bundles } });
+        if (Array.isArray(bundles)) dispatch({ type: 'hydrate', payload: { bundles: adopt(bundles) } });
+      } else if (event.key === STORAGE_KEYS.tenders) {
+        const tenders = parse<AppState['tenders']>();
+        if (Array.isArray(tenders)) dispatch({ type: 'hydrate', payload: { tenders: adopt(tenders) } });
       } else if (event.key === STORAGE_KEYS.loadedCatalogs) {
         const loadedCatalogs = parse<AppState['loadedCatalogs']>();
-        if (loadedCatalogs) dispatch({ type: 'hydrate', payload: { loadedCatalogs } });
+        if (loadedCatalogs) dispatch({ type: 'hydrate', payload: { loadedCatalogs: adopt(loadedCatalogs) } });
       }
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  /* persist the slices the app owns */
+  /* Persist the slices the app owns, but only the ones this tab changed: see `changedSlices` for
+     the two-tab bug that rewriting all of them caused. */
   useEffect(() => {
     if (!state.ready) return;
-    writeStorage(STORAGE_KEYS.estimations, commitDraft(state));
-    writeStorage(STORAGE_KEYS.requests, state.requests);
-    writeStorage(STORAGE_KEYS.solutions, state.solutions);
-    writeStorage(STORAGE_KEYS.bundles, state.bundles);
-    writeStorage(STORAGE_KEYS.loadedCatalogs, state.loadedCatalogs);
-    writeStorage(STORAGE_KEYS.catalogSource, state.catalogSource);
+    const slices: Record<string, unknown> = {
+      [STORAGE_KEYS.estimations]: commitDraft(state),
+      [STORAGE_KEYS.requests]: state.requests,
+      [STORAGE_KEYS.solutions]: state.solutions,
+      [STORAGE_KEYS.bundles]: state.bundles,
+      [STORAGE_KEYS.tenders]: state.tenders,
+      [STORAGE_KEYS.loadedCatalogs]: state.loadedCatalogs,
+      [STORAGE_KEYS.catalogSource]: state.catalogSource
+    };
+    for (const key of changedSlices(written.current, slices)) writeStorage(key, slices[key]);
+    written.current = slices;
     writeStorage(STORAGE_KEYS.workspace, { display: state.display });
     writeStorage(STORAGE_KEYS.openEstimation, state.openEstimation ?? '');
     if (state.platform) writeStorage(STORAGE_KEYS.platform, { practice: state.practice, plat: state.platform });
@@ -225,23 +260,37 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       requests: state.requests,
       solutions: state.solutions,
       bundles: state.bundles,
+      tenders: state.tenders,
       settings: {}
     }),
     [state]
   );
 
+  /* What the store sends goes into this tab's memory, not back into browser storage. Storage is
+     the working copy every tab in this browser shares, and it is newer than the store for anything
+     edited in the last save or two. Echoing the store's copy into it rolled a sibling tab back: a
+     tab opened while another was creating an estimation read the store just before that save
+     landed, wrote the older copy, and the other tab adopted it. The other tabs read the store
+     themselves on their own schedule. */
   const onHydrate = useCallback((incoming: PersistedState) => {
-    dispatch({
-      type: 'hydrate',
-      payload: {
-        /* the server already backfills, but a hand-edited sheet can still arrive with a gap */
-        estimations: withSlugs(incoming.estimations),
-        requests: incoming.requests,
-        solutions: incoming.solutions,
-        bundles: incoming.bundles,
-        loadedCatalogs: readStorage(STORAGE_KEYS.loadedCatalogs, {})
-      }
+    const payload = {
+      /* the server already backfills, but a hand-edited sheet can still arrive with a gap */
+      estimations: withSlugs(incoming.estimations),
+      requests: incoming.requests,
+      solutions: incoming.solutions,
+      bundles: incoming.bundles,
+      tenders: withSlugs(incoming.tenders ?? []),
+      loadedCatalogs: readStorage<AppState['loadedCatalogs']>(STORAGE_KEYS.loadedCatalogs, {})
+    };
+    Object.assign(written.current, {
+      [STORAGE_KEYS.estimations]: payload.estimations,
+      [STORAGE_KEYS.requests]: payload.requests,
+      [STORAGE_KEYS.solutions]: payload.solutions,
+      [STORAGE_KEYS.bundles]: payload.bundles,
+      [STORAGE_KEYS.tenders]: payload.tenders,
+      [STORAGE_KEYS.loadedCatalogs]: payload.loadedCatalogs
     });
+    dispatch({ type: 'hydrate', payload });
   }, []);
 
   const sync = useSync({ snapshot: persisted, onHydrate, enabled: state.ready });

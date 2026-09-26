@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
-import { coerceState, countRows, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
-import type { Catalog, PersistedState } from '../src/types';
+import { coerceState, COLUMNS, countRows, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
+import type { Catalog, PersistedState, Tender, TenderRequirement } from '../src/types';
 
 /**
  * These tests exist because every one of them once failed.
@@ -139,7 +139,9 @@ function sample(): PersistedState {
         catCategory: 'Assessment',
         catSub: 'Custom',
         catAccount: 'Proctorio',
-        catLimits: 'One exam window per course'
+        catLimits: 'One exam window per course',
+        tender: 'TND-1',
+        tenderReq: 'R-01'
       },
       {
         id: 'RQ-02',
@@ -234,7 +236,53 @@ function sample(): PersistedState {
       'edly-open-estimation-v2': 'EST-1',
       'edly-workspace-v2': { display: { savings: true, notes: true, money: false, controls: true, blendBuffer: false } },
       'edly-loaded-catalogs-v2': { openedx: catalog, moodle: catalog }
+    },
+    tenders: [tender()]
+  };
+}
+
+/** A tender with enough requirements that its detail runs well past one cell. */
+function tender(count = 120): Tender {
+  const reqs: TenderRequirement[] = [];
+  for (let i = 0; i < count; i++) {
+    const req: TenderRequirement = {
+      id: `R-${String(i + 1).padStart(2, '0')}`,
+      doc: 1,
+      page: 1 + Math.floor(i / 4),
+      section: `4.${Math.floor(i / 10) + 1} Learner experience`,
+      text: `The platform shall let every learner complete task number ${i + 1}, with spaces placed where a boundary could land. `.repeat(2).trim(),
+      quote: `The supplier shall provide capability ${i + 1} to all learners, including those using assistive technology.`,
+      priority: i % 3 === 0 ? 'should' : 'must',
+      outOfScope: i % 17 === 0,
+      status: i % 5 === 0 ? 'proposed' : 'approved'
+    };
+    if (i % 2 === 0) {
+      req.match = { kind: i % 4 === 0 ? 'catalog' : 'custom', solutionIds: i % 4 === 0 ? ['X-0-1'] : [], confidence: 'high', reason: 'Covered by the identity bundle.', remainder: '', area: '', integrations: 'Azure AD', approved: i % 8 === 0 };
     }
+    reqs.push(req);
+  }
+  return {
+    id: 'TND-1',
+    plat: 'openedx',
+    name: 'Acme Academy LMS tender',
+    slug: 'acme-academy-lms-tender',
+    client: 'Acme Academy',
+    due: '2026-11-30',
+    summary: 'Acme Academy is replacing its LMS for 40,000 learners across three campuses.',
+    at: '2026-09-20',
+    up: '2026-09-21',
+    stage: 'match',
+    docs: [{ n: 1, name: 'Acme RFP.pdf', kind: 'pdf', bytes: 1_200_000, pages: 48, fileId: 'file_abc', expiresAt: '2026-09-23T10:00:00Z' }],
+    fit: { platform: 'openedx', confidence: 'high', reasons: ['Names Open edX outright'], alternatives: [{ platform: 'moodle', reason: 'Also an LMS' }], elsewhere: [] },
+    outline: [{ doc: 1, title: 'Scope of work', from: 3, to: 20 }],
+    ranges: [
+      { key: '1:1-20', doc: 1, from: 1, to: 20, status: 'done', found: 60 },
+      { key: '1:21-48', doc: 1, from: 21, to: 48, status: 'failed', error: 'Too many AI requests at once.' }
+    ],
+    reqs,
+    estId: '',
+    sentAt: '',
+    tokens: { input: 1200, output: 900, cacheRead: 80_000, cacheWrite: 90_000 }
   };
 }
 
@@ -493,13 +541,98 @@ describe('the sync key', () => {
 
 describe('coerceState', () => {
   it('narrows anything to the persisted shape', () => {
-    expect(coerceState(null)).toEqual({ estimations: [], requests: [], solutions: [], bundles: [], settings: {} });
+    expect(coerceState(null)).toEqual({ estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [] });
     expect(coerceState({ estimations: 'nope', settings: 7 }).estimations).toEqual([]);
     expect(coerceState({ settings: { a: 1 } }).settings).toEqual({ a: 1 });
+    expect(coerceState({ tenders: 'nope' }).tenders).toEqual([]);
   });
 
-  it('counts rows for the empty-payload guard', () => {
+  it('counts rows for the empty-payload guard, tenders included', () => {
     expect(countRows(null)).toBe(0);
-    expect(countRows(sample())).toBe(2 + 3 + 2 + 1);
+    expect(countRows(sample())).toBe(2 + 3 + 2 + 1 + 1);
+  });
+});
+
+describe('tenders', () => {
+  const detailColumn = COLUMNS.tenders.indexOf('detailJson');
+
+  it('keeps a tender whole: its details, requirements, matches, ranges and token count', async () => {
+    const original = sample();
+    const back = await roundTrip(original);
+    expect(back.tenders).toHaveLength(1);
+    expect(back.tenders[0]).toEqual(original.tenders[0]);
+  });
+
+  it('splits a tender whose requirements run past one cell, and rejoins it exactly', async () => {
+    const rows = stateToSheets(sample())[SHEETS.tenders] ?? [];
+    /* 120 requirements serialise far past what Excel keeps in one cell */
+    expect(rows.filter((row) => String(row[0]).startsWith('TND-1##')).length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) expect(String(row[detailColumn] ?? '').length).toBeLessThanOrEqual(28_002);
+
+    const back = await roundTrip(sample());
+    expect(back.tenders[0]?.reqs).toHaveLength(120);
+    expect(back.tenders[0]?.reqs[119]?.text).toContain('task number 120');
+  });
+
+  it('survives a space landing on a part boundary', async () => {
+    /* the parts are pipe-wrapped because the reader trims every cell */
+    const spaced = { ...sample(), tenders: [{ ...tender(0), summary: 'word '.repeat(12_000) }] };
+    const back = await roundTrip(spaced);
+    expect(back.tenders[0]?.summary).toBe(spaced.tenders[0]?.summary);
+  });
+
+  it('drops a tender with a part missing rather than loading half its requirements', async () => {
+    /* a hand-edited sheet with one row deleted: a partial list reads as a finished review */
+    const sheets = stateToSheets(sample());
+    sheets[SHEETS.tenders] = (sheets[SHEETS.tenders] ?? []).filter((row) => !String(row[0]).startsWith('TND-1##2/'));
+    const back = sheetsToState(await readWorkbook(writeWorkbook(sheets)));
+    expect(back.tenders).toEqual([]);
+    expect(back.estimations).toHaveLength(2);
+  });
+
+  it('writes readable counts beside the detail, for whoever scans the sheet', () => {
+    const rows = stateToSheets(sample())[SHEETS.tenders] ?? [];
+    const header = rows[0] ?? [];
+    const first = rows[1] ?? [];
+    const cell = (name: string): unknown => first[header.indexOf(name)];
+    const reqs = tender().reqs;
+    const approved = reqs.filter((req) => req.status === 'approved');
+    expect(cell('name')).toBe('Acme Academy LMS tender');
+    expect(cell('stage')).toBe('match');
+    expect(cell('requirements')).toBe(120);
+    expect(cell('approved')).toBe(approved.length);
+    expect(cell('catalog')).toBe(approved.filter((req) => req.match?.kind === 'catalog').length);
+    expect(cell('custom')).toBe(approved.filter((req) => req.match?.kind === 'custom').length);
+  });
+
+  it('keeps the tender a desk request was drafted from, and adds nothing to one typed by hand', async () => {
+    const back = await roundTrip(sample());
+    expect(back.requests[0]?.tender).toBe('TND-1');
+    expect(back.requests[0]?.tenderReq).toBe('R-01');
+    expect(back.requests[1]?.tender).toBeUndefined();
+    expect(back.requests[1]?.tenderReq).toBeUndefined();
+  });
+
+  it('reads a requests sheet written before the tender columns', async () => {
+    const columns = ['id', 'plat', 'estimationId', 'title', 'details', 'submitted'];
+    const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.requests]: [columns, ['RQ-01', 'openedx', 'EST-1', 'Custom SSO', 'Details', '2026-01-01']] })));
+    expect(back.requests[0]).toMatchObject({ id: 'RQ-01', title: 'Custom SSO' });
+    expect(back.requests[0]?.tender).toBeUndefined();
+  });
+
+  it('reads a workbook written before tenders existed as holding none', async () => {
+    const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.estimations]: [[...COLUMNS.estimations]] })));
+    expect(back.tenders).toEqual([]);
+  });
+
+  it('reads an unknown stage as the first step, and gives a blank slug one', async () => {
+    const sheets = stateToSheets({ ...sample(), tenders: [{ ...tender(3), slug: '' }] });
+    const rows = sheets[SHEETS.tenders] ?? [];
+    const stageColumn = COLUMNS.tenders.indexOf('stage');
+    const first = rows[1];
+    if (first) first[stageColumn] = 'somewhere else';
+    const back = sheetsToState(await readWorkbook(writeWorkbook(sheets)));
+    expect(back.tenders[0]?.stage).toBe('requirements');
+    expect(back.tenders[0]?.slug).toBe('acme-academy-lms-tender');
   });
 });

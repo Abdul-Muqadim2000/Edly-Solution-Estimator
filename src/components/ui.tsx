@@ -25,12 +25,14 @@ export interface ButtonProps {
   hover?: CSSProperties;
 }
 
+/* Borders are longhands wherever a hover or focus state changes their colour: a `border`
+   shorthand plus a `borderColor` that comes and goes makes React warn on every hover or blur. */
 const TONES: Record<Tone, CSSProperties> = {
   primary: { background: color.red, color: color.onSolid, border: 'none' },
-  secondary: { background: color.surface, color: color.ink, border: `1px solid ${color.rule}` },
+  secondary: { background: color.surface, color: color.ink, borderWidth: 1, borderStyle: 'solid', borderColor: color.rule },
   ghost: { background: 'transparent', color: color.muted, border: 'none' },
-  danger: { background: color.surface, color: color.redInk, border: `1px solid ${color.rule}` },
-  brand: { background: color.brandWash, color: color.brandDeep, border: `1.5px solid ${color.brand}` }
+  danger: { background: color.surface, color: color.redInk, borderWidth: 1, borderStyle: 'solid', borderColor: color.rule },
+  brand: { background: color.brandWash, color: color.brandDeep, borderWidth: 1.5, borderStyle: 'solid', borderColor: color.brand }
 };
 
 /* Hover states, mirroring the source design. Inline styles cannot do `:hover`, so every
@@ -124,7 +126,9 @@ export function Card({
       {...(onClick ? h.bind : {})}
       style={{
         background: color.surface,
-        border: `1px solid ${border}`,
+        borderWidth: 1,
+        borderStyle: 'solid',
+        borderColor: border,
         borderRadius: radius.xl,
         overflow: 'hidden',
         cursor: onClick ? 'pointer' : undefined,
@@ -167,7 +171,9 @@ const FOCUS_RING: CSSProperties = {
 
 const inputStyle: CSSProperties = {
   width: '100%',
-  border: `1px solid ${color.rule}`,
+  borderWidth: 1,
+  borderStyle: 'solid',
+  borderColor: color.rule,
   borderRadius: radius.md,
   padding: '10px 12px',
   fontSize: 13.5,
@@ -447,7 +453,9 @@ export function SearchInput({
       onChange={(event) => onChange(event.target.value)}
       {...focus.bind}
       style={{
-        border: `1px solid ${color.rule}`,
+        borderWidth: 1,
+        borderStyle: 'solid',
+        borderColor: color.rule,
         borderRadius: radius.pill,
         padding: '11px 17px',
         fontSize: 13,

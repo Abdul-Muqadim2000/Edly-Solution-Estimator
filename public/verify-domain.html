@@ -60,8 +60,21 @@
     if (ka.length !== kb.length) return false;
     return ka.every((k) => deepEq(a[k], b[k]));
   };
+  /* the subset match vitest's toMatchObject does: every key the expectation names, recursively */
+  const matchesShape = (a, b) => {
+    if (b === null || typeof b !== 'object') return deepEq(a, b);
+    if (a === null || typeof a !== 'object') return false;
+    if (Array.isArray(b)) return Array.isArray(a) && a.length === b.length && b.every((v, i) => matchesShape(a[i], v));
+    return Object.keys(b).every((k) => matchesShape(a[k], b[k]));
+  };
   const expect = (actual) => {
     const api = {
+      toMatchObject: (e) => { if (!matchesShape(actual, e)) throw new Error('partial match failed\n  expected ' + fmt(e) + '\n  got      ' + fmt(actual)); },
+      not: {
+        toBe: (e) => { if (actual === e) throw new Error('expected anything but ' + fmt(e)); },
+        toEqual: (e) => { if (deepEq(actual, e)) throw new Error('expected not to deep-equal ' + fmt(e)); },
+        toContain: (needle) => { if ((actual || []).includes(needle)) throw new Error('expected not to contain ' + fmt(needle)); }
+      },
       toBe: (e) => { if (actual !== e) throw new Error('expected ' + fmt(e) + ', got ' + fmt(actual)); },
       toEqual: (e) => { if (!deepEq(actual, e)) throw new Error('deep-equal failed\n  expected ' + fmt(e) + '\n  got      ' + fmt(actual)); },
       toBeCloseTo: (e, digits = 2) => { const tol = Math.pow(10, -digits) / 2; if (Math.abs(actual - e) > tol) throw new Error('expected ~' + e + ', got ' + actual); },

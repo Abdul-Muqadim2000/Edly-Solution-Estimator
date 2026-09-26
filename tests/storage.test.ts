@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   ALL_SYNCED_KEYS,
+  changedSlices,
   readStorage,
   removeStorage,
   STORAGE_KEYS,
@@ -109,6 +110,21 @@ describe('browser storage', () => {
     /* versioned, so an old shape cannot be read back as a new one */
     for (const name of names) expect(name).toMatch(/-v\d+$/);
   });
+
+  it('writes only the slices a tab changed, so an idle tab cannot echo a stale copy back', () => {
+    /* Found driving two tabs: the hub, idle in one, re-rendered when the other created a deal and
+       rewrote every slice it held, so its old tender list replaced the one just applied. A
+       storage event only fires when a value changes, so rewriting unchanged slices is not harmless. */
+    const tenders = [{ id: 'TND-1' }];
+    const estimations = [{ id: 'EST-1' }];
+    const before = { [STORAGE_KEYS.tenders]: tenders, [STORAGE_KEYS.estimations]: estimations };
+    const merged = [{ id: 'EST-1' }, { id: 'EST-2' }];
+
+    expect(changedSlices(before, { [STORAGE_KEYS.tenders]: tenders, [STORAGE_KEYS.estimations]: merged })).toEqual([STORAGE_KEYS.estimations]);
+    expect(changedSlices(before, before)).toEqual([]);
+    /* the first write after boot has nothing to compare with, so it writes everything */
+    expect(changedSlices({}, before)).toEqual([STORAGE_KEYS.tenders, STORAGE_KEYS.estimations]);
+  });
 });
 
 /* ------------------------------------------------------------ the store layer */
@@ -181,8 +197,8 @@ describe('the store layer', () => {
     const bytes = await exportBytes();
     const workbook = await readWorkbook(bytes);
 
-    /* an empty download still has to open in Excel, with its five sheets and their headers */
-    expect(Object.keys(workbook)).toEqual(['Estimations', 'Requests', 'EstimatedSolutions', 'CustomBundles', 'Settings']);
+    /* an empty download still has to open in Excel, with its six sheets and their headers */
+    expect(Object.keys(workbook)).toEqual(['Estimations', 'Requests', 'EstimatedSolutions', 'CustomBundles', 'Settings', 'Tenders']);
     expect(workbook.Estimations?.[0]).toContain('id');
   });
 

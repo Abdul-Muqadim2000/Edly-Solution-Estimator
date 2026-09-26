@@ -11,10 +11,14 @@ another constraint, so read it before recommending what to build next.
 
 Edly's sales and estimation tool. Sales configures a client solution bundle and gets hours, cost
 and a delivery plan. The estimation desk prices whatever is not in the catalog and sends it back.
+Sales can also start from a tender: an AI reads the RFP, suggests the platform, extracts the
+requirements and matches them to the catalog, and a person approves every step before anything
+reaches an estimation or the desk.
 
-**React 18, TypeScript (strict), Vite, Bun, Vercel. Two runtime dependencies: React and React
-DOM.** The `.xlsx` reader and writer, the zip writer and the Google JWT signing are all written
-here on purpose.
+**React 18, TypeScript (strict), Vite, Bun, Vercel. Three runtime dependencies: React, React DOM
+and `@anthropic-ai/sdk`.** The SDK is imported only under `server/ai/` and never reaches the
+browser bundle. The `.xlsx` reader and writer, the zip writer and the Google JWT signing are all
+written here on purpose.
 
 **There is no database.** The catalog is a spreadsheet, and all working data is written to a
 spreadsheet in the customer's own account. See *Storage* below.
@@ -141,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 362 tests across thirteen files.
+`bun run test` runs 496 tests across sixteen files.
 
 | File | Covers |
 |---|---|
@@ -158,6 +162,9 @@ reference.
 | `tests/quoteExport.test.ts` | the workbook a client receives |
 | `tests/mail.test.ts` | the desk emails and the clipboard fallback |
 | `tests/format.test.ts` | money, hours, dates, the plain-text quote |
+| `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges, desk drafts |
+| `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
+| `tests/tenderFiles.test.ts` | turning PDF, Word, Excel and text tenders into uploads |
 
 ### Coverage
 
@@ -165,16 +172,15 @@ reference.
 
 | | |
 |---|---|
-| Statements | 94.9% |
-| Lines | 96.6% |
-| Functions | 96.3% |
-| Branches | 79.7% |
+| Statements | 96.0% |
+| Lines | 97.5% |
+| Functions | 97.3% |
+| Branches | 83.5% |
 
-The thresholds in `vitest.config.ts` are floors: 90% statements, 78% branches, 92% functions and
-92% lines. A change that drops coverage below them fails the run. Statements, functions and lines
-sit several points under the figures above, so for those the floor catches a collapse rather than
-a slow slide; branches is within two points of its floor. Raise them when you can. Do not lower
-them to make a change pass.
+The thresholds in `vitest.config.ts` are floors: 95% statements, 82% branches, 96% functions and
+96% lines, each set just under the figures above when the tender intake landed. A change that
+drops coverage below them fails the run. Raise them when you can. Do not lower them to make a
+change pass.
 
 Two things to know before you touch the coverage config:
 
@@ -183,13 +189,16 @@ Two things to know before you touch the coverage config:
   reports them as 100% covered. It claimed full coverage of `quoteExport.ts` when the real figure
   was 28%. A number that is wrong in the flattering direction is worse than no number.
 - **Some files are excluded, and the list is not a dumping ground.** `ganttPng.ts`, `useHover.ts`,
-  `useViewport.ts`, `AppProvider.tsx`, `useSync.ts` and `useRouting.ts` need a DOM, a canvas or a
-  React renderer, and are exercised by the browser runners in VERIFY.md instead. Excluding them
+  `useViewport.ts`, `AppProvider.tsx`, `useSync.ts`, `useRouting.ts` and `useTenderRunner.ts` need
+  a DOM, a canvas or a React renderer, and are exercised by the browser runners in VERIFY.md
+  instead. `useTenderRunner.ts` is effect glue: what it runs next is decided by functions in
+  `src/domain/tender.ts`, which are covered. Excluding them
   is honest; excluding something merely because it is awkward to test is not. If you add to that
   list, say why in the config and in your report.
 
 What the number does not cover, and you should say so rather than implying otherwise: the React
-components, the sync loop's timing behaviour, and the cloud providers against their real services.
+components, the sync loop's timing behaviour, the cloud providers against their real services, and
+the AI against the real Anthropic API (DEFERRED.md 8).
 
 ---
 
@@ -274,13 +283,14 @@ Set these in Vercel under Settings, Environment Variables, redeploy, then confir
 `bun run store:probe` or `GET /api/state?probe=1`. Never commit a key. `.env` is gitignored and
 `.env.example` is the template, so add a block there for anything new.
 
-### The five sheets
+### The six sheets
 
-`Estimations`, `Requests`, `EstimatedSolutions`, `CustomBundles`, `Settings`. Scalar columns stay
-readable so a human can scan the sheet in Excel, and nested state sits in one JSON column per row
-so the app round-trips losslessly.
+`Estimations`, `Requests`, `EstimatedSolutions`, `CustomBundles`, `Settings`, `Tenders`. Scalar
+columns stay readable so a human can scan the sheet in Excel, and nested state sits in one JSON
+column per row so the app round-trips losslessly. A tender's requirements run past one cell, so
+its `detailJson` splits across rows keyed `id##2/3`, pipe-wrapped like the long settings.
 
-### Four data-safety rules that are not negotiable
+### Five data-safety rules that are not negotiable
 
 Each of these exists because it failed once. Do not weaken one to make a feature easier.
 
@@ -294,6 +304,10 @@ Each of these exists because it failed once. Do not weaken one to make a feature
    `loadState` reports a zero-row store as empty on every provider. Otherwise the app hydrates the
    browser with nothing and discards what it was holding. All five providers must answer this
    identically: see `populated()` in `server/store.ts`.
+5. **A missing collection means "keep what is stored", not "delete it".** A tab still running a
+   build from before a collection existed sends no key for it; `api/state.ts` keeps the stored
+   tenders in that case, after the empty-payload guard has run. Do the same for any collection
+   added later. `tests/api.test.ts` covers it.
 
 ### Writing code that survives the move to a real server
 
@@ -353,6 +367,10 @@ Read CONTRIBUTING.md. The short version:
 The spreadsheets hold real deal names, client names and pricing.
 
 - Do not paste client data, pricing or spreadsheet contents into any external service.
+- **One agreed exception:** the tender intake sends tender documents to Anthropic's API, under
+  its commercial terms, as decided on 2026-09-26. Zero data retention is DEFERRED.md 10. The code
+  keeps the exposure small (72-hour file expiry, deletion when done, nothing logged), so keep it
+  that way, and do not add a second external service without asking.
 - Do not add analytics, error reporting or logging that sends estimate contents off the machine
   without asking first.
 - Do not write client data into test fixtures. The fixtures use `Acme Academy` and
@@ -374,6 +392,14 @@ The spreadsheets hold real deal names, client names and pricing.
 - `src/lib/catalogSheet.ts`: header matching claims exact matches before prefixes, so "Bundle ID"
   is not stolen by the "Bundle" alias. Keep that order.
 - `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses.
+- **The AI only proposes.** No tool the model is given writes anything; every change to an
+  estimation or the desk queue is a reducer action a person's click dispatches. Hours never come
+  from the model: matches carry catalog ids, checked against the catalog by the `read*` functions
+  in `src/domain/tender.ts`, and hours are looked up from the catalog. Keep both properties; a
+  tender is untrusted input and can contain instructions aimed at the model.
+- `server/ai/prompts.ts`: every call sends the same system prompt and tools, with the tender
+  documents first, so the fit call and every extraction call share one cached copy of the tender.
+  Changing any of those per call re-bills the whole tender on every range.
 - `index.html`: the `<base href>` is load-bearing. Without it a deep link makes every relative URL
   resolve against the route instead of the mount point, and the catalog sheet 404s.
 - **An un-estimated request round-trips with no hours at all, not `0`.** Zero reads as "estimated
@@ -388,6 +414,11 @@ The spreadsheets hold real deal names, client names and pricing.
   unauthenticated**, so anyone with the URL can read or overwrite the spreadsheet. Put Vercel
   Authentication or an SSO proxy in front before this holds live client numbers. Deep links make
   this more urgent, not less.
+- **`/api/tender` is unauthenticated too, and it spends money.** Anyone with the URL can send
+  files to Anthropic under Edly's key. Deployment protection must be on before
+  `ANTHROPIC_API_KEY` is set on a public deployment (DEFERRED.md 4).
+- **The tender AI has not been run against the real API yet** (DEFERRED.md 8), and PDFs are
+  limited to 4 MB until uploads are staged (DEFERRED.md 9).
 - **Concurrency is last-write-wins** across the whole workbook.
 - **Only Open edX has a client-proven catalog.** The other 19 platforms ship benchmark hours and
   are labelled *Sample* in the UI. Do not present them as delivery records.
@@ -447,6 +478,23 @@ everything else waiting on a server, are in DEFERRED.md.
    almost undocumented.
 10. **A prose lint** (for example a `rg` check in CI for `—` outside the known null-glyph uses),
     if the voice rules turn out to need enforcing rather than remembering.
+11. **A chat panel on the tender screen.** Questions about the tender ("does it need offline
+    mobile?", "why R-14 and Stripe?", "Open edX or Totara?") answered from the cached documents and
+    the catalog. When it suggests a change, the change must arrive as a pending edit in the review
+    table for a person to accept, never as a write. Phase 2 of the tender intake.
+12. **A compliance-matrix export** from a tender: requirement, comply / partial / custom, the
+    solution that covers it. Bid submissions usually demand one, and the match step already holds
+    it; the workbook writer in `src/lib/xlsx.ts` does the rest.
+13. **Two sync issues left in `useSync.ts`**, found on 2026-09-26 while driving two tabs, both
+    older than the tender work. (a) `push` returns early while a save is in flight and nothing
+    reschedules it, so a change whose debounce fires during a slow save is not saved until the
+    next change. (b) The sync pill keeps saying "saved" while a change is still waiting for its
+    debounce. Fixed alongside the tender work, in `AppProvider.tsx` and `state/keys.ts`: three
+    ways one tab wrote an older copy into browser storage over a sibling tab's newer one. A tab
+    now writes only the slices it changed (`changedSlices`), and a slice it took from the store,
+    from another tab, or from storage at boot counts as already written, so it is never echoed
+    back. Keep all three if you touch the persist effect; the two-tab browser drive is what
+    caught them.
 
 ---
 

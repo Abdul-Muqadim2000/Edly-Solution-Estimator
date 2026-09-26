@@ -5,7 +5,9 @@ import type {
   Estimation,
   EstimationSnapshot,
   EstimationTag,
-  PersistedState
+  PersistedState,
+  Tender,
+  TenderStage
 } from '../src/types';
 import type { CellValue, SheetTable, WriteSheets, Workbook } from '../src/lib/xlsx';
 import { withSlugs } from '../src/lib/format';
@@ -23,7 +25,8 @@ export const SHEETS = {
   requests: 'Requests',
   solutions: 'EstimatedSolutions',
   bundles: 'CustomBundles',
-  settings: 'Settings'
+  settings: 'Settings',
+  tenders: 'Tenders'
 } as const;
 
 export const COLUMNS = {
@@ -34,7 +37,7 @@ export const COLUMNS = {
   requests: [
     'id', 'plat', 'estimationId', 'estimationName', 'client', 'title', 'details', 'area', 'urgency',
     'integrations', 'requestedBy', 'email', 'org', 'submitted', 'estimateHours', 'repeatHours',
-    'catalogId', 'bundleId', 'estimatedBy', 'estimatedOn', 'note', 'extraJson'
+    'catalogId', 'bundleId', 'estimatedBy', 'estimatedOn', 'note', 'tenderId', 'tenderRequirement', 'extraJson'
   ],
   /* `integrations` and `estimationName` came later. Both are read by name and default when absent,
      so a sheet written before them still loads. */
@@ -44,7 +47,13 @@ export const COLUMNS = {
     'addedOn', 'direct'
   ],
   bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn'],
-  settings: ['key', 'valueJson']
+  settings: ['key', 'valueJson'],
+  /* The counts between `updated` and `sentOn` are written for whoever scans the sheet and never
+     read back: the requirements in `detailJson` are the record, and the counts follow from them. */
+  tenders: [
+    'id', 'plat', 'name', 'slug', 'client', 'due', 'stage', 'created', 'updated', 'requirements', 'approved',
+    'catalog', 'partial', 'custom', 'outOfScope', 'estimationId', 'sentOn', 'detailJson'
+  ]
 } as const;
 
 /**
@@ -110,7 +119,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       str(r.at),
       r.est !== undefined && r.est !== null ? Number(r.est) : '',
       r.repeatEst !== undefined && r.repeatEst !== null ? Number(r.repeatEst) : '',
-      str(r.csId), str(r.catBundle), str(r.estBy), str(r.estAt), str(r.estNote),
+      str(r.csId), str(r.catBundle), str(r.estBy), str(r.estAt), str(r.estNote), str(r.tender), str(r.tenderReq),
       toJson({
         manual: Boolean(r.manual),
         catForm: r.catForm, catDeploy: r.catDeploy, catInteg: r.catInteg,
@@ -151,6 +160,30 @@ export function stateToSheets(state: PersistedState): WriteSheets {
     }
   }
   sheets[SHEETS.settings] = settings;
+
+  /* A tender's requirements run well past one cell, so its detail splits the way a long setting
+     does: the tender's own row holds the first part, and each further part gets a row keyed
+     `id##2/3` with every other column blank. Parts are pipe-wrapped for the same reason. */
+  const tenders = header('tenders');
+  for (const t of state.tenders ?? []) {
+    const detail = toJson({ summary: t.summary, docs: t.docs, fit: t.fit, outline: t.outline, ranges: t.ranges, reqs: t.reqs, tokens: t.tokens });
+    const parts = Math.max(1, Math.ceil(detail.length / CELL_LIMIT));
+    const part = (i: number): string => (parts === 1 ? detail : wrapChunk(detail.slice(i * CELL_LIMIT, (i + 1) * CELL_LIMIT)));
+    const counts = { total: t.reqs.length, approved: 0, catalog: 0, partial: 0, custom: 0, out: 0 };
+    for (const req of t.reqs) {
+      if (req.status !== 'approved') continue;
+      counts.approved += 1;
+      if (req.match) counts[req.match.kind] += 1;
+    }
+    tenders.push([
+      str(t.id), str(t.plat || 'openedx'), str(t.name), str(t.slug), str(t.client), str(t.due), str(t.stage), str(t.at), str(t.up),
+      counts.total, counts.approved, counts.catalog, counts.partial, counts.custom, counts.out, str(t.estId), str(t.sentAt), part(0)
+    ]);
+    for (let i = 1; i < parts; i++) {
+      tenders.push([`${str(t.id)}##${i + 1}/${parts}`, ...new Array<string>(COLUMNS.tenders.length - 2).fill(''), part(i)]);
+    }
+  }
+  sheets[SHEETS.tenders] = tenders;
 
   return sheets;
 }
@@ -219,6 +252,9 @@ export function sheetsToState(workbook: Workbook): PersistedState {
         csId: r.catalogId ?? '',
         catBundle: r.bundleId ?? ''
       };
+      /* set only when present, so a request typed by hand reads back exactly as it was written */
+      if (r.tenderId) out.tender = r.tenderId;
+      if (r.tenderRequirement) out.tenderReq = r.tenderRequirement;
       /* an un-estimated request must come back with NO hours: 0 would join the totals */
       const est = num(r.estimateHours);
       if (est !== null) out.est = est;
@@ -301,7 +337,74 @@ export function sheetsToState(workbook: Workbook): PersistedState {
     settings[key] = fromJson(bag.parts.join(''));
   }
 
-  return { estimations, requests, solutions, bundles, settings };
+  return { estimations, requests, solutions, bundles, settings, tenders: readTenders(workbook[SHEETS.tenders]) };
+}
+
+const STAGES: TenderStage[] = ['requirements', 'match', 'apply', 'done'];
+
+interface TenderDetail {
+  summary?: string;
+  docs?: Tender['docs'];
+  fit?: Tender['fit'];
+  outline?: Tender['outline'];
+  ranges?: Tender['ranges'];
+  reqs?: Tender['reqs'];
+  tokens?: Tender['tokens'];
+}
+
+/**
+ * Tenders, with their split detail joined back up. A tender whose parts do not all arrive is
+ * dropped rather than loaded with half its requirements: a partial list reads as a finished one.
+ */
+function readTenders(table: SheetTable | undefined): Tender[] {
+  const rows = objects(table);
+  const split = new Map<string, { total: number; parts: (string | undefined)[] }>();
+  for (const row of rows) {
+    const match = CHUNK_RE.exec(row.id ?? '');
+    if (!match) continue;
+    const bag = split.get(match[1]!) ?? { total: Number(match[3]), parts: [] };
+    bag.parts[Number(match[2]) - 1] = unwrapChunk(row.detailJson);
+    split.set(match[1]!, bag);
+  }
+
+  const tenders: Tender[] = [];
+  for (const row of rows) {
+    if (!row.id || CHUNK_RE.test(row.id)) continue;
+    const bag = split.get(row.id);
+    let detail: TenderDetail | null;
+    if (bag) {
+      bag.parts[0] = unwrapChunk(row.detailJson);
+      /* a counting loop, not `every`: `every` skips the hole a missing middle part leaves */
+      let whole = true;
+      for (let i = 0; i < bag.total; i++) if (bag.parts[i] === undefined) whole = false;
+      detail = whole ? fromJson<TenderDetail>(bag.parts.slice(0, bag.total).join('')) : null;
+    } else {
+      detail = fromJson<TenderDetail>(row.detailJson);
+    }
+    if (!detail) continue;
+
+    tenders.push({
+      id: row.id,
+      plat: row.plat || 'openedx',
+      name: row.name ?? '',
+      slug: row.slug ?? '',
+      client: row.client ?? '',
+      due: row.due ?? '',
+      summary: detail.summary ?? '',
+      at: row.created ?? '',
+      up: row.updated ?? '',
+      stage: STAGES.includes(row.stage as TenderStage) ? (row.stage as TenderStage) : 'requirements',
+      docs: Array.isArray(detail.docs) ? detail.docs : [],
+      fit: detail.fit ?? null,
+      outline: Array.isArray(detail.outline) ? detail.outline : [],
+      ranges: Array.isArray(detail.ranges) ? detail.ranges : [],
+      reqs: Array.isArray(detail.reqs) ? detail.reqs : [],
+      estId: row.estimationId ?? '',
+      sentAt: row.sentOn ?? '',
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...(detail.tokens ?? {}) }
+    });
+  }
+  return withSlugs(tenders);
 }
 
 /* --------------------------------------------------- comparing for sync ---- */
@@ -338,11 +441,11 @@ export function syncKey(state: PersistedState): string {
   return stableJson(storedForm(state));
 }
 
-export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solutions: [], bundles: [], settings: {} };
+export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [] };
 
 export function countRows(state: PersistedState | null): number {
   if (!state) return 0;
-  return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length;
+  return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length;
 }
 
 /** Narrow an untrusted request body to the persisted shape. */
@@ -354,6 +457,7 @@ export function coerceState(body: unknown): PersistedState {
     requests: array<EstimateRequest>(raw.requests),
     solutions: array<AddedSolution>(raw.solutions),
     bundles: array<AddedBundle>(raw.bundles),
+    tenders: array<Tender>(raw.tenders),
     /* an array is an object, and one here would write numbered junk into the Settings sheet */
     settings:
       raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)

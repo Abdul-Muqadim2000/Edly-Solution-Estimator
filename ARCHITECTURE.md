@@ -21,12 +21,14 @@ src/
     estimate.ts         hours and role-aware cost from a snapshot
     planner.ts          the delivery schedule
     catalog.ts          catalog composition, diffing, bundle guessing
+    tender.ts           tender intake: narrowing AI output, ranges, desk drafts
   state/
     keys.ts             browser storage keys, and which are synced
     reducer.ts          all workspace state and every transition (pure, exported)
     AppProvider.tsx     context: reducer + persistence + sync + routing + derived values
     useSync.ts          spreadsheet ↔ browser, with the three safety rules
     useRouting.ts       address bar ↔ reducer, in that direction
+    useTenderRunner.ts  runs a tender's AI calls and dispatches what comes back
   api/client.ts         the only place the app calls the server
   components/
     SiteHeader.tsx      edly.io marketing header — part of the product, not decoration
@@ -35,6 +37,7 @@ src/
     builder/Builder.tsx three-column shell: rail | catalog | dark estimate column
     builder/BundleRail.tsx  the bundle rail (sidebar ≥1020px, wrapping row below) + bundle header
     builder/CatalogTable.tsx  the catalog grid table and its expandable rows
+    tender/             tender intake: upload modal, then requirements, match, apply
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links
 server/                 runs in Node, never shipped to the browser
@@ -42,6 +45,7 @@ server/                 runs in Node, never shipped to the browser
   store.ts              provider selection
   providers/            graph | gsheet | dropbox | blob | local
   handler.ts            one endpoint, two calling conventions
+  ai/                   the only code that talks to Anthropic: client, prompts, operations
 api/                    Vercel functions; thin wrappers over server/
 tests/                  Vitest: domain, reducer, router, schema round-trip, the /api/state
                         endpoint end to end, the .xlsx reader/writer, the catalog workbook
@@ -92,6 +96,7 @@ unit-tested with plain objects instead of clicked.
 /p/:platform/e/:slug[/b/:bundle]         builder      ?q=…  ?plan=1
 /p/:platform/desk[/:tab]                 estimation desk
 /p/:platform/desk/e/:slug                one deal at the desk
+/p/:platform/t/:slug                     one tender, from requirements to desk requests
 ```
 
 Three things worth knowing before you touch it:
@@ -124,9 +129,38 @@ desk additions (state) ───────────────────
 Every screen reads `catalog`, `estimate` and `plan` from `useApp()`; they are memoised once in the
 provider rather than recomputed per component.
 
+## Tender intake
+
+A salesperson uploads an RFP and gets an estimation and a set of desk requests out of it, with a
+person approving every step. Four decisions shape it, and each is expensive to undo:
+
+- **The AI proposes; people write.** The model is given three tools and all three only report:
+  a platform fit, the requirements in a page range, the catalog matches for a batch. Nothing it
+  returns changes state. Each change is a reducer action a click dispatches, which is how "ask
+  before acting" is enforced rather than requested in a prompt that a tender could override.
+- **Hours come from the catalog, never the model.** A match carries catalog ids; `readMatches`
+  drops any id the catalog does not have, and hours are looked up by id when shown. Unmatched work
+  goes to the desk with no hours, as a hand-typed request does.
+- **One cached copy of the tender, read in slices.** The fit call reads the whole tender once and
+  caches it for an hour; extraction then runs one call per page range over that cached copy, so no
+  single call outlives a Vercel function and a failed range retries on its own. Matching needs the
+  catalog, not the tender, so it sends the catalog (cached) and the requirements in batches.
+- **The browser drives the steps.** `/api/tender` keeps no state; the tender lives in the reducer
+  and the `Tenders` sheet like everything else, so a half-reviewed tender survives a reload. A tab
+  claims a range (`running`, with a time) before reading it, so a second tab on the same tender
+  does not pay for the same call; a claim older than six minutes belongs to a tab that went away.
+  A match that comes back after a person changed the requirement is dropped, not applied.
+
+```
+upload ─► Files API id ─► fit (platform, header, outline) ─► person picks platform
+      ─► extract, one call per range ─► person reviews requirements
+      ─► match, batches of 40 ─► person accepts matches
+      ─► person creates the estimation ─► person sends the desk requests ─► files deleted
+```
+
 ## Scoping
 
-Estimations, requests, desk-added solutions and custom bundles all carry a `plat` field, and every
+Estimations, requests, desk-added solutions, custom bundles and tenders all carry a `plat` field, and every
 list is filtered by the platform in play. Nothing mixes platforms. When you add a feature that
 stores records, give it a `plat` too, and filter it — the selectors in `reducer.ts` show the
 pattern.

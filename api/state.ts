@@ -74,6 +74,12 @@ export async function handle(request: Request): Promise<Response> {
         }
       }
 
+      /* A missing collection means "I do not know about this", not "delete it all". A tab still
+         running a build from before tenders existed sends no `tenders` key, and reading that as an
+         empty list would wipe every tender on each of its saves. Checked after the guard above, so
+         such a client's empty payload is still refused rather than let through on stored tenders. */
+      if (!Array.isArray((body as Record<string, unknown>).tenders)) incoming.tenders = (await loadState())?.tenders ?? [];
+
       const result = await saveState(incoming);
       return json({
         ok: true,
@@ -87,6 +93,7 @@ export async function handle(request: Request): Promise<Response> {
           requests: incoming.requests.length,
           solutions: incoming.solutions.length,
           bundles: incoming.bundles.length,
+          tenders: incoming.tenders.length,
           settings: Object.keys(incoming.settings).length
         }
       });

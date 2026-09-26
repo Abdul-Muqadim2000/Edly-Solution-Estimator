@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { handle } from '../api/state';
 import { storeKind } from '../server/store';
 import { coerceState, countRows, EMPTY_STATE } from '../server/schema';
-import type { Estimation, PersistedState } from '../src/types';
+import type { Estimation, PersistedState, Tender } from '../src/types';
 
 /**
  * The endpoint, driven end to end against a real spreadsheet in a temp directory.
@@ -59,6 +59,27 @@ const estimation = (id: string, over: Partial<Estimation> = {}): Estimation => (
 });
 
 const state = (over: Partial<PersistedState> = {}): PersistedState => ({ ...EMPTY_STATE, ...over });
+
+const tender = (id: string): Tender => ({
+  id,
+  plat: 'openedx',
+  name: 'Nordic University tender',
+  slug: 'nordic-university-tender',
+  client: 'Nordic University',
+  due: '',
+  summary: '',
+  at: '2026-01-01',
+  up: '2026-01-01',
+  stage: 'requirements',
+  docs: [],
+  fit: null,
+  outline: [],
+  ranges: [],
+  reqs: [{ id: 'R-01', doc: 1, page: 3, section: 'Identity', text: 'Single sign-on through Azure AD', quote: 'The platform shall support SSO', priority: 'must', outOfScope: false, status: 'approved' }],
+  estId: '',
+  sentAt: '',
+  tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+});
 
 describe('GET /api/state', () => {
   it('says the store is empty rather than inventing rows', async () => {
@@ -122,7 +143,7 @@ describe('PUT /api/state', () => {
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.counts).toMatchObject({ estimations: 2, requests: 0, solutions: 0, bundles: 0, settings: 1 });
+    expect(body.counts).toMatchObject({ estimations: 2, requests: 0, solutions: 0, bundles: 0, tenders: 0, settings: 1 });
   });
 
   it('replaces rather than merges, so a deletion actually deletes', async () => {
@@ -200,6 +221,43 @@ describe('the empty-payload guard', () => {
        losing the desk queue is not, and the guard must not let a requests-only store be blanked */
     await put(state({ requests: [{ id: 'RQ-01', plat: 'openedx', estId: '', estName: '', client: '', title: 'Custom SSO', details: '', area: '', urgency: '', integrations: '', name: '', email: '', org: '', at: '2026-01-01' }] }));
 
+    expect((await put(EMPTY_STATE)).status).toBe(409);
+  });
+
+  it('keeps the stored tenders when a client built before tenders saves without them', async () => {
+    /* after a deploy, a tab still on the old bundle sends no `tenders` key; reading that as an
+       empty list would delete every tender each time that tab saved */
+    await put(state({ estimations: [estimation('EST-1')], tenders: [tender('TND-1')] }));
+    const { tenders: _dropped, ...older } = state({ estimations: [estimation('EST-1'), estimation('EST-2')] });
+    expect((await put(older)).status).toBe(200);
+
+    const body = (await (await get()).json()) as { state: PersistedState };
+    expect(body.state.estimations).toHaveLength(2);
+    expect(body.state.tenders.map((one) => one.id)).toEqual(['TND-1']);
+  });
+
+  it('still refuses an empty payload from such a client, rather than letting stored tenders excuse it', async () => {
+    await put(state({ estimations: [estimation('EST-1')], tenders: [tender('TND-1')] }));
+    const { tenders: _dropped, ...emptyOlder } = EMPTY_STATE;
+    expect((await put(emptyOlder)).status).toBe(409);
+  });
+
+  it('clears the tenders when a client sends an empty list on purpose', async () => {
+    await put(state({ estimations: [estimation('EST-1')], tenders: [tender('TND-1')] }));
+    await put(state({ estimations: [estimation('EST-1')], tenders: [] }));
+    const body = (await (await get()).json()) as { state: PersistedState };
+    expect(body.state.tenders).toEqual([]);
+  });
+
+  it('guards a store that holds only tenders, and reports it as holding data', async () => {
+    /* a reviewed tender is hours of someone's work; a store with only that in it is not empty,
+       or a boot with an empty browser would hydrate over it and the guard would wave the blank through */
+    const response = await put(state({ tenders: [tender('TND-1')] }));
+    expect(((await response.json()) as { counts: Record<string, number> }).counts).toMatchObject({ tenders: 1 });
+
+    const body = (await (await get()).json()) as { empty: boolean; state: PersistedState };
+    expect(body.empty).toBe(false);
+    expect(body.state.tenders[0]?.reqs[0]?.text).toBe('Single sign-on through Azure AD');
     expect((await put(EMPTY_STATE)).status).toBe(409);
   });
 });
