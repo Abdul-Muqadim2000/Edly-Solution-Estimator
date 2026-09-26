@@ -2,7 +2,8 @@
 
 Working agreement for Claude Code in this repository. Read this first, then **ARCHITECTURE.md**
 before the first change and **CONTRIBUTING.md** for the conventions. This file says *how to work
-here*; those two say *what the code is*.
+here*; those two say *what the code is*. **DEFERRED.md** lists what is waiting on a server or
+another constraint, so read it before recommending what to build next.
 
 ---
 
@@ -316,6 +317,10 @@ its read-back, defaulting sensibly for rows written before it existed), then a c
 `tests/schema.test.ts`, then the UI. The schema test fails loudly if a field is lost, which is the
 point.
 
+What is waiting for that server (per-record storage, concurrency, rate limiting, user accounts, an
+audit trail with names in it) is written up in DEFERRED.md, with the part of each that can be done
+today.
+
 ---
 
 ## Conventions
@@ -385,28 +390,54 @@ The spreadsheets hold real deal names, client names and pricing.
   are labelled *Sample* in the UI. Do not present them as delivery records.
 - **No i18n.** Copy is inline English.
 
+What it would take to lift the first three is in DEFERRED.md.
+
+---
+
+## Work that cannot be done yet goes in DEFERRED.md
+
+There is no server yet, and some things are blocked by that or by another constraint: missing
+credentials, missing data. Those go in DEFERRED.md, so they are kept for later rather than
+forgotten or half-built.
+
+- **When the user asks for something, or you would recommend something, that a constraint
+  blocks,** do the part that is possible now and add the rest to DEFERRED.md: what blocks it, what
+  can be done today, and what to build once it is unblocked. Say in your report that you did.
+- **Do not build around a blocker to make it look done.** A rate limiter that counts in one
+  function instance's memory is worse than none, because it reads as protection and gives none.
+- **Keep the split clean.** Anything possible today goes in *Worth adding next* below. Something
+  that only needs the user to say yes (a new dev dependency, a choice of service) is not blocked,
+  so it stays below as well.
+- **When a blocker goes away** (a database arrives, credentials are set up), go through DEFERRED.md
+  for everything it unblocks, move those items back here or do them, and delete their entries.
+
 ---
 
 ## Worth adding next
 
-Roughly in order of what would prevent the most damage.
+Roughly in order of what would prevent the most damage. The parts of these that are blocked, and
+everything else waiting on a server, are in DEFERRED.md.
 
 1. **Real authentication** in front of the app and `/api/state`. Everything else on this list
-   matters less than this one, because the tool holds client pricing.
+   matters less than this one, because the tool holds client pricing. A gate (Vercel
+   Authentication or an SSO proxy) needs no server. Per-user accounts and server-enforced roles do,
+   and are deferred.
 2. **CI running `bun run check` and `bun run test:coverage`** on every push, so the gate is not a
    matter of memory. A branch protection rule on `main` would enforce the no-direct-push rule that
    is currently only written down here.
 3. **Component tests.** Needs `@testing-library/react` and `jsdom` as dev dependencies, so ask
    first. The domain and the server are well covered now; the components are covered only by the
    browser runners.
-4. **Per-estimation concurrency.** Add a `rev` or a server-side `updatedAt` to `Estimation` now,
-   while the schema is cheap to change, so optimistic concurrency is possible later without a
-   migration.
-5. **An audit trail**, as a sixth sheet recording who changed what and when. Cheap now, impossible
-   to reconstruct afterwards, and the first thing anyone asks when a number changes.
+4. **A `rev` on `Estimation`.** Add a `rev` or a server-side `updatedAt` now, while the schema is
+   cheap to change, so optimistic concurrency is possible later without a migration. Enforcing it
+   needs per-record writes, which is deferred.
+5. **An audit trail**, as a sixth sheet recording what changed and when. Cheap now, impossible to
+   reconstruct afterwards, and the first thing anyone asks when a number changes. Recording *who*
+   needs per-user accounts, which is deferred.
 6. **Backup rotation**, a dated copy of the workbook per day. Last-write-wins plus no history is
    one bad `?force=1` away from a bad afternoon.
-7. **Rate limiting and a payload size cap** on `/api/state`.
+7. **A payload size cap** on `/api/state`. Rate limiting needs a counter shared across function
+   instances, which is deferred.
 8. **Error reporting for the browser**, so a failed sync in the field is visible rather than just
    a red pill nobody screenshots. Check the privacy rules above before choosing a service.
 9. **A runbook for `EDLY_CATALOG_URL`.** Updating the catalog without a redeploy is supported and
