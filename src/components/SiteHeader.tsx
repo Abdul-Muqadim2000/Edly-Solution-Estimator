@@ -34,7 +34,8 @@ export function SiteHeader(): JSX.Element {
           edly
         </Link>
 
-        <nav style={{ display: 'flex', alignItems: 'center', flex: 1, gap: 2 }} onMouseLeave={() => setOpen('')}>
+        {/* wraps on a phone rather than pushing the page sideways; on a desktop it fits one line */}
+        <nav style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', flex: '1 1 auto', minWidth: 0, gap: 2 }} onMouseLeave={() => setOpen('')}>
           {NAV_MENUS.map((menu) => (
             <div key={menu.label} style={{ position: 'relative' }} onMouseEnter={() => setOpen(menu.children ? menu.label : '')}>
               <Link
