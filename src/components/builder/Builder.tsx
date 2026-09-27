@@ -19,6 +19,7 @@ import { Hero } from '@/components/builder/Hero';
 import { Planner } from '@/components/builder/Planner';
 import { RatesPanel } from '@/components/builder/RatesPanel';
 import { RequestModal } from '@/components/builder/RequestModal';
+import { SheetPanel } from '@/components/builder/SheetPanel';
 import { SummaryPanel } from '@/components/builder/SummaryPanel';
 
 /**
@@ -51,7 +52,7 @@ export function Builder(): JSX.Element {
   /* The box is local so it stays instant, and the URL catches up a beat later — pushing a route
      per keystroke would bury the Back button and trip the browser's history-call throttle. */
   const [search, setSearch] = useState(router.route.q ?? '');
-  const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display'>('');
+  const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display' | 'sheet'>('');
   const [catalogFlash, setCatalogFlash] = useState(false);
   const [requestFlash, setRequestFlash] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
@@ -238,6 +239,17 @@ export function Builder(): JSX.Element {
             ⚙ Display
           </HeaderPill>
           {panel === 'display' ? <DisplayPanel onClose={() => setPanel('')} /> : null}
+          {/* hidden while presenting, like Rates: it names the rate the sheet prices at */}
+          {!state.presenting ? (
+            <HeaderPill
+              title="What goes in the downloaded Excel sheet: columns, sheets, notes"
+              on={panel === 'sheet'}
+              onClick={() => setPanel(panel === 'sheet' ? '' : 'sheet')}
+            >
+              Excel sheet
+            </HeaderPill>
+          ) : null}
+          {panel === 'sheet' && !state.presenting ? <SheetPanel onClose={() => setPanel('')} /> : null}
         </div>
       </header>
 

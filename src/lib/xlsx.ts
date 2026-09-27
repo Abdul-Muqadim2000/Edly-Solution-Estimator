@@ -17,12 +17,33 @@ export type Workbook = Record<string, SheetTable>;
 export type CellValue = string | number | null | undefined;
 export type WriteSheets = Record<string, CellValue[][]>;
 
-/** A styled cell. `s` indexes STYLES below; plain values still work unstyled. */
+/** One edge of a cell border. Colours are hex, with or without the '#'. */
+export interface BorderEdge {
+  style: 'thin' | 'medium' | 'thick' | 'hair';
+  color: string;
+}
+
+/**
+ * How a cell looks. The writer turns every distinct one into an entry in the workbook's style
+ * table, so a sheet describes its formatting per cell and never has to manage style ids.
+ */
+export interface CellStyle {
+  font?: { name?: string; size?: number; bold?: boolean; italic?: boolean; underline?: boolean; color?: string };
+  /** Solid background colour. */
+  fill?: string;
+  border?: { left?: BorderEdge; right?: BorderEdge; top?: BorderEdge; bottom?: BorderEdge };
+  align?: { h?: 'left' | 'center' | 'right'; v?: 'top' | 'center' | 'bottom'; wrap?: boolean; indent?: number };
+  /** An Excel number format, such as '#,##0.0#' or '"$"#,##0'. */
+  numFmt?: string;
+}
+
 export interface StyledCell {
   v?: string | number | null;
   /** Numeric value, written as a real number Excel can sum. */
   n?: number | null;
-  s?: StyleId;
+  s?: CellStyle;
+  /** A place in this workbook the cell jumps to when clicked, such as "'Task Breakdown'!A1". */
+  link?: string;
 }
 
 export type SheetCell = CellValue | StyledCell;
@@ -33,13 +54,15 @@ export interface SheetRow {
   h?: number;
 }
 
-/**
- * The branded style slots, matching the source workbook 1:1.
- *
- *   1 title band · 2 grey caption · 3 dark header · 4 brand-wash subtotal
- *   5 bold total · 6 brand-green note
- */
-export type StyleId = 1 | 2 | 3 | 4 | 5 | 6;
+export interface SheetPrint {
+  landscape?: boolean;
+  /** Scale the sheet to one page wide, however many pages tall. */
+  fitWidth?: boolean;
+  /** First and last row, from 1, printed at the top of every page. */
+  repeatRows?: [number, number];
+  /** Excel header/footer codes, such as '&LEdly&RPage &P of &N'. */
+  footer?: string;
+}
 
 export interface StyledSheet {
   rows: SheetRow[];
@@ -47,34 +70,110 @@ export interface StyledSheet {
   merges?: string[];
   /** Column widths in characters. */
   widths?: number[];
+  /** Colour of the sheet's tab. */
+  tab?: string;
+  /** Excel's cell gridlines. On unless a sheet draws its own lines. */
+  gridlines?: boolean;
+  /** Rows kept in view while the rest scrolls. */
+  freezeRows?: number;
+  print?: SheetPrint;
 }
 
-const STYLES =
-  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-  '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-  '<fonts count="7">' +
-  '<font><sz val="11"/><name val="Calibri"/><color rgb="FF252525"/></font>' +
-  '<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF252525"/></font>' +
-  '<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>' +
-  '<font><b/><sz val="15"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>' +
-  '<font><sz val="10"/><name val="Calibri"/><color rgb="FF666666"/></font>' +
-  '<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF0A6B5B"/></font>' +
-  '<font><b/><sz val="12"/><name val="Calibri"/><color rgb="FF252525"/></font>' +
-  '</fonts>' +
-  '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
-  '<fill><patternFill patternType="solid"><fgColor rgb="FF252525"/><bgColor rgb="FF252525"/></patternFill></fill>' +
-  '<fill><patternFill patternType="solid"><fgColor rgb="FFEBF9F6"/><bgColor rgb="FFEBF9F6"/></patternFill></fill></fills>' +
-  '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
-  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-  '<cellXfs count="7">' +
-  '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>' +
-  '<xf numFmtId="0" fontId="3" fillId="2" borderId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf>' +
-  '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" applyFont="1"/>' +
-  '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" applyFont="1" applyFill="1"/>' +
-  '<xf numFmtId="0" fontId="1" fillId="3" borderId="0" applyFont="1" applyFill="1"/>' +
-  '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/>' +
-  '<xf numFmtId="0" fontId="5" fillId="0" borderId="0" applyFont="1"/>' +
-  '</cellXfs></styleSheet>';
+/* --------------------------------------------------------------- styles ---- */
+
+const argb = (hex: string): string => {
+  const clean = hex.replace(/^#/, '').toUpperCase();
+  return clean.length === 6 ? `FF${clean}` : clean;
+};
+
+const edgeXml = (side: 'left' | 'right' | 'top' | 'bottom', edge: BorderEdge | undefined): string =>
+  edge ? `<${side} style="${edge.style}"><color rgb="${argb(edge.color)}"/></${side}>` : `<${side}/>`;
+
+/**
+ * The style table a workbook is written with. Entries are shared: two cells with the same look
+ * use one `xf`, and two looks with the same font share the font. Index 0 of each list is the
+ * default Excel expects there, and index 1 of the fills is the gray125 pattern it reserves.
+ */
+class StyleTable {
+  private readonly fonts: string[] = ['<font><sz val="11"/><color rgb="FF252525"/><name val="Calibri"/><family val="2"/></font>'];
+  private readonly fills: string[] = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'];
+  private readonly borders: string[] = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
+  private readonly formats: string[] = [];
+  private readonly xfs: string[] = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+  private readonly known = new Map<string, number>();
+
+  private static slot(list: string[], xml: string): number {
+    const found = list.indexOf(xml);
+    if (found >= 0) return found;
+    list.push(xml);
+    return list.length - 1;
+  }
+
+  /** The `s` attribute for a cell with this look. 0 is the default and needs no attribute. */
+  id(style: CellStyle | undefined): number {
+    if (!style) return 0;
+    const key = JSON.stringify(style);
+    const cached = this.known.get(key);
+    if (cached !== undefined) return cached;
+
+    const f = style.font ?? {};
+    const fontXml =
+      '<font>' +
+      (f.bold ? '<b/>' : '') +
+      (f.italic ? '<i/>' : '') +
+      (f.underline ? '<u/>' : '') +
+      /* family 2 is sans-serif: where a font such as Poppins is not installed, Excel substitutes a
+         sans-serif one instead of falling back to a serif */
+      `<sz val="${f.size ?? 11}"/><color rgb="${argb(f.color ?? '252525')}"/><name val="${escapeXml(f.name ?? 'Calibri')}"/><family val="2"/></font>`;
+    const fontId = StyleTable.slot(this.fonts, fontXml);
+    const fillId = style.fill
+      ? StyleTable.slot(this.fills, `<fill><patternFill patternType="solid"><fgColor rgb="${argb(style.fill)}"/><bgColor indexed="64"/></patternFill></fill>`)
+      : 0;
+    const b = style.border;
+    /* the schema fixes the edge order: left, right, top, bottom, diagonal */
+    const borderId = b
+      ? StyleTable.slot(this.borders, `<border>${edgeXml('left', b.left)}${edgeXml('right', b.right)}${edgeXml('top', b.top)}${edgeXml('bottom', b.bottom)}<diagonal/></border>`)
+      : 0;
+    const formatId = style.numFmt ? 164 + StyleTable.slot(this.formats, style.numFmt) : 0;
+
+    const a = style.align;
+    const alignment = a
+      ? '<alignment' +
+        (a.h ? ` horizontal="${a.h}"` : '') +
+        (a.v ? ` vertical="${a.v}"` : '') +
+        (a.wrap ? ' wrapText="1"' : '') +
+        (a.indent ? ` indent="${a.indent}"` : '') +
+        '/>'
+      : '';
+    const xf =
+      `<xf numFmtId="${formatId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"` +
+      ' applyFont="1"' +
+      (fillId ? ' applyFill="1"' : '') +
+      (borderId ? ' applyBorder="1"' : '') +
+      (formatId ? ' applyNumberFormat="1"' : '') +
+      (alignment ? ` applyAlignment="1">${alignment}</xf>` : '/>');
+
+    const id = StyleTable.slot(this.xfs, xf);
+    this.known.set(key, id);
+    return id;
+  }
+
+  xml(): string {
+    const formats = this.formats.map((code, i) => `<numFmt numFmtId="${164 + i}" formatCode="${escapeXml(code)}"/>`).join('');
+    return (
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      (formats ? `<numFmts count="${this.formats.length}">${formats}</numFmts>` : '') +
+      `<fonts count="${this.fonts.length}">${this.fonts.join('')}</fonts>` +
+      `<fills count="${this.fills.length}">${this.fills.join('')}</fills>` +
+      `<borders count="${this.borders.length}">${this.borders.join('')}</borders>` +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      `<cellXfs count="${this.xfs.length}">${this.xfs.join('')}</cellXfs>` +
+      '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+      '</styleSheet>'
+    );
+  }
+}
 
 /* ----------------------------------------------------------------- zip ---- */
 
@@ -327,16 +426,32 @@ const columnRef = (index: number): string => {
   return ref;
 };
 
-function worksheetXml(sheet: StyledSheet): string {
-  const { rows, merges = [], widths = [] } = sheet;
+function worksheetXml(sheet: StyledSheet, styles: StyleTable, selected: boolean): string {
+  const { rows, merges = [], widths = [], tab, gridlines = true, freezeRows = 0, print } = sheet;
   const cols =
     widths.length > 0
       ? `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`
       : '';
+  const links: string[] = [];
+
+  const sheetPr =
+    tab || print?.fitWidth
+      ? `<sheetPr>${tab ? `<tabColor rgb="${argb(tab)}"/>` : ''}${print?.fitWidth ? '<pageSetUpPr fitToPage="1"/>' : ''}</sheetPr>`
+      : '';
+  const top = `A${freezeRows + 1}`;
+  const pane =
+    freezeRows > 0
+      ? `<pane ySplit="${freezeRows}" topLeftCell="${top}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="${top}" sqref="${top}"/>`
+      : '';
+  const views =
+    `<sheetViews><sheetView workbookViewId="0"${gridlines ? '' : ' showGridLines="0"'}${selected ? ' tabSelected="1"' : ''}` +
+    (pane ? `>${pane}</sheetView>` : '/>') +
+    '</sheetViews>';
 
   let out =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${cols}<sheetData>`;
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    `${sheetPr}${views}${cols}<sheetData>`;
 
   rows.forEach((row, rowIndex) => {
     out += `<row r="${rowIndex + 1}"${row?.h ? ` ht="${row.h}" customHeight="1"` : ''}>`;
@@ -344,12 +459,14 @@ function worksheetXml(sheet: StyledSheet): string {
       if (cell === null || cell === undefined) return;
       const ref = columnRef(cellIndex) + (rowIndex + 1);
       const styled: StyledCell = typeof cell === 'object' ? cell : typeof cell === 'number' ? { n: cell } : { v: cell };
-      const st = styled.s ? ` s="${styled.s}"` : '';
+      const id = styles.id(styled.s);
+      const st = id ? ` s="${id}"` : '';
+      if (styled.link) links.push(`<hyperlink ref="${ref}" location="${escapeXml(styled.link)}" display="${escapeXml(String(styled.v ?? ''))}"/>`);
       if (styled.n !== null && styled.n !== undefined && Number.isFinite(styled.n)) {
         out += `<c r="${ref}"${st}><v>${styled.n}</v></c>`;
       } else if (styled.v !== null && styled.v !== undefined && styled.v !== '') {
         out += `<c r="${ref}" t="inlineStr"${st}><is><t xml:space="preserve">${escapeXml(String(styled.v))}</t></is></c>`;
-      } else if (styled.s) {
+      } else if (id) {
         out += `<c r="${ref}"${st}/>`;
       }
     });
@@ -357,16 +474,43 @@ function worksheetXml(sheet: StyledSheet): string {
   });
 
   out += '</sheetData>';
+  /* the schema fixes this order too: merges, hyperlinks, margins, page setup, header/footer */
   if (merges.length > 0) {
     out += `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>`;
   }
+  if (links.length > 0) out += `<hyperlinks>${links.join('')}</hyperlinks>`;
+  if (print) {
+    out += '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.6" header="0.3" footer="0.3"/>';
+    out +=
+      '<pageSetup' +
+      (print.landscape ? ' orientation="landscape"' : '') +
+      (print.fitWidth ? ' fitToWidth="1" fitToHeight="0"' : '') +
+      '/>';
+    if (print.footer) out += `<headerFooter><oddFooter>${escapeXml(print.footer)}</oddFooter></headerFooter>`;
+  }
   return `${out}</worksheet>`;
 }
+
+/** A sheet name as a formula reference: quoted, with any quote inside doubled. */
+const sheetRef = (name: string): string => `'${name.replace(/'/g, "''")}'`;
 
 /** `{ name: rows }` → the bytes of a .xlsx. */
 export function writeWorkbook(sheets: Record<string, CellValue[][] | StyledSheet>): Uint8Array {
   const names = Object.keys(sheets);
   if (names.length === 0) throw new Error('writeWorkbook needs at least one sheet');
+  /* cut before escaping, or the cut can land inside an entity and break the XML */
+  const shown = names.map((name) => name.slice(0, 31));
+  const normalised = names.map((name) => normalise(sheets[name]));
+  const styles = new StyleTable();
+  const worksheets = normalised.map((sheet, i) => worksheetXml(sheet, styles, i === 0));
+
+  const printTitles = normalised
+    .map((sheet, i) => {
+      const repeat = sheet.print?.repeatRows;
+      if (!repeat) return '';
+      return `<definedName name="_xlnm.Print_Titles" localSheetId="${i}">${escapeXml(`${sheetRef(shown[i]!)}!$${repeat[0]}:$${repeat[1]}`)}</definedName>`;
+    })
+    .join('');
 
   const files: { name: string; data: string | Uint8Array }[] = [
     {
@@ -398,11 +542,12 @@ export function writeWorkbook(sheets: Record<string, CellValue[][] | StyledSheet
       name: 'xl/workbook.xml',
       data:
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
-        names
-          .map((name, i) => `<sheet name="${escapeXml(name).slice(0, 31)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`)
-          .join('') +
-        '</sheets></workbook>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<bookViews><workbookView/></bookViews><sheets>' +
+        shown.map((name, i) => `<sheet name="${escapeXml(name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') +
+        '</sheets>' +
+        (printTitles ? `<definedNames>${printTitles}</definedNames>` : '') +
+        '</workbook>'
     },
     {
       name: 'xl/_rels/workbook.xml.rels',
@@ -418,12 +563,11 @@ export function writeWorkbook(sheets: Record<string, CellValue[][] | StyledSheet
         `<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
         '</Relationships>'
     },
-    { name: 'xl/styles.xml', data: STYLES }
+    /* written after the sheets, because writing them is what fills the table */
+    { name: 'xl/styles.xml', data: styles.xml() }
   ];
 
-  names.forEach((name, i) => {
-    files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: worksheetXml(normalise(sheets[name])) });
-  });
+  worksheets.forEach((xml, i) => files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: xml }));
 
   return zipStored(files);
 }

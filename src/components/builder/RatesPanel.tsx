@@ -1,8 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import type { RateRole } from '@/types';
+import type { RateRole, SeniorityLevel } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openRequests } from '@/state/reducer';
-import { DEFAULT_ROLES, rolesOf } from '@/domain/estimate';
+import { DEFAULT_ROLES, roleLabel, rolesOf, SENIORITY_LEVELS } from '@/domain/estimate';
 import { color, font, radius, roleColor } from '@/theme';
 import { hours, money, plural } from '@/lib/format';
 import { Button, Mono, Popover, Row, Select, Spacer, useRowHover } from '@/components/ui';
@@ -13,7 +13,17 @@ import { Button, Mono, Popover, Row, Select, Spacer, useRowHover } from '@/compo
  * A senior hour and a DevOps hour are not the same money, so cost is worked out per line.
  * Tick several lines and assign a role in one go — the reason this is a panel rather than a
  * per-row dropdown only.
+ *
+ * Each row is a role at one seniority level, because a junior and a senior engineer bill at
+ * different rates. The same role can sit on the card at several levels; lines are assigned to
+ * a row, so to a level, and the Excel sheet's team composition reads the levels from here.
  */
+
+/** The level one step up from this one, for a copied row. Principal stays Principal. */
+function nextLevel(level: SeniorityLevel | undefined): SeniorityLevel {
+  const at = SENIORITY_LEVELS.indexOf(level ?? 'Mid-level');
+  return SENIORITY_LEVELS[Math.min(SENIORITY_LEVELS.length - 1, at + 1)] ?? 'Senior';
+}
 /** One billable line in the assignment list. */
 function RateLine({ picked, children }: { picked: boolean; children: ReactNode }): JSX.Element {
   const hover = useRowHover({ borderColor: color.brand, background: picked ? color.brandWashPicked : color.surfaceSoft });
@@ -92,7 +102,7 @@ export function RatesPanel({ onClose }: { onClose: () => void }): JSX.Element {
         </Button>
       </Row>
       <div style={{ fontSize: 11.5, color: color.muted, lineHeight: 1.55, marginTop: 4 }}>
-        Rates are entered in USD per hour. Overhead is priced at the Project Manager and QA rates automatically.
+        Rates are entered in USD per hour, one row per role and seniority. Overhead is priced at the Project Manager and QA rates automatically.
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
@@ -101,16 +111,46 @@ export function RatesPanel({ onClose }: { onClose: () => void }): JSX.Element {
             <span style={{ width: 8, height: 8, borderRadius: radius.pill, background: roleColor(index), flex: '0 0 auto' }} />
             <input
               value={role.name}
+              aria-label="Role"
               onChange={(event) => editRole(index, { name: event.target.value })}
               style={{ flex: 1, minWidth: 0, border: `1px solid ${color.hairline}`, borderRadius: 7, padding: '7px 9px', fontSize: 12.5, color: color.ink, outline: 'none' }}
+            />
+            <Select<SeniorityLevel | ''>
+              value={role.level ?? ''}
+              hint="Seniority: the same role can bill at different rates by level"
+              options={[{ value: '', label: 'No level' }, ...SENIORITY_LEVELS.map((level) => ({ value: level, label: level }))]}
+              onChange={(level) => editRole(index, { level: level || undefined })}
+              flex="0 0 112px"
+              style={{ padding: '6px 6px', fontSize: 12 }}
             />
             <input
               type="number"
               min={0}
               value={role.rate}
               onChange={(event) => editRole(index, { rate: Math.max(0, Number(event.target.value) || 0) })}
-              style={{ flex: '0 0 76px', border: `1px solid ${color.hairline}`, borderRadius: 7, padding: '7px 9px', fontSize: 12.5, fontFamily: font.mono, color: color.ink, outline: 'none' }}
+              /* an input's natural width is about 20 characters, and a flex item will not shrink below it
+                 unless told, which squeezed the role name to nothing once seniority sat beside it */
+              aria-label="Rate, USD per hour"
+              style={{ flex: '0 0 76px', width: 76, minWidth: 0, boxSizing: 'border-box', border: `1px solid ${color.hairline}`, borderRadius: 7, padding: '7px 9px', fontSize: 12.5, fontFamily: font.mono, color: color.ink, outline: 'none' }}
             />
+            <Button
+              size="sm"
+              tone="ghost"
+              title="Add this role again at another seniority level"
+              onClick={() =>
+                dispatch({
+                  type: 'setRoles',
+                  roles: [
+                    ...roles.slice(0, index + 1),
+                    { id: `r${Date.now().toString(36)}`, name: role.name, level: nextLevel(role.level), rate: role.rate },
+                    ...roles.slice(index + 1)
+                  ]
+                })
+              }
+              style={{ padding: '2px 5px', fontSize: 15 }}
+            >
+              +
+            </Button>
             <Button
               size="sm"
               tone="ghost"
@@ -130,7 +170,7 @@ export function RatesPanel({ onClose }: { onClose: () => void }): JSX.Element {
       <Row gap={6} style={{ marginTop: 8 }}>
         <Button
           size="sm"
-          onClick={() => dispatch({ type: 'setRoles', roles: [...roles, { id: `r${Date.now().toString(36)}`, name: 'New role', rate: 50 }] })}
+          onClick={() => dispatch({ type: 'setRoles', roles: [...roles, { id: `r${Date.now().toString(36)}`, name: 'New role', level: 'Mid-level', rate: 50 }] })}
           style={{ border: `1px dashed ${color.ghost}`, background: 'transparent', color: color.muted }}
         >
           + Add role
@@ -172,7 +212,7 @@ export function RatesPanel({ onClose }: { onClose: () => void }): JSX.Element {
               }}
               style={{ background: pickedIds.length > 0 ? roleColor(index) : color.onDark, color: pickedIds.length > 0 ? color.onSolid : color.ghost, border: 'none' }}
             >
-              {role.name} · {money(role.rate, currency)}
+              {roleLabel(role)} · {money(role.rate, currency)}
             </Button>
           ))}
           <Button
@@ -206,7 +246,7 @@ export function RatesPanel({ onClose }: { onClose: () => void }): JSX.Element {
               <span style={{ flex: '0 0 150px' }}>
                 <Select
                   value={line.role?.id ?? ''}
-                  options={[{ value: '', label: 'Blended rate' }, ...roles.map((role) => ({ value: role.id, label: `${role.name} · ${money(role.rate, currency)}/h` }))]}
+                  options={[{ value: '', label: 'Blended rate' }, ...roles.map((role) => ({ value: role.id, label: `${roleLabel(role)} · ${money(role.rate, currency)}/h` }))]}
                   onChange={(value) => dispatch({ type: 'assignRole', ids: [line.id], roleId: value || null })}
                 />
               </span>

@@ -122,6 +122,32 @@ export const color = {
   overhead: '#4DC6B1'
 } as const;
 
+/**
+ * Edly's task-breakdown workbook, colour for colour. The downloaded Excel sheet is drawn in these
+ * rather than in the app's palette, so it matches the template sales already send clients.
+ */
+export const sheetColor = {
+  /** The title, the section bands and the table header's labels. */
+  red: '#DC1F26',
+  /** The Introduction's tab. */
+  introTab: '#CC0000',
+  /** Every other sheet's tab. */
+  tab: '#3D85C6',
+  deliverable: '#F1A5A8',
+  area: '#ECF9F6',
+  /** The table header's fill. */
+  head: '#F3F3F3',
+  /** The strong line under the header spacer. */
+  rule: '#434343',
+  /** The hairline under the project details. */
+  line: '#D9D9D9',
+  label: '#666666',
+  value: '#999999',
+  text: '#000000',
+  link: '#0000FF',
+  white: '#FFFFFF'
+} as const;
+
 /** Rate-card role colours, in assignment order. */
 export const ROLE_COLORS = ['#00AD90', '#5B3FBF', '#DD1F25', '#B45309', '#0A6B5B', '#2563A8', '#8A5A12'] as const;
 

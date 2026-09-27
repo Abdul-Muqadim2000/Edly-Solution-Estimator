@@ -14,7 +14,8 @@ src/
     useHover.ts         hover + focus state, because inline styles cannot do :hover
     useViewport.ts      viewport width, for layout that must branch on it
     router.ts           the URL as a value — parse, format, base path, hash fallback (pure)
-    xlsx.ts             dependency-free .xlsx reader and writer (browser + server)
+    xlsx.ts             dependency-free .xlsx reader and writer (browser + server), with a style table
+    quoteExport.ts      the branded task-breakdown workbook, and the plain-text quote
     catalogSheet.ts     parses the master catalog workbook into a Catalog
     format.ts           money, hours, ids, dates
   domain/               PURE functions — no React, no I/O, fully unit-tested
@@ -22,6 +23,8 @@ src/
     planner.ts          the delivery schedule
     catalog.ts          catalog composition, diffing, bundle guessing
     tender.ts           tender intake: narrowing AI output, ranges, desk drafts
+    taskBreakdown.ts    the Excel sheet: deliverables per area, lines, totals, column choices
+    team.ts             team composition: rate-card role and seniority, people and weeks from the plan
   state/
     keys.ts             browser storage keys, and which are synced
     reducer.ts          all workspace state and every transition (pure, exported)
@@ -37,6 +40,7 @@ src/
     builder/Builder.tsx three-column shell: rail | catalog | dark estimate column
     builder/BundleRail.tsx  the bundle rail (sidebar ≥1020px, wrapping row below) + bundle header
     builder/CatalogTable.tsx  the catalog grid table and its expandable rows
+    builder/SheetPanel.tsx    what the downloaded Excel sheet contains: columns, sheets, notes
     tender/             tender intake: upload modal, then requirements, match, apply
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links

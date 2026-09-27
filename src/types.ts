@@ -122,10 +122,20 @@ export interface Auth {
 /** Which of the estimation desk's three tabs is showing. Lives here because the URL names it too. */
 export type DeskTab = 'queue' | 'estimations' | 'add';
 
-/** A line on the rate card. Hours are billed at the rate of the role assigned to them. */
+/** How senior a person on the rate card is. Two people in one role can bill at different rates. */
+export type SeniorityLevel = 'Junior' | 'Mid-level' | 'Senior' | 'Lead' | 'Principal';
+
+/**
+ * A line on the rate card. Hours are billed at the rate of the role assigned to them.
+ *
+ * One role can appear more than once at different levels ("Engineer, Senior" at 55 and
+ * "Engineer, Junior" at 30); each row has its own id, which is what a line is assigned to.
+ */
 export interface RateRole {
   id: string;
   name: string;
+  /** Absent on rate cards saved before seniority existed, and on any role left without one. */
+  level?: SeniorityLevel;
   /** USD per hour. Display currency is applied at render time. */
   rate: number;
 }
@@ -177,6 +187,18 @@ export interface EstimationSnapshot {
   maxPar?: number;
   /** Kick-off date, ISO yyyy-mm-dd. */
   planStart?: string;
+  /** What this deal's Excel sheet says beyond the numbers. */
+  sheet?: SheetDetails;
+}
+
+/** The words on one estimation's Excel sheet, written by sales for this client. */
+export interface SheetDetails {
+  /** Who the client should talk to, shown on the cover. */
+  contact?: string;
+  /** The cover's General Comments. Blank means the sheet writes its own. */
+  comments?: string;
+  /** Solution or request id → the assumption sales wrote for that line. */
+  notes?: Record<string, string>;
 }
 
 export interface Estimation {
@@ -469,6 +491,8 @@ export interface RoleCostRow {
   cost: number;
   assigned: boolean;
   overhead?: boolean;
+  /** For an overhead row, the rate-card role it bills at; blank when that is the blended rate. */
+  roleId?: string;
 }
 
 export interface EstimateResult {

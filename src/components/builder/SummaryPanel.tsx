@@ -3,11 +3,13 @@ import type { CurrencyCode } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openEstimationRecord, openRequests } from '@/state/reducer';
 import { allSolutions } from '@/domain/catalog';
+import { roleLabel } from '@/domain/estimate';
 import { findPlatform } from '@/data/practices';
 import { EDLY_LINKS } from '@/data/nav';
 import { color, font, roleColor } from '@/theme';
 import { CURRENCIES, hours, hours1, money, plural, rateLabel } from '@/lib/format';
-import { downloadQuote, quoteText } from '@/lib/quoteExport';
+import { downloadTaskBreakdown, quoteText } from '@/lib/quoteExport';
+import { useSheetInput } from '@/components/builder/SheetPanel';
 import { mailRequests } from '@/lib/mail';
 import { copyText } from '@/lib/clipboard';
 import { Link } from '@/components/ui';
@@ -178,6 +180,7 @@ export function SummaryPanel({
   /* The builder only renders with an estimation open; this keeps the exports honest if that
      record ever goes missing mid-session (deleted in another tab, say). */
   const quoteInput = estimation ? { estimation, estimate, requests, plan, display, currency, platformName } : null;
+  const sheetInput = useSheetInput();
 
   const copy = async (text: string, key: string): Promise<void> => {
     if (await copyText(text)) ping(key);
@@ -349,7 +352,7 @@ export function SummaryPanel({
                           whiteSpace: 'nowrap'
                         }}
                       >
-                        {estimate.roles[roleIndex]?.name}
+                        {estimate.roles[roleIndex] ? roleLabel(estimate.roles[roleIndex]) : ''}
                       </span>
                     ) : null}
                     {display.controls ? (
@@ -570,15 +573,15 @@ export function SummaryPanel({
             variant="red"
             style={{ gridColumn: '1 / -1', padding: '11px 8px', fontSize: 13 }}
             onClick={() => {
-              if (!hasAny || !quoteInput) {
+              if (!hasAny || !sheetInput) {
                 ping('nosel');
                 return;
               }
-              downloadQuote(quoteInput);
+              downloadTaskBreakdown(sheetInput);
               ping('xlsx');
             }}
           >
-            {flash === 'xlsx' ? '✓ Sheet downloaded' : flash === 'nosel' ? 'Select solutions first' : 'Download branded sheet (.xlsx)'}
+            {flash === 'xlsx' ? '✓ Sheet downloaded' : flash === 'nosel' ? 'Select solutions first' : 'Download Excel sheet (.xlsx)'}
           </DarkButton>
           <DarkButton onClick={() => quoteInput && void copy(quoteText(quoteInput), 'sum')}>{flash === 'sum' ? '✓ Copied' : 'Copy summary'}</DarkButton>
           <DarkButton onClick={() => window.print()}>Print quote</DarkButton>
