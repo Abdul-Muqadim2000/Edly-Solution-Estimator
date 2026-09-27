@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 618 tests across nineteen files.
+`bun run test` runs 713 tests across twenty files.
 
 | File | Covers |
 |---|---|
@@ -159,6 +159,7 @@ reference.
 | `tests/providers.test.ts` | Google Sheets, OneDrive, Dropbox, against a stubbed `fetch` |
 | `tests/xlsx.test.ts` | the hand-written `.xlsx` reader and writer |
 | `tests/catalogSheet.test.ts` | the master catalog workbook and hand-edited sheets |
+| `tests/catalogImport.test.ts` | importing a bundles or estimates workbook: which kind a file is, every refusal and warning, the templates, the preview |
 | `tests/quoteExport.test.ts` | the branded task-breakdown workbook a client receives |
 | `tests/taskBreakdown.test.ts` | the Excel sheet's deliverables, lines and totals, checked against `calcEstimate` |
 | `tests/team.test.ts` | the team composition: role and seniority from the rate card, people and weeks from the plan |
@@ -175,13 +176,13 @@ reference.
 
 | | |
 |---|---|
-| Statements | 96.9% |
-| Lines | 98.1% |
-| Functions | 98.1% |
-| Branches | 85.7% |
+| Statements | 97.1% |
+| Lines | 98.3% |
+| Functions | 98.2% |
+| Branches | 86.2% |
 
-The thresholds in `vitest.config.ts` are floors: 96% statements, 85% branches, 97% functions and
-97% lines, each set just under the figures above when the Excel task breakdown landed. A change that
+The thresholds in `vitest.config.ts` are floors: 96% statements, 86% branches, 98% functions and
+98% lines, each set just under the figures above when the bundles and estimates import landed. A change that
 drops coverage below them fails the run. Raise them when you can. Do not lower them to make a
 change pass.
 
@@ -291,7 +292,10 @@ Set these in Vercel under Settings, Environment Variables, redeploy, then confir
 `Estimations`, `Requests`, `EstimatedSolutions`, `CustomBundles`, `Settings`, `Tenders`. Scalar
 columns stay readable so a human can scan the sheet in Excel, and nested state sits in one JSON
 column per row so the app round-trips losslessly. A tender's requirements run past one cell, so
-its `detailJson` splits across rows keyed `id##2/3`, pipe-wrapped like the long settings.
+its `detailJson` splits across rows keyed `id##2/3`, pipe-wrapped like the long settings. An
+estimate imported from a workbook is an `EstimatedSolutions` row with `importedFrom`, `sourceId`,
+`client` and `estimatedBy` filled in; "Remove import" and a second import of the same file both
+work by those columns.
 
 ### Six data-safety rules that are not negotiable
 
@@ -412,6 +416,15 @@ The spreadsheets hold real deal names, client names and pricing.
   rather than inventing a new look. The tests in the "the look" block pin it.
 - `src/lib/catalogSheet.ts`: header matching claims exact matches before prefixes, so "Bundle ID"
   is not stolen by the "Bundle" alias. Keep that order.
+- `src/lib/catalogImport.ts` is strict where `catalogSheet.ts` is forgiving, on purpose: the
+  served sheet has to load whatever someone did to it, and a file a person chose to import is
+  refused when it would load differently from how it reads. Keep a new warning off the shipped
+  sheet; `tests/catalogImport.test.ts` asserts it imports with no issues at all.
+- **An imported catalog is pinned by `meta.loaded` on the catalog**, not by `catalogSource`, which
+  `choosePlatform` clears and every reload goes through. Losing the record means the served sheet
+  replaces the import on the next visit; `catalogPin` in the reducer and its tests hold this.
+- **Bundles and estimates never mix.** `solutionKind` decides which is which, estimates are violet
+  everywhere, and the hero's client-facing stats count bundles only.
 - `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses.
 - **The AI only proposes.** No tool the model is given writes anything; every change to an
   estimation or the desk queue is a reducer action a person's click dispatches. Hours never come
@@ -506,15 +519,22 @@ everything else waiting on a server, are in DEFERRED.md.
     mobile?", "why R-14 and Stripe?", "Open edX or Totara?") answered from the cached documents and
     the catalog. When it suggests a change, the change must arrive as a pending edit in the review
     table for a person to accept, never as a write. Phase 2 of the tender intake.
-12. **A compliance-matrix export** from a tender: requirement, comply / partial / custom, the
+12. **A switch to drop the reuse discount.** Price a bundle feature at its original build hours
+    rather than its first-delivery hours, per estimation, for a client the reuse price should not
+    reach. The user raised it on 2026-09-27 and chose to leave it for later.
+13. **A compliance-matrix export** from a tender: requirement, comply / partial / custom, the
     solution that covers it. Bid submissions usually demand one, and the match step already holds
     it; the workbook writer in `src/lib/xlsx.ts` does the rest.
-13. **Two sync issues left in `useSync.ts`**, found on 2026-09-26 while driving two tabs, both
-    older than the tender work. (a) `push` returns early while a save is in flight and nothing
-    reschedules it, so a change whose debounce fires during a slow save is not saved until the
-    next change. (b) The sync pill keeps saying "saved" while a change is still waiting for its
-    debounce. Fixed alongside the tender work, in `AppProvider.tsx` and `state/keys.ts`: three
-    ways one tab wrote an older copy into browser storage over a sibling tab's newer one. A tab
+14. **Two sync questions left in `useSync.ts`.** (a) The sync pill keeps saying "saved" while a
+    change is still waiting for its debounce, found on 2026-09-26. (b) The unload save
+    (`beaconSave`) and the reloaded page's first read are not ordered. On the local store a reload
+    100 ms after an import kept it (2026-09-27), but a slower store could let the read win, and the
+    page would then take the older copy. Not seen yet; worth a drive against Google Sheets. Fixed
+    on 2026-09-27: a save that could not run, before the tab's first read or while another save
+    was in flight, used to be dropped until the next change; it is now owed and made as soon as it
+    can be. That was the in-flight issue this item listed, and it lost imports. Fixed alongside
+    the tender work, in `AppProvider.tsx` and `state/keys.ts`: three ways one tab wrote an older
+    copy into browser storage over a sibling tab's newer one. A tab
     now writes only the slices it changed (`changedSlices`), and a slice it took from the store,
     from another tab, or from storage at boot counts as already written, so it is never echoed
     back. Keep all three if you touch the persist effect; the two-tab browser drive is what

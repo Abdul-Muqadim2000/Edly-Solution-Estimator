@@ -2,7 +2,7 @@ import { useState, type CSSProperties, type ReactNode } from 'react';
 import type { CurrencyCode } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openEstimationRecord, openRequests } from '@/state/reducer';
-import { allSolutions } from '@/domain/catalog';
+import { allSolutions, solutionKind } from '@/domain/catalog';
 import { roleLabel } from '@/domain/estimate';
 import { findPlatform } from '@/data/practices';
 import { EDLY_LINKS } from '@/data/nav';
@@ -336,7 +336,17 @@ export function SummaryPanel({
                   item.first === null && buffer === 0 ? '—' : `${hours(((item.first ?? 0) + (display.blendBuffer ? buffer : 0)) * factor)}`;
                 return (
                   <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: color.onDark, lineHeight: 1.4 }}>{item.name}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: color.onDark, lineHeight: 1.4 }}>
+                      {item.name}
+                      {solutionKind(item) === 'estimates' ? (
+                        <span
+                          title="An estimate: priced by the desk, not built yet"
+                          style={{ marginLeft: 7, fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: color.violetGlow, whiteSpace: 'nowrap' }}
+                        >
+                          Estimate
+                        </span>
+                      ) : null}
+                    </span>
                     {roleIndex >= 0 ? (
                       <span
                         title="Billed at this role’s rate"

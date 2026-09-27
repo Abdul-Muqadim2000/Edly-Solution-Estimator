@@ -78,6 +78,23 @@ export interface CatalogMeta {
   notes: string[];
   /** Benchmark data rather than delivery records. Drives the "Sample" labelling. */
   sample?: boolean;
+  /**
+   * Set when a person imported this catalog from a bundles workbook. It pins the catalog: the
+   * sheet served beside the app is then only checked for news, never applied over it. It lives
+   * on the catalog, which is kept per platform, because the workspace's one catalog source is
+   * cleared whenever a platform is chosen, and every reload chooses one.
+   */
+  loaded?: CatalogImportRecord;
+}
+
+export interface CatalogImportRecord {
+  /** The workbook the catalog was loaded from. */
+  name: string;
+  /** Workbooks added on top of it since, oldest first. */
+  added?: string[];
+  /** Fingerprint a newer served sheet is detected against. */
+  hash?: string;
+  at?: string;
 }
 
 export interface Catalog {
@@ -299,6 +316,13 @@ export interface AddedSolution {
   estName?: string;
   estAt: string;
   direct?: boolean;
+  /** The estimates workbook it was imported from. Absent for anything priced in the app. */
+  imported?: string;
+  /** The row's own reference in that workbook. Importing it again updates this estimate. */
+  sourceId?: string;
+  /** The client it was first estimated for, as the workbook says. */
+  client?: string;
+  estBy?: string;
 }
 
 /** A bundle category created in-app. */
@@ -310,6 +334,8 @@ export interface AddedBundle {
   offerWhen: string;
   pairsWith: string | null;
   at: string;
+  /** The estimates workbook whose Area column created it. */
+  imported?: string;
 }
 
 /* ------------------------------------------------------------------- tenders */

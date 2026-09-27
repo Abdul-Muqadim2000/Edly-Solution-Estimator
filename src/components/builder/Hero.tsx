@@ -1,5 +1,5 @@
 import { useApp } from '@/state/AppProvider';
-import { allSolutions } from '@/domain/catalog';
+import { bundlesOfKind, kindCounts } from '@/domain/catalog';
 import { isLiveCatalog, findPlatform } from '@/data/practices';
 import { EDLY_LINKS, TEAMS_BEHIND, TRADEMARK } from '@/data/nav';
 import { color, font } from '@/theme';
@@ -21,7 +21,10 @@ export function Hero({ onBuild }: { onBuild: () => void }): JSX.Element {
   const live = isLiveCatalog(state.platform);
   const platformName = findPlatform(state.platform)?.platform.name ?? 'Platform';
   const ownSheet = Boolean(state.loadedCatalogs[state.platform]);
-  const total = allSolutions(catalog).length;
+  /* The stats are claims made to a client, so they count built work only: an estimate is priced,
+     not proven, and a group that holds nothing but estimates is not a bundle anyone has delivered. */
+  const total = kindCounts(catalog).bundles;
+  const bundleCount = bundlesOfKind(catalog.bundles, 'bundles').length;
   const engineered = catalog.meta.totals.buildHrs;
 
   const kicker = live ? 'Open edX Solution Bundles · by Arbisoft' : `${platformName} Solution Bundles · by Arbisoft`;
@@ -29,14 +32,14 @@ export function Hero({ onBuild }: { onBuild: () => void }): JSX.Element {
     ? 'Client-proven Open edX solutions, ready to redeploy in hours.'
     : `Scoped ${platformName} solutions, priced before you promise.`;
   const blurb = live
-    ? 'Edly has been a core contributor to Open edX since 2013 — 5,000+ upstream contributions and platforms trusted by 40M+ learners. Every solution below was engineered for a real client. Pick what you need and see the effort instantly.'
+    ? 'Edly has been a core contributor to Open edX since 2013, with 5,000+ upstream contributions and platforms trusted by 40M+ learners. Every bundled solution below was engineered for a real client, and anything marked Estimate is priced but not built yet. Pick what you need and see the effort instantly.'
     : ownSheet
       ? `Loaded from your ${platformName} sheet. Pick what the client needs and see the effort instantly.`
       : `A benchmark catalog for ${platformName} — typical scopes and hours for this kind of work, here so you can shape a number in the meeting. Confirm anything you quote with the delivery team, or load your own sheet to replace it.`;
 
   const stats: { value: string; label: string }[] = [
     { value: String(total), label: live ? 'client-proven solutions' : ownSheet ? 'solutions in your sheet' : 'benchmark solutions' },
-    { value: String(catalog.bundles.length), label: 'sellable bundles' },
+    { value: String(bundleCount), label: 'sellable bundles' },
     { value: `${hours(engineered ?? 0)} h`, label: 'engineering already built — you reuse it' },
     { value: '2013', label: 'core Open edX contributor since' }
   ];

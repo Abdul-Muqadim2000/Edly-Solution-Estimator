@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import type { Catalog, EstimateResult, Estimation, PersistedState, Schedule } from '@/types';
-import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, catalogReady, commitDraft, effectiveDisplay, openRequests, platformEstimations, platformTotals, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
+import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, catalogPin, catalogReady, commitDraft, effectiveDisplay, openRequests, platformEstimations, platformTotals, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
 import { changedSlices, readStorage, removeStorage, STORAGE_KEYS, writeStorage } from '@/state/keys';
 import { useSync, type SyncApi } from '@/state/useSync';
 import { useRouting, type RouterApi } from '@/state/useRouting';
@@ -9,7 +9,7 @@ import { composeCatalog } from '@/domain/catalog';
 import { calcEstimate } from '@/domain/estimate';
 import { schedule as buildSchedule } from '@/domain/planner';
 import { readSheetPrefs } from '@/domain/taskBreakdown';
-import { fetchCatalog, parseCatalogWorkbook } from '@/lib/catalogSheet';
+import { fetchCatalog } from '@/lib/catalogSheet';
 import { fingerprint } from '@/lib/xlsx';
 import { today, withSlugs } from '@/lib/format';
 
@@ -34,13 +34,13 @@ export interface AppContextValue {
   router: RouterApi;
   /** The catalog for the platform in play, desk additions folded in. */
   catalog: Catalog;
+  /** The same catalog before desk additions: what a bundles workbook is added to or replaces. */
+  baseCatalog: Catalog;
   /** The open estimation's numbers. */
   estimate: EstimateResult;
   /** The open estimation's delivery plan. */
   plan: Schedule;
   display: DisplayPrefs;
-  /** Load a catalog workbook the user picked. */
-  importCatalog: (file: File) => Promise<{ warnings: string[] } | null>;
   /** Drop a hand-loaded catalog and go back to the shipped one. */
   resetCatalog: () => void;
   /** Re-read the sheet served beside the app, replacing whatever is in play. */
@@ -214,8 +214,11 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     if (!isLiveCatalog(state.platform) || catalogRequested.current) return;
     catalogRequested.current = true;
 
-    const pinnedSource = readStorage<AppState['catalogSource']>(STORAGE_KEYS.catalogSource, null);
-    const pinned = pinnedSource?.source === 'file' || pinnedSource?.source === 'builtin';
+    const { pinned, hash: pinnedHash } = catalogPin(
+      readStorage<AppState['loadedCatalogs']>(STORAGE_KEYS.loadedCatalogs, {}),
+      readStorage<AppState['catalogSource']>(STORAGE_KEYS.catalogSource, null),
+      state.platform
+    );
 
     let cancelled = false;
 
@@ -225,7 +228,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
         .then((response) => (response.ok ? response.arrayBuffer() : null))
         .then((buffer) => {
           if (cancelled || !buffer) return;
-          if (fingerprint(buffer) !== pinnedSource?.hash) dispatch({ type: 'setAutoAvail', available: true });
+          if (fingerprint(buffer) !== pinnedHash) dispatch({ type: 'setAutoAvail', available: true });
         })
         .catch(() => {
           /* offline is not an error worth interrupting a meeting for */
@@ -303,22 +306,27 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
 
   /* ---- derived: catalog, estimate, plan ---- */
 
-  const catalog = useMemo<Catalog>(() => {
+  const baseCatalog = useMemo<Catalog>(() => {
     const platform = state.platform || 'openedx';
-    const base =
+    return (
       state.loadedCatalogs[platform] ??
       benchmarkCatalog(platform) ?? {
         meta: {
           title: findPlatform(platform)?.platform.name ?? 'Catalog',
-          subtitle: 'No catalog yet — add solutions at the estimation desk, or load a sheet.',
+          subtitle: 'No catalog yet. Add solutions at the estimation desk, or import a workbook.',
           compiled: '',
           totals: { features: 0, buildHrs: null, firstHrs: null, repeatHrs: null, saved: null, noEstimate: 0, inDev: 0 },
           notes: []
         },
         bundles: []
-      };
-    return composeCatalog({ base, platform, added: state.solutions, ownBundles: state.bundles });
-  }, [state.platform, state.loadedCatalogs, state.solutions, state.bundles]);
+      }
+    );
+  }, [state.platform, state.loadedCatalogs]);
+
+  const catalog = useMemo<Catalog>(
+    () => composeCatalog({ base: baseCatalog, platform: state.platform || 'openedx', added: state.solutions, ownBundles: state.bundles }),
+    [baseCatalog, state.platform, state.solutions, state.bundles]
+  );
 
   /* Each deal caches its totals for the hub's "hours in play" and the sheet's readable columns,
      and this is the one place that keeps them in step with what its card shows. It waits for a
@@ -340,21 +348,6 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     [estimate, requests, state.draft, display.blendBuffer]
   );
 
-  const importCatalog = useCallback(
-    async (file: File): Promise<{ warnings: string[] } | null> => {
-      const buffer = await file.arrayBuffer();
-      const result = await parseCatalogWorkbook(buffer);
-      dispatch({
-        type: 'setLoadedCatalog',
-        platform: state.platform || 'openedx',
-        catalog: result.catalog,
-        source: { source: 'file', name: file.name, hash: fingerprint(buffer), at: new Date().toISOString().slice(0, 10), warnings: result.warnings }
-      });
-      return { warnings: result.warnings };
-    },
-    [state.platform]
-  );
-
   const reloadCatalog = useCallback(async (): Promise<void> => {
     await readServedCatalog(true);
   }, [readServedCatalog]);
@@ -369,8 +362,8 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   }, [state.platform]);
 
   const value = useMemo<AppContextValue>(
-    () => ({ state, dispatch, sync, router, catalog, estimate, plan, display, importCatalog, resetCatalog, reloadCatalog }),
-    [state, sync, router, catalog, estimate, plan, display, importCatalog, resetCatalog, reloadCatalog]
+    () => ({ state, dispatch, sync, router, catalog, baseCatalog, estimate, plan, display, resetCatalog, reloadCatalog }),
+    [state, sync, router, catalog, baseCatalog, estimate, plan, display, resetCatalog, reloadCatalog]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '@/state/AppProvider';
 import { catalogSourceLabel, openEstimationRecord } from '@/state/reducer';
 import { ALL_BUNDLES } from '@/lib/router';
-import { allSolutions } from '@/domain/catalog';
+import { allSolutions, bundlesOfKind, kindCounts, solutionKind, type CatalogKind } from '@/domain/catalog';
 import { color, dueInfo, font, radius, tagStyle } from '@/theme';
 import { hours } from '@/lib/format';
 import { findPlatform } from '@/data/practices';
@@ -16,6 +16,8 @@ import { CatalogTable, type CatalogRow } from '@/components/builder/CatalogTable
 import { CatalogPanel } from '@/components/builder/CatalogPanel';
 import { DisplayPanel } from '@/components/builder/DisplayPanel';
 import { Hero } from '@/components/builder/Hero';
+import { KindFilter } from '@/components/builder/KindFilter';
+import { ImportModal } from '@/components/ImportModal';
 import { Planner } from '@/components/builder/Planner';
 import { RatesPanel } from '@/components/builder/RatesPanel';
 import { RequestModal } from '@/components/builder/RequestModal';
@@ -48,12 +50,13 @@ export function Builder(): JSX.Element {
      bundle": the builder opens on one, and the catalogue is not parsed yet on the first render. */
   const active = router.route.bundle ? (router.route.bundle.toLowerCase() === ALL_BUNDLES ? ALL : router.route.bundle) : '';
   const plannerOpen = Boolean(router.route.plan);
+  const kind: CatalogKind | null = router.route.kind ?? null;
 
   /* The box is local so it stays instant, and the URL catches up a beat later — pushing a route
      per keystroke would bury the Back button and trip the browser's history-call throttle. */
   const [search, setSearch] = useState(router.route.q ?? '');
   const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display' | 'sheet'>('');
-  const [catalogFlash, setCatalogFlash] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [requestFlash, setRequestFlash] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -72,12 +75,17 @@ export function Builder(): JSX.Element {
   }, [routeSearch]);
 
   const everySolution = useMemo(() => allSolutions(catalog), [catalog]);
+  const counts = useMemo(() => kindCounts(catalog), [catalog]);
+  const shownBundles = useMemo(() => bundlesOfKind(catalog.bundles, kind), [catalog.bundles, kind]);
+  const shownSolutions = useMemo(() => shownBundles.flatMap((bundle) => bundle.items), [shownBundles]);
   const searching = search.trim().length > 0;
 
   const rows = useMemo<CatalogRow[]>(() => {
     const flat: CatalogRow[] = [];
     for (const bundle of catalog.bundles) {
-      for (const item of bundle.items) flat.push({ item, bundleId: bundle.id, bundleName: bundle.name });
+      for (const item of bundle.items) {
+        if (!kind || solutionKind(item) === kind) flat.push({ item, bundleId: bundle.id, bundleName: bundle.name });
+      }
     }
     if (searching) {
       const needle = search.trim().toLowerCase();
@@ -108,7 +116,7 @@ export function Builder(): JSX.Element {
     if (active === ALL) return flat;
     const bundle = catalog.bundles.find((entry) => entry.id === active) ?? catalog.bundles[0];
     return bundle ? flat.filter((row) => row.bundleId === bundle.id) : flat;
-  }, [catalog, active, search, searching]);
+  }, [catalog, active, search, searching, kind]);
 
   const activeBundle = active === ALL ? null : (catalog.bundles.find((bundle) => bundle.id === active) ?? catalog.bundles[0] ?? null);
   const platformRef = findPlatform(state.platform);
@@ -118,7 +126,10 @@ export function Builder(): JSX.Element {
   const estChipLabel = estimation ? estimation.name + (estimation.client ? ` · ${estimation.client}` : '') : '';
   const due = dueInfo(estimation?.due);
 
-  const entries = railEntries(catalog.bundles, everySolution, state.draft.sel);
+  const entries = railEntries(shownBundles, shownSolutions, state.draft.sel);
+  /* the bundle header lists what the table lists, so "Select all" never picks what the filter hides */
+  const shownBundle = activeBundle ? { ...activeBundle, items: activeBundle.items.filter((item) => !kind || solutionKind(item) === kind) } : null;
+  const hiddenInBundle = activeBundle && shownBundle ? activeBundle.items.length - shownBundle.items.length : 0;
   const bundleStat = activeBundle
     ? [
         display.savings && activeBundle.buildHrs !== null ? `Engineered ${hours(activeBundle.buildHrs)} h` : null,
@@ -132,6 +143,13 @@ export function Builder(): JSX.Element {
   const goBundle = (id: string): void => {
     setSearch('');
     router.navigate({ bundle: id === ALL ? ALL_BUNDLES : id, q: undefined });
+  };
+
+  /* Switching to a kind the open bundle has none of shows every bundle of that kind instead of an
+     empty table, since the bundle would also vanish from the rail. */
+  const pickKind = (next: CatalogKind | null): void => {
+    const empty = next && activeBundle && !activeBundle.items.some((item) => solutionKind(item) === next);
+    router.navigate({ kind: next ?? undefined, ...(empty ? { bundle: ALL_BUNDLES } : {}) });
   };
 
 
@@ -213,14 +231,14 @@ export function Builder(): JSX.Element {
             on={panel === 'catalog'}
             onClick={() => setPanel(panel === 'catalog' ? '' : 'catalog')}
           >
-            {catalogFlash ? '✓ Catalog updated' : state.autoAvail ? '📚 Catalog •' : '📚 Catalog'}
+            {state.autoAvail ? '📚 Catalog •' : '📚 Catalog'}
           </HeaderPill>
           {panel === 'catalog' ? (
             <CatalogPanel
               onClose={() => setPanel('')}
-              onLoaded={() => {
-                setCatalogFlash(true);
-                window.setTimeout(() => setCatalogFlash(false), 2200);
+              onImport={() => {
+                setPanel('');
+                setImportOpen(true);
               }}
             />
           ) : null}
@@ -278,36 +296,55 @@ export function Builder(): JSX.Element {
         />
 
         <main style={{ overflowY: layout.paneOverflow, minWidth: 0, padding: layout.mainPad }}>
+          <KindFilter kind={kind} counts={counts} onPick={pickKind} />
+
           {searching ? (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>Search results</div>
               <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>
                 {rows.length}
-                {rows.length === SEARCH_LIMIT ? '+' : ''} matches across all bundles
+                {rows.length === SEARCH_LIMIT ? '+' : ''} matches across all bundles{kind ? `, ${kind} only` : ''}
               </div>
             </div>
           ) : null}
 
           {!searching && active === ALL ? (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>All solutions</div>
-              <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>Every solution à la carte — tick any to add it to your bundle.</div>
+              <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>
+                {kind === 'estimates' ? 'All estimates' : kind === 'bundles' ? 'All bundle features' : 'All solutions'}
+              </div>
+              <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>
+                {kind === 'estimates' ? 'Everything the desk has priced, à la carte. Tick any to add it.' : 'Every solution à la carte. Tick any to add it to your bundle.'}
+              </div>
             </div>
           ) : null}
 
-          {!searching && activeBundle ? (
+          {!searching && shownBundle ? (
             <BundleHeader
-              bundle={activeBundle}
-              selectedCount={activeBundle.items.filter((item) => state.draft.sel[item.id]).length}
+              bundle={shownBundle}
+              selectedCount={shownBundle.items.filter((item) => state.draft.sel[item.id]).length}
               stat={bundleStat}
-              onSelectAll={() => dispatch({ type: 'selectMany', ids: activeBundle.items.map((item) => item.id), selected: true })}
-              onClear={() => dispatch({ type: 'selectMany', ids: activeBundle.items.map((item) => item.id), selected: false })}
+              onSelectAll={() => dispatch({ type: 'selectMany', ids: shownBundle.items.map((item) => item.id), selected: true })}
+              onClear={() => dispatch({ type: 'selectMany', ids: shownBundle.items.map((item) => item.id), selected: false })}
               onGoBundle={goBundle}
             />
           ) : null}
 
           <CatalogTable rows={rows} narrow={narrow} showBundleTag={searching || active === ALL} onGoBundle={goBundle}>
-            {rows.length === 0 ? (
+            {rows.length === 0 && !searching && kind ? (
+              <div style={{ padding: 40, textAlign: 'center', fontSize: 13.5, color: color.muted, borderTop: `1px solid ${color.hairlineSoft}`, lineHeight: 1.6 }}>
+                {activeBundle && hiddenInBundle > 0
+                  ? `No ${kind} in ${activeBundle.name}. Show All to see its ${hiddenInBundle} ${kind === 'estimates' ? 'bundle features' : 'estimates'}.`
+                  : kind === 'estimates'
+                    ? 'No estimates in this catalog yet. They arrive when the estimation desk prices a request, or from an estimates workbook.'
+                    : 'No bundle features in this catalog yet. They come from a bundles workbook.'}
+                <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Button onClick={() => pickKind(null)}>Show all</Button>
+                  {!state.presenting ? <Button onClick={() => setImportOpen(true)}>Import from Excel</Button> : null}
+                </div>
+              </div>
+            ) : null}
+            {rows.length === 0 && (searching || !kind) ? (
               <div style={{ padding: 40, textAlign: 'center', fontSize: 13.5, color: color.muted, borderTop: `1px solid ${color.hairlineSoft}` }}>
                 No matches in our pre-built catalog — try a broader term like payments, SSO or analytics.
                 <br />
@@ -407,6 +444,16 @@ export function Builder(): JSX.Element {
       <div style={{ height: 48, background: color.page }} />
 
       {plannerOpen ? <Planner onClose={() => router.navigate({ plan: undefined })} /> : null}
+      {importOpen ? (
+        <ImportModal
+          onClose={() => setImportOpen(false)}
+          onShowEstimates={() => {
+            setImportOpen(false);
+            setSearch('');
+            router.navigate({ kind: 'estimates', bundle: ALL_BUNDLES, q: undefined });
+          }}
+        />
+      ) : null}
       {requestOpen ? (
         <RequestModal
           onClose={() => setRequestOpen(false)}

@@ -1,14 +1,66 @@
-import type { AddedBundle, AddedSolution, Bundle, Catalog, Solution } from '@/types';
+import type { AddedBundle, AddedSolution, Bundle, Catalog, CatalogTotals, Solution } from '@/types';
 
 /**
  * Catalog composition.
  *
  * The catalog a platform shows is its base (the master sheet for Open edX, a benchmark set
  * otherwise) plus anything the estimation desk added for that platform. Desk additions are
- * tagged `Estimation`: scoped and priced, not yet engineered — so nobody sells them as shipped.
+ * tagged `Estimation`: scoped and priced, not yet engineered, so nobody sells them as shipped.
  */
 
+/** Where an estimate goes when nobody has said which bundle it belongs to. The desk files it. */
 export const CX_BUNDLE_ID = 'CX';
+export const UNASSIGNED_NAME = 'Unassigned estimates';
+
+/* ------------------------------------------------------ the two kinds */
+
+/**
+ * The two kinds of thing a catalog holds, which sales must never confuse.
+ *
+ * Bundles are features Edly built for a client before and can deliver again for less, plus the
+ * few still in development: their hours are a record. Estimates were priced by the estimation
+ * desk, or in a workbook for an earlier client, and have never been built: their hours are a
+ * forecast. Benchmark rows on the sample platforms count as bundles, since they stand in for one.
+ */
+export type CatalogKind = 'bundles' | 'estimates';
+
+export const CATALOG_KINDS: readonly CatalogKind[] = ['bundles', 'estimates'];
+
+export const isCatalogKind = (value: unknown): value is CatalogKind => CATALOG_KINDS.includes(value as CatalogKind);
+
+export const solutionKind = (item: Solution): CatalogKind => (item.status === 'Estimation' ? 'estimates' : 'bundles');
+
+export function kindCounts(catalog: Catalog): Record<'all' | CatalogKind, number> {
+  const counts = { all: 0, bundles: 0, estimates: 0 };
+  for (const item of allSolutions(catalog)) {
+    counts.all += 1;
+    counts[solutionKind(item)] += 1;
+  }
+  return counts;
+}
+
+/**
+ * The bundles holding one kind, each with only those items, and the ones left empty dropped.
+ * `null` keeps everything. A bundle's own totals are left as they were: this is for listing, not
+ * for pricing, which always reads the whole catalog.
+ */
+export function bundlesOfKind(bundles: readonly Bundle[], kind: CatalogKind | null): Bundle[] {
+  if (!kind) return [...bundles];
+  return bundles
+    .map((bundle) => ({ ...bundle, items: bundle.items.filter((item) => solutionKind(item) === kind) }))
+    .filter((bundle) => bundle.items.length > 0);
+}
+
+/** Where an imported estimate came from, for the catalog row's Reference. Internal: presenting hides it. */
+function importedRef(added: AddedSolution): string {
+  return (
+    `Imported from ${added.imported}` +
+    (added.sourceId ? ` (${added.sourceId})` : '') +
+    (added.client ? `, estimated for ${added.client}` : '') +
+    (added.estAt ? ` on ${added.estAt}` : '') +
+    (added.estBy ? ` by ${added.estBy}` : '')
+  );
+}
 
 /** A desk-added solution as a catalog row. */
 export function toSolution(added: AddedSolution): Solution {
@@ -31,7 +83,9 @@ export function toSolution(added: AddedSolution): Solution {
       ? `Estimated at the desk — request ${added.from}` +
         (added.estName ? ` (${added.estName})` : '') +
         (added.estAt ? `, ${added.estAt}` : '')
-      : null,
+      : added.imported
+        ? importedRef(added)
+        : null,
     category: added.category || 'Custom',
     subCategory: added.subCategory || null
   };
@@ -91,9 +145,9 @@ export function composeCatalog({ base, platform, added, ownBundles }: ComposeInp
   if (orphans.length > 0) {
     bundles.push({
       id: CX_BUNDLE_ID,
-      name: 'Estimated solutions',
+      name: UNASSIGNED_NAME,
       pitch:
-        'Scoped and priced at the estimation desk but not yet engineered. Reusable for the next client at the same estimate — sell them with a build-time caveat, not as shipped features.',
+        'Priced by the estimation desk but not built yet, and not filed under a bundle. The desk files each one where it belongs. Sell them with a build-time caveat, not as shipped features.',
       offerWhen: 'Bespoke scope',
       featureCount: orphans.length,
       buildHrs: null,
@@ -213,4 +267,145 @@ export function diffCatalogs(before: Catalog | null, after: Catalog): CatalogDif
   const bundlesAdded = after.bundles.filter((bundle) => !knownBundles.has(bundle.id)).map((bundle) => `${bundle.id} · ${bundle.name}`);
 
   return { added, removed, changed, bundlesAdded };
+}
+
+/* ---------------------------------------- adding a workbook to a catalog */
+
+/* "Commerce & Monetization" and "commerce and monetization" are one bundle typed twice */
+export const nameKey = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+const sameName = (a: string, b: string): boolean => nameKey(a) === nameKey(b);
+
+/** A bundle's figures worked out from its rows, the way the sheet parser does when a summary row is stale. */
+export function withItemTotals(bundle: Bundle, items: Solution[]): Bundle {
+  const recorded = items.filter((it) => it.first !== null && it.build !== null);
+  const sumFirst = recorded.reduce((total, it) => total + (it.first ?? 0), 0);
+  const sumBuild = recorded.reduce((total, it) => total + (it.build ?? 0), 0);
+  return {
+    ...bundle,
+    items,
+    featureCount: items.length,
+    buildHrs: items.some((it) => it.build !== null) ? items.reduce((total, it) => total + (it.build ?? 0), 0) : null,
+    firstHrs: items.reduce((total, it) => total + (it.first ?? 0), 0),
+    repeatHrs: items.reduce((total, it) => total + (it.repeat ?? 0), 0),
+    saved: sumBuild > 0 ? 1 - sumFirst / sumBuild : null,
+    noEstimate: items.filter((it) => it.first === null).length,
+    inDev: items.filter((it) => it.status === 'In Development').length
+  };
+}
+
+export function catalogTotals(bundles: readonly Bundle[]): CatalogTotals {
+  const every = bundles.flatMap((bundle) => bundle.items);
+  const recorded = every.filter((it) => it.first !== null && it.build !== null);
+  const sumFirst = recorded.reduce((total, it) => total + (it.first ?? 0), 0);
+  const sumBuild = recorded.reduce((total, it) => total + (it.build ?? 0), 0);
+  return {
+    features: every.length,
+    buildHrs: every.reduce((total, it) => total + (it.build ?? 0), 0),
+    firstHrs: every.reduce((total, it) => total + (it.first ?? 0), 0),
+    repeatHrs: every.reduce((total, it) => total + (it.repeat ?? 0), 0),
+    saved: sumBuild > 0 ? 1 - sumFirst / sumBuild : null,
+    noEstimate: every.filter((it) => it.first === null).length,
+    inDev: every.filter((it) => it.status === 'In Development').length
+  };
+}
+
+export interface CatalogMerge {
+  catalog: Catalog;
+  /** Solutions the catalog did not have. */
+  added: string[];
+  /** Solutions it had, now as the workbook describes them. */
+  updated: string[];
+  /** Solutions the workbook does not mention, left exactly as they were. */
+  kept: number;
+  /** "B16 · Mobile Apps", for bundles the catalog did not have. */
+  bundlesAdded: string[];
+  /** Why the workbook cannot be added. Empty when it can. */
+  conflicts: string[];
+}
+
+/**
+ * A bundles workbook added to the catalog in play, rather than replacing it.
+ *
+ * A solution id the catalog already has is updated, and moves to the bundle the workbook puts it
+ * in. A bundle id already in use by a bundle of another name is refused: the two workbooks
+ * numbered their bundles independently, and merging "B03 AI" into "B03 Mobile" would put a
+ * client's features under the wrong pitch. Renumbering in the workbook, or replacing the catalog,
+ * are the ways out, and the conflict says so.
+ */
+export function mergeCatalogs(current: Catalog, incoming: Catalog): CatalogMerge {
+  const conflicts: string[] = [];
+  const currentBundles = new Map(current.bundles.map((bundle) => [bundle.id.toUpperCase(), bundle]));
+  const used = new Set(current.bundles.map((bundle) => bundle.id.toUpperCase()));
+  const freeId = (): string => {
+    for (let n = 1; n < 1000; n++) {
+      const id = `B${String(n).padStart(2, '0')}`;
+      if (!used.has(id)) return id;
+    }
+    return 'B999';
+  };
+  for (const bundle of incoming.bundles) {
+    const clash = currentBundles.get(bundle.id.toUpperCase());
+    if (clash && !sameName(clash.name, bundle.name)) {
+      const suggestion = freeId();
+      used.add(suggestion);
+      conflicts.push(
+        `${bundle.id} is "${clash.name}" in the catalog but "${bundle.name}" in this workbook. Renumber it in the workbook (${suggestion} is free), or replace the catalog instead.`
+      );
+    }
+  }
+
+  const before = new Set(current.bundles.flatMap((bundle) => bundle.items.map((item) => item.id)));
+  const incomingIds = new Set(incoming.bundles.flatMap((bundle) => bundle.items.map((item) => item.id)));
+  const added = [...incomingIds].filter((id) => !before.has(id));
+  const updated = [...incomingIds].filter((id) => before.has(id));
+  const kept = before.size - updated.length;
+  const bundlesAdded = incoming.bundles
+    .filter((bundle) => !currentBundles.has(bundle.id.toUpperCase()))
+    .map((bundle) => `${bundle.id} · ${bundle.name}`);
+
+  if (conflicts.length > 0) return { catalog: current, added, updated, kept, bundlesAdded, conflicts };
+
+  const incomingById = new Map(incoming.bundles.map((bundle) => [bundle.id.toUpperCase(), bundle]));
+  const merged: Bundle[] = [];
+  for (const bundle of current.bundles) {
+    const remaining = bundle.items.filter((item) => !incomingIds.has(item.id));
+    const update = incomingById.get(bundle.id.toUpperCase());
+    if (!update) {
+      /* untouched bundles keep their own figures, which may come from a trusted summary row */
+      if (remaining.length === bundle.items.length) merged.push(bundle);
+      else if (remaining.length > 0) merged.push(withItemTotals(bundle, remaining));
+      continue;
+    }
+    const prose: Bundle = {
+      ...bundle,
+      pitch: update.pitch || bundle.pitch,
+      offerWhen: update.offerWhen || bundle.offerWhen,
+      pairsWith: update.pairsWith ?? bundle.pairsWith,
+      accounts: update.accounts ?? bundle.accounts,
+      price: update.price ?? bundle.price
+    };
+    merged.push(withItemTotals(prose, [...remaining, ...update.items]));
+  }
+  for (const bundle of incoming.bundles) {
+    if (!currentBundles.has(bundle.id.toUpperCase())) merged.push(bundle);
+  }
+
+  const totals = catalogTotals(merged);
+  const base = current.bundles.length > 0 ? current.meta : incoming.meta;
+  return {
+    catalog: {
+      meta: { ...base, subtitle: `${totals.features} solutions across ${merged.length} bundles.`, totals },
+      bundles: merged
+    },
+    added,
+    updated,
+    kept,
+    bundlesAdded,
+    conflicts
+  };
 }

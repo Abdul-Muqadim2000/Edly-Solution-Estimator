@@ -3,6 +3,7 @@ import type { Solution } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openRequests, type DisplayPrefs } from '@/state/reducer';
 import { ownedCatalogIds } from '@/domain/estimate';
+import { solutionKind } from '@/domain/catalog';
 import { color, font, radius } from '@/theme';
 import { hours } from '@/lib/format';
 import { Link, useRowHover } from '@/components/ui';
@@ -49,13 +50,13 @@ function Row({
   const ownedByRequest = ownedCatalogIds(openRequests(state))[item.id] ?? null;
   const hover = useRowHover({ background: selected ? color.brandWashRow : color.surfaceSoft });
 
-  const isCustom = item.status === 'Estimation';
+  const isEstimate = solutionKind(item) === 'estimates';
   /* A bare URL becomes a link on its own row; anything else stays an ordinary detail pair. */
   const refUrl = display.notes && item.ref && /^http/.test(item.ref) ? item.ref : null;
 
   const detail: [string, string][] = [
     ['Delivery form', item.form ?? '—'],
-    isCustom ? ['Status', 'Estimation — scoped and priced, not yet built'] : null,
+    isEstimate ? ['Status', 'Estimate: priced by the estimation desk, not built yet'] : null,
     item.category ? ['Category', item.category + (item.subCategory ? ` · ${item.subCategory}` : '')] : null,
     ['Std deployment', item.deploy ?? 'Not recorded'],
     display.savings && item.build !== null ? ['Original build', `${hours(item.build)} h`] : null,
@@ -74,7 +75,17 @@ function Row({
   );
 
   return (
-    <div style={{ borderTop: `1px solid ${color.hairlineSoft}`, background: selected ? color.brandWashPale : color.surface, transition: 'background 110ms ease', ...hover.style }} {...hover.bind}>
+    <div
+      style={{
+        borderTop: `1px solid ${color.hairlineSoft}`,
+        background: selected ? color.brandWashPale : color.surface,
+        /* an inset edge rather than a border, so estimate rows line up with the rest */
+        boxShadow: isEstimate ? `inset 3px 0 0 ${color.violet}` : undefined,
+        transition: 'background 110ms ease',
+        ...hover.style
+      }}
+      {...hover.bind}
+    >
       <div
         onClick={() => setExpanded((value) => !value)}
         style={{ display: 'grid', gridTemplateColumns: columns, alignItems: 'center', padding: '11px 0', cursor: 'pointer' }}
@@ -85,7 +96,7 @@ function Row({
               event.stopPropagation();
               if (!ownedByRequest) dispatch({ type: 'toggleSolution', id: item.id });
             }}
-            title={ownedByRequest ? 'Its hours already count through the custom request in this estimation — selectable in other estimations' : undefined}
+            title={ownedByRequest ? 'Its hours already count through the custom request in this estimation. It can be selected in other estimations.' : undefined}
             style={{
               width: 20,
               height: 20,
@@ -107,15 +118,15 @@ function Row({
             <span style={{ fontSize: 13.5, fontWeight: 600, color: color.ink }}>{item.name}</span>
             <span style={{ fontFamily: font.mono, fontSize: 10, color: color.ghostCool }}>{item.id}</span>
             {item.status === 'In Development' ? badge('In development', color.amberWash, color.amber) : null}
-            {item.status === 'Estimation'
-              ? badge('Estimation', color.violetWash, color.violet, 'Scoped and priced by the estimation desk — not yet engineered, so hours are an estimate rather than a reuse figure')
+            {isEstimate
+              ? badge('Estimate, not built', color.violetWash, color.violet, 'Priced by the estimation desk and never built, so its hours are a forecast rather than a delivery record')
               : null}
             {ownedByRequest
               ? badge(
                   `Already in this estimation via ${ownedByRequest}`,
                   color.surfaceMuted,
                   color.muted,
-                  'Its hours already count through the custom request in this estimation — selectable in other estimations'
+                  'Its hours already count through the custom request in this estimation. It can be selected in other estimations.'
                 )
               : null}
             {item.first === null && item.status !== 'In Development' ? badge('No estimate', color.surfaceMuted, color.muted) : null}

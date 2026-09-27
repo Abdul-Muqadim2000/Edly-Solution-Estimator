@@ -16,12 +16,14 @@ src/
     router.ts           the URL as a value — parse, format, base path, hash fallback (pure)
     xlsx.ts             dependency-free .xlsx reader and writer (browser + server), with a style table
     quoteExport.ts      the branded task-breakdown workbook, and the plain-text quote
-    catalogSheet.ts     parses the master catalog workbook into a Catalog
+    catalogSheet.ts     parses the master catalog workbook into a Catalog (forgiving)
+    catalogImport.ts    a workbook a person picked: which kind it is, strict checks, the templates
     format.ts           money, hours, ids, dates
   domain/               PURE functions — no React, no I/O, fully unit-tested
     estimate.ts         hours and role-aware cost from a snapshot
     planner.ts          the delivery schedule
-    catalog.ts          catalog composition, diffing, bundle guessing
+    catalog.ts          catalog composition, diffing, bundle guessing, bundles vs estimates, merging
+    estimateImport.ts   what an estimates import does: new or updated, and which bundle each lands in
     tender.ts           tender intake: narrowing AI output, ranges, desk drafts
     taskBreakdown.ts    the Excel sheet: deliverables per area, lines, totals, column choices
     team.ts             team composition: rate-card role and seniority, people and weeks from the plan
@@ -41,6 +43,8 @@ src/
     builder/BundleRail.tsx  the bundle rail (sidebar ≥1020px, wrapping row below) + bundle header
     builder/CatalogTable.tsx  the catalog grid table and its expandable rows
     builder/SheetPanel.tsx    what the downloaded Excel sheet contains: columns, sheets, notes
+    builder/KindFilter.tsx    All / Bundles / Estimates on the catalog page, which is also the legend
+    ImportModal.tsx     Import from Excel: pick the kind, read the checks and the preview, apply
     tender/             tender intake: upload modal, then requirements, match, apply
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links
@@ -132,6 +136,31 @@ desk additions (state) ───────────────────
 
 Every screen reads `catalog`, `estimate` and `plan` from `useApp()`; they are memoised once in the
 provider rather than recomputed per component.
+
+## Bundles and estimates
+
+The catalog holds two kinds of thing that must never be sold as each other. **Bundles** are
+features built for a client before and delivered again for less; their hours are a record.
+**Estimates** were priced by the desk, or for an earlier client, and never built; their hours are a
+forecast. `solutionKind` in `domain/catalog.ts` is the one place that decides which is which (an
+estimate is a row with status `Estimation`), and everything violet in the UI means an estimate.
+The hero's client-facing stats count bundles only.
+
+They also arrive differently, which is why they are stored differently:
+
+- **A bundles workbook replaces or joins the base catalog**, which is per platform and lives in
+  `loadedCatalogs` (the Settings sheet). `mergeCatalogs` adds one to what is in play and refuses a
+  Bundle ID that means a different bundle in each file. The imported catalog carries its own
+  record in `meta.loaded`, and that is what pins it over the served sheet: the workspace's
+  `catalogSource` is cleared whenever a platform is chosen, and every reload chooses one.
+- **An estimates workbook adds records**, the same `AddedSolution` rows the desk makes, marked with
+  the file they came from. `planEstimateImport` decides new versus updated (by Estimate ID, else by
+  Feature and client) and where each lands (Bundle ID, else the bundle its Area names, else a new
+  bundle, else Unassigned for the desk to file). The preview and the reducer call the same function.
+
+Both go through `readImport` in `lib/catalogImport.ts` first, which is strict where
+`catalogSheet.ts` is forgiving: the served sheet must load whatever someone did to it, but a file a
+person chose to import is refused with a reason when it would load differently from how it reads.
 
 ## Tender intake
 

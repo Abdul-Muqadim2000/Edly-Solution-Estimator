@@ -32,7 +32,7 @@ export default defineConfig({
       reporter: ['text', 'html'],
       /* Floors, not targets: they are set just under what the suite achieves today, so a change
          that drops coverage fails the gate instead of drifting. Raise them, never lower them. */
-      thresholds: { statements: 96, branches: 85, functions: 97, lines: 97 }
+      thresholds: { statements: 96, branches: 86, functions: 98, lines: 98 }
     }
   },
   resolve: {

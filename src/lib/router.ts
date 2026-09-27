@@ -1,4 +1,5 @@
 import type { DeskTab } from '@/types';
+import { isCatalogKind, type CatalogKind } from '@/domain/catalog';
 
 /**
  * The URL, as a value.
@@ -36,6 +37,8 @@ export interface Route {
   plan?: boolean;
   /** Catalog search text. Builder only. */
   q?: string;
+  /** Only bundles, or only estimates. Absent shows both. Builder only. */
+  kind?: CatalogKind;
   /** Which desk tab. Desk only. */
   tab?: DeskTab;
 }
@@ -86,6 +89,8 @@ export function parseRoute(url: string): Route {
       const q = query.get('q')?.trim();
       if (q) route.q = q;
       if (query.get('plan') === '1') route.plan = true;
+      const kind = query.get('kind');
+      if (isCatalogKind(kind)) route.kind = kind;
       return route;
     }
 
@@ -139,6 +144,7 @@ export function formatRoute(route: Route): string {
   if (route.screen !== 'builder') return path;
   const query = new URLSearchParams();
   if (route.q) query.set('q', route.q);
+  if (route.kind) query.set('kind', route.kind);
   if (route.plan) query.set('plan', '1');
   const search = query.toString();
   return search ? `${path}?${search}` : path;

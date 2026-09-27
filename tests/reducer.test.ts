@@ -21,9 +21,13 @@ import {
   openTenderRecord,
   platformTenders,
   sentRequirementIds,
+  baseSourceOf,
+  catalogPin,
+  sourceAfterImport,
   type Action,
   type AppState
 } from '../src/state/reducer';
+import type { EstimateRow } from '../src/domain/estimateImport';
 import type { Catalog, EstimateRequest, Estimation, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
 import { NO_TOKENS, type DeskDraft, type ExtractedRequirement, type NewTenderInput } from '../src/domain/tender';
 
@@ -1169,5 +1173,236 @@ describe('tenders', () => {
     expect(findTender(state, '  ')).toBeNull();
     expect(openTenderRecord({ ...state, openTender: 'TND-1' })?.id).toBe('TND-1');
     expect(toPersisted(state).tenders).toHaveLength(2);
+  });
+});
+
+/* ------------------------------------------------------------ imports */
+
+const row = (n: number, over: Partial<EstimateRow> = {}): EstimateRow => ({
+  row: n + 1,
+  sourceId: '',
+  name: `Estimate ${n}`,
+  desc: '',
+  first: 10 * n,
+  repeat: null,
+  client: 'Nordic University',
+  bundleId: '',
+  area: '',
+  category: '',
+  subCategory: '',
+  form: '',
+  deploy: '',
+  integrations: '',
+  account: '',
+  limits: '',
+  note: '',
+  estBy: '',
+  estAt: '',
+  ...over
+});
+
+const onScreen = [
+  { id: 'B01', name: 'Commerce & Monetization' },
+  { id: 'B15', name: 'Platform Engineering & Integrations' }
+];
+
+describe('importing estimates from a workbook', () => {
+  const imported = (state: AppState, rows: EstimateRow[], file = 'nordic.xlsx'): AppState =>
+    reducer(state, { type: 'importEstimates', rows, file, catalogBundles: onScreen });
+
+  it('adds each row as an estimate on the platform in play, marked with the file it came from', () => {
+    const next = imported(workspace({ platform: 'moodle' }), [row(1), row(2)]);
+
+    expect(next.solutions.map((one) => one.id)).toEqual(['CS-01', 'CS-02']);
+    expect(next.solutions[0]).toMatchObject({ plat: 'moodle', imported: 'nordic.xlsx', client: 'Nordic University', first: 10, direct: false, from: '' });
+  });
+
+  it('prices a blank repeat at the first-delivery hours, as the desk does', () => {
+    const next = imported(workspace(), [row(3), row(4, { repeat: 12 })]);
+    expect(next.solutions.map((one) => one.repeat)).toEqual([30, 12]);
+  });
+
+  it('updates an earlier import instead of adding the same estimate twice', () => {
+    const once = imported(workspace(), [row(1, { sourceId: 'NU-1' }), row(2)]);
+    const twice = imported(once, [row(1, { sourceId: 'NU-1', first: 99 }), row(2, { first: 7 })]);
+
+    /* the ids stay, so a deal that selected CS-01 still has it selected, at the new hours */
+    expect(twice.solutions.map((one) => [one.id, one.first])).toEqual([
+      ['CS-01', 99],
+      ['CS-02', 7]
+    ]);
+  });
+
+  it('never overwrites an estimate the desk priced from a request, even with the same name', () => {
+    const desk = run(workspace(), { type: 'addSolution', input: { ...submission, name: 'Estimate 1', desc: '', first: 20, repeat: 6 } });
+    const next = imported(desk, [row(1, { client: '' })]);
+
+    expect(next.solutions).toHaveLength(2);
+    expect(next.solutions[0]).toMatchObject({ id: 'CS-01', first: 20, direct: true });
+    expect(next.solutions[1]).toMatchObject({ id: 'CS-02', imported: 'nordic.xlsx' });
+  });
+
+  it('files a row by its Bundle ID, then by its Area, and makes a bundle for an Area nobody has', () => {
+    const next = imported(workspace(), [
+      row(1, { bundleId: 'b15' }),
+      row(2, { area: 'commerce & monetization' }),
+      row(3, { area: 'Mobile Apps' }),
+      row(4, { area: 'mobile apps' })
+    ]);
+
+    expect(next.solutions.map((one) => one.bundleId)).toEqual(['B15', 'B01', 'CB-01', 'CB-01']);
+    expect(next.bundles).toEqual([expect.objectContaining({ id: 'CB-01', name: 'Mobile Apps', plat: 'openedx', imported: 'nordic.xlsx' })]);
+  });
+
+  it('puts a row with no bundle and no area in Unassigned, for the desk to file', () => {
+    const next = imported(workspace(), [row(1)]);
+    expect(next.solutions[0]?.bundleId).toBe('CX');
+    expect(next.bundles).toHaveLength(0);
+  });
+
+  it('keeps the desk\'s filing when the same row comes in again without a bundle', () => {
+    const filed = run(imported(workspace(), [row(1)]), { type: 'moveSolutions', ids: ['CS-01'], bundleId: 'B15' });
+    const again = imported(filed, [row(1, { first: 11 })]);
+
+    expect(again.solutions[0]).toMatchObject({ bundleId: 'B15', first: 11 });
+  });
+
+  it('does nothing for an empty import', () => {
+    const state = workspace();
+    expect(imported(state, [])).toBe(state);
+  });
+});
+
+describe('undoing an import', () => {
+  const state = run(
+    workspace({ bundles: [{ id: 'CB-01', plat: 'openedx', name: 'Compliance', pitch: '', offerWhen: '', pairsWith: null, at: '' }] }),
+    { type: 'importEstimates', rows: [row(1, { area: 'Mobile Apps' }), row(2)], file: 'nordic.xlsx', catalogBundles: onScreen },
+    { type: 'importEstimates', rows: [row(3, { client: 'Acme Academy' })], file: 'acme.xlsx', catalogBundles: onScreen },
+    { type: 'toggleSolution', id: 'CS-01' },
+    { type: 'toggleSolution', id: 'CS-03' }
+  );
+
+  it('removes only that workbook\'s estimates and the bundles its Area column made', () => {
+    const next = reducer(state, { type: 'removeImport', file: 'nordic.xlsx' });
+
+    expect(next.solutions.map((one) => one.id)).toEqual(['CS-03']);
+    /* the bundle the desk made by hand is not the import's to remove */
+    expect(next.bundles.map((one) => one.id)).toEqual(['CB-01']);
+  });
+
+  it('takes its estimates out of the open selection, like removing one does', () => {
+    const next = reducer(state, { type: 'removeImport', file: 'nordic.xlsx' });
+    expect(next.draft.sel).toEqual({ 'CS-03': true });
+  });
+
+  it('keeps a bundle the import made once the desk has filed other work in it', () => {
+    const desk = reducer(state, { type: 'addSolution', input: { ...submission, bundleId: 'CB-02', name: 'Push notifications', desc: '', first: 12, repeat: 4 } });
+    const next = reducer(desk, { type: 'removeImport', file: 'nordic.xlsx' });
+
+    expect(next.bundles.map((one) => one.id)).toEqual(['CB-01', 'CB-02']);
+  });
+
+  it('leaves another platform\'s import of the same file alone', () => {
+    const moodle = reducer(workspace({ platform: 'moodle' }), { type: 'importEstimates', rows: [row(1)], file: 'nordic.xlsx', catalogBundles: [] });
+    const both = { ...state, solutions: [...state.solutions, ...moodle.solutions.map((one) => ({ ...one, id: 'CS-09' }))] };
+    const next = reducer(both, { type: 'removeImport', file: 'nordic.xlsx' });
+
+    expect(next.solutions.map((one) => [one.id, one.plat])).toEqual([
+      ['CS-03', 'openedx'],
+      ['CS-09', 'moodle']
+    ]);
+  });
+
+  it('does nothing for a file it never imported', () => {
+    expect(reducer(state, { type: 'removeImport', file: 'nothing.xlsx' })).toBe(state);
+  });
+});
+
+describe('filing estimates under a bundle', () => {
+  const state = reducer(workspace(), { type: 'importEstimates', rows: [row(1), row(2)], file: 'nordic.xlsx', catalogBundles: onScreen });
+
+  it('moves the named estimates and nothing else', () => {
+    const next = reducer(state, { type: 'moveSolutions', ids: ['CS-02'], bundleId: 'B01' });
+    expect(next.solutions.map((one) => one.bundleId)).toEqual(['CX', 'B01']);
+  });
+
+  it('refuses a move to no bundle at all', () => {
+    expect(reducer(state, { type: 'moveSolutions', ids: ['CS-01'], bundleId: '' })).toBe(state);
+  });
+});
+
+describe('where the catalog came from after a bundles workbook', () => {
+  const file = { name: 'Mobile bundles.xlsx', hash: 'h-new' };
+
+  it('starts the record again from the file when the catalog is replaced', () => {
+    expect(sourceAfterImport({ source: 'auto', name: 'https://edly.example/catalog-source.xlsx', hash: 'h-served' }, file, 'replace', '2026-09-27')).toEqual({
+      source: 'file',
+      name: 'Mobile bundles.xlsx',
+      hash: 'h-new',
+      at: '2026-09-27'
+    });
+  });
+
+  it('lists an added file beside what the catalog was loaded from, rather than claiming the whole catalog came from it', () => {
+    const added = sourceAfterImport({ source: 'auto', name: 'https://edly.example/catalog-source.xlsx', hash: 'h-served' }, file, 'add', '2026-09-27');
+    const again = sourceAfterImport(added, { name: 'Analytics.xlsx', hash: 'h-3' }, 'add', '2026-09-28');
+
+    expect(added).toMatchObject({ source: 'file', name: 'catalog-source.xlsx', added: ['Mobile bundles.xlsx'] });
+    /* the served sheet's hash stays, so the "newer sheet" dot only lights when that sheet changes */
+    expect(again).toMatchObject({ hash: 'h-served', added: ['Mobile bundles.xlsx', 'Analytics.xlsx'] });
+    expect(catalogSourceLabel(workspace({ loadedCatalogs: { openedx: { meta: { title: '', subtitle: '', compiled: '', totals: { features: 0, buildHrs: null, firstHrs: null, repeatHrs: null, saved: null, noEstimate: 0, inDev: 0 }, notes: [] }, bundles: [] } }, catalogSource: again }))).toBe(
+      'loaded from catalog-source.xlsx, plus Mobile bundles.xlsx, Analytics.xlsx'
+    );
+  });
+
+  it('treats adding to nothing as loading the file', () => {
+    expect(sourceAfterImport(null, file, 'add', '2026-09-27')).toEqual({ source: 'file', name: 'Mobile bundles.xlsx', hash: 'h-new', at: '2026-09-27' });
+  });
+
+  it('describes the base of this platform, not the one the workspace last loaded', () => {
+    /* catalogSource is kept once per workspace, so on Moodle it can describe the Open edX sheet */
+    const moodle = workspace({ platform: 'moodle', catalogSource: { source: 'auto', name: 'catalog-source.xlsx' } });
+    expect(baseSourceOf(moodle)).toEqual({ source: 'file', name: 'the benchmark set' });
+    expect(baseSourceOf(workspace({ platform: 'nonesuch' }))).toBeNull();
+  });
+});
+
+describe('an imported catalog stays pinned', () => {
+  const meta = { title: 'Mine', subtitle: '', compiled: '', totals: { features: 0, buildHrs: null, firstHrs: null, repeatHrs: null, saved: null, noEstimate: 0, inDev: 0 }, notes: [] };
+  const imported: Catalog = { meta: { ...meta, loaded: { name: 'catalog-source.xlsx', hash: 'h-served', at: '2026-09-27', added: ['Accessibility.xlsx'] } }, bundles: [] };
+  const served: Catalog = { meta, bundles: [] };
+
+  it('through the platform choice every reload makes, so the served sheet does not replace it', () => {
+    /* A reload starts with no platform and a deep link chooses one, which clears the workspace's
+       catalog source. The pin used to live only there, so an imported catalog was replaced by the
+       served sheet on every visit. */
+    const reloaded = reducer(workspace({ platform: '', loadedCatalogs: { openedx: imported }, catalogSource: { source: 'file', name: 'catalog-source.xlsx' } }), {
+      type: 'choosePlatform',
+      practice: 'edtech',
+      platform: 'openedx'
+    });
+
+    expect(catalogPin(reloaded.loadedCatalogs, reloaded.catalogSource, 'openedx')).toEqual({ pinned: true, hash: 'h-served' });
+    expect(catalogSourceLabel(reloaded)).toBe('loaded from catalog-source.xlsx, plus Accessibility.xlsx');
+    expect(baseSourceOf(reloaded)).toMatchObject({ source: 'file', name: 'catalog-source.xlsx', added: ['Accessibility.xlsx'] });
+  });
+
+  it('and through a visit to another platform', () => {
+    const away = run(
+      workspace({ loadedCatalogs: { openedx: imported } }),
+      { type: 'choosePlatform', practice: 'edtech', platform: 'moodle' },
+      { type: 'choosePlatform', practice: 'edtech', platform: 'openedx' }
+    );
+    expect(catalogPin(away.loadedCatalogs, away.catalogSource, 'openedx').pinned).toBe(true);
+  });
+
+  it('while a catalog the app read from the served sheet is not', () => {
+    expect(catalogPin({ openedx: served }, { source: 'auto', name: 'catalog-source.xlsx', hash: 'h1' }, 'openedx')).toEqual({ pinned: false, hash: 'h1' });
+    expect(catalogPin({}, null, 'openedx')).toEqual({ pinned: false });
+  });
+
+  it('keeps honouring the pins recorded before the catalog carried its own', () => {
+    expect(catalogPin({ openedx: served }, { source: 'file', name: 'old.xlsx', hash: 'h-old' }, 'openedx')).toEqual({ pinned: true, hash: 'h-old' });
+    expect(catalogPin({}, { source: 'builtin' }, 'openedx').pinned).toBe(true);
   });
 });

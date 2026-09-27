@@ -191,6 +191,14 @@ describe('reading the numbers', () => {
     expect(catalog.bundles[0]?.items[1]?.status).toBe('In Development');
   });
 
+  it('reads a status whatever its case, so "in development" is not sold as shipped', async () => {
+    const { catalog } = await book({
+      'All Components': [ITEM_HEADER, item('EDU-001', 'Building', 'in development', 8, 2, 20, 'B01'), item('EDU-002', 'Priced', ' ESTIMATION ', 8, 2, 20, 'B01')],
+      'Bundle Catalog': [BUNDLE_HEADER, ['B01', 'Core', 'Pitch', '', 2]]
+    });
+    expect(catalog.bundles[0]?.items.map((one) => one.status)).toEqual(['In Development', 'Estimation']);
+  });
+
   it('falls back to Production for a status nobody recognises', async () => {
     const { catalog } = await book({
       'All Components': [ITEM_HEADER, item('EDU-001', 'Stripe', 'Shipped?', 5, 1, 16, 'B01')],
@@ -237,6 +245,22 @@ describe('rows a human left behind', () => {
       'Bundle Catalog': [BUNDLE_HEADER, ['B01', 'Core', 'Pitch', '', 1]]
     });
 
+    expect(catalog.bundles[0]?.items.map((one) => one.id)).toEqual(['EDU-001']);
+  });
+
+  it('never reads a template example row as a solution or a bundle', async () => {
+    const { catalog } = await book({
+      'All Components': [ITEM_HEADER, item('EXAMPLE-1', 'Branded app', 'Production', 40, 10, 320, 'EXAMPLE'), item('EDU-001', 'Stripe', 'Production', 5, 1, 16, 'B01')],
+      'Bundle Catalog': [BUNDLE_HEADER, ['EXAMPLE', 'Mobile Apps (example)', 'Pitch', '', 1], ['B01', 'Core', 'Pitch', '', 1]],
+      'B01 Core': [['Solution ID', 'Feature', 'First Delivery Hrs'], ['EDU-001', 'Stripe', 5], ['example-2', 'Offline downloads', '']]
+    });
+    expect(catalog.bundles.map((bundle) => [bundle.id, bundle.items.map((one) => one.id)])).toEqual([['B01', ['EDU-001']]]);
+  });
+
+  it('skips a note on a bundle sheet too, rather than listing it as a solution', async () => {
+    const { catalog } = await book({
+      'B01 Core': [['Solution ID', 'Feature', 'First Delivery Hrs'], ['EDU-001', 'Stripe', 5], ['Notes:', 'ask Sam about the gateway fees', '']]
+    });
     expect(catalog.bundles[0]?.items.map((one) => one.id)).toEqual(['EDU-001']);
   });
 

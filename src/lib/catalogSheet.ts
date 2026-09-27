@@ -15,29 +15,29 @@ export interface ImportResult {
   warnings: string[];
 }
 
-const DASH = /^[—–-]$/;
+export const DASH = /^[—–-]$/;
 
-const text = (value: unknown): string | null => {
+export const text = (value: unknown): string | null => {
   const s = String(value ?? '').trim();
   return !s || DASH.test(s) ? null : s;
 };
 
-const num = (value: unknown): number | null => {
+export const num = (value: unknown): number | null => {
   const s = String(value ?? '').trim();
   if (!s || DASH.test(s)) return null;
   const parsed = Number.parseFloat(s.replace(/,/g, '').replace(/[^\d.eE+-]/g, ''));
   return Number.isNaN(parsed) ? null : parsed;
 };
 
-const normalise = (value: unknown): string =>
+export const normalise = (value: unknown): string =>
   String(value ?? '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
-type Aliases = Record<string, string[]>;
+export type Aliases = Record<string, string[]>;
 
-const ITEM_ALIASES: Aliases = {
+export const ITEM_ALIASES: Aliases = {
   id: ['solution id', 'id'],
   name: ['feature', 'solution', 'name'],
   desc: ['what it does', 'description'],
@@ -58,7 +58,7 @@ const ITEM_ALIASES: Aliases = {
   subCategory: ['sub category']
 };
 
-const BUNDLE_ALIASES: Aliases = {
+export const BUNDLE_ALIASES: Aliases = {
   id: ['bundle id'],
   name: ['bundle'],
   pitch: ['what it delivers', 'elevator pitch', 'pitch'],
@@ -76,63 +76,82 @@ const BUNDLE_ALIASES: Aliases = {
   price: ['bundle list price']
 };
 
-interface HeaderMap {
+export interface HeaderMap {
   row: number;
   map: Record<string, number>;
 }
 
 /**
- * Locate the header row and map field → column index.
- * Exact header matches are claimed first, so "Bundle ID" cannot be stolen by the "Bundle" alias.
+ * Map one row's cells to fields, as a header.
+ * Exact matches are claimed first, so "Bundle ID" cannot be stolen by the "Bundle" alias.
  */
-function findHeader(table: SheetTable, aliases: Aliases, required: string[]): HeaderMap | null {
-  for (let r = 0; r < table.length; r++) {
-    const row = table[r];
-    if (!row) continue;
-    const byName = new Map<string, number>();
-    row.forEach((cell, index) => {
-      const key = normalise(cell);
-      if (key && !byName.has(key)) byName.set(key, index);
-    });
-    if (byName.size === 0) continue;
+export function mapHeaderRow(row: readonly string[] | undefined, aliases: Aliases): Record<string, number> {
+  const map: Record<string, number> = {};
+  if (!row) return map;
+  const byName = new Map<string, number>();
+  row.forEach((cell, index) => {
+    const key = normalise(cell);
+    if (key && !byName.has(key)) byName.set(key, index);
+  });
+  if (byName.size === 0) return map;
 
-    const map: Record<string, number> = {};
-    const taken = new Set<number>();
-    for (const field of Object.keys(aliases)) {
-      for (const alias of aliases[field]!) {
-        const index = byName.get(alias);
-        if (index !== undefined && !taken.has(index)) {
-          map[field] = index;
-          taken.add(index);
-          break;
-        }
+  const taken = new Set<number>();
+  for (const field of Object.keys(aliases)) {
+    for (const alias of aliases[field]!) {
+      const index = byName.get(alias);
+      if (index !== undefined && !taken.has(index)) {
+        map[field] = index;
+        taken.add(index);
+        break;
       }
     }
-    for (const field of Object.keys(aliases)) {
-      if (map[field] !== undefined) continue;
-      for (const alias of aliases[field]!) {
-        const hit = [...byName.entries()].find(([name, index]) => !taken.has(index) && name.startsWith(alias));
-        if (hit) {
-          map[field] = hit[1];
-          taken.add(hit[1]);
-          break;
-        }
+  }
+  for (const field of Object.keys(aliases)) {
+    if (map[field] !== undefined) continue;
+    for (const alias of aliases[field]!) {
+      const hit = [...byName.entries()].find(([name, index]) => !taken.has(index) && name.startsWith(alias));
+      if (hit) {
+        map[field] = hit[1];
+        taken.add(hit[1]);
+        break;
       }
     }
+  }
+  return map;
+}
+
+/** Locate the header row and map field to column index. */
+export function findHeader(table: SheetTable, aliases: Aliases, required: string[]): HeaderMap | null {
+  for (let r = 0; r < table.length; r++) {
+    const map = mapHeaderRow(table[r], aliases);
+    if (Object.keys(map).length === 0) continue;
     if (required.every((field) => map[field] !== undefined)) return { row: r, map };
   }
   return null;
 }
 
-const cell = (row: string[] | undefined, map: Record<string, number>, field: string): string => {
+export const cell = (row: string[] | undefined, map: Record<string, number>, field: string): string => {
   const index = map[field];
   if (index === undefined || !row) return '';
   return row[index] ?? '';
 };
 
-const STATUSES: SolutionStatus[] = ['Production', 'In Development', 'Estimation', 'Sample'];
-const asStatus = (value: string | null): SolutionStatus =>
-  STATUSES.includes(value as SolutionStatus) ? (value as SolutionStatus) : 'Production';
+export const STATUSES: readonly SolutionStatus[] = ['Production', 'In Development', 'Estimation', 'Sample'];
+
+/** A status as typed, matched without regard to case or spacing; null for one nobody recognises. */
+export const readStatus = (value: string | null): SolutionStatus | null =>
+  STATUSES.find((status) => normalise(status) === normalise(value)) ?? null;
+
+const asStatus = (value: string | null): SolutionStatus => readStatus(value) ?? 'Production';
+
+/** What a solution id looks like: two or more letters, then a number (EDU-071, CS-04). */
+export const SOLUTION_ID = /^[A-Z]{2,}-?\d/i;
+
+/**
+ * The templates' example rows carry an id like EXAMPLE-1, and are never read as real ones. The id
+ * is the marker rather than the wording, so a real feature called "Example ..." still loads.
+ */
+export const EXAMPLE_ID = /^\s*example\b/i;
 
 function buildSolution(row: string[], map: Record<string, number>, fallback?: Partial<Solution>): Solution | null {
   const id = text(cell(row, map, 'id')) ?? fallback?.id ?? null;
@@ -188,7 +207,11 @@ interface BundleMeta {
 }
 
 export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Promise<ImportResult> {
-  const workbook: Workbook = await readWorkbook(input);
+  return catalogFromWorkbook(await readWorkbook(input));
+}
+
+/** The same, from a workbook already read, so the import checks and the parse share one unzip. */
+export function catalogFromWorkbook(workbook: Workbook): ImportResult {
   const warnings: string[] = [];
   const sheetNames = Object.keys(workbook);
   if (sheetNames.length === 0) throw new Error('No worksheets found in that workbook.');
@@ -201,13 +224,13 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
   if (allName) {
     const table = workbook[allName]!;
     const header = findHeader(table, ITEM_ALIASES, ['id', 'name']);
-    if (!header) warnings.push('“All Components” has no recognisable header row — bundle sheets used instead.');
+    if (!header) warnings.push('The All Components sheet has no header row we recognise, so the bundle sheets were used instead.');
     else {
       for (let r = header.row + 1; r < table.length; r++) {
         const row = table[r];
         if (!row) continue;
         const solution = buildSolution(row, header.map);
-        if (!solution || !/^[A-Z]{2,}-?\d/i.test(solution.id)) continue;
+        if (!solution || EXAMPLE_ID.test(solution.id) || !SOLUTION_ID.test(solution.id)) continue;
         byId.set(solution.id, {
           ...solution,
           _bundleId: text(cell(row, header.map, 'bundleId')),
@@ -217,7 +240,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
       }
     }
   } else {
-    warnings.push('No “All Components” sheet — bundle sheets used on their own.');
+    warnings.push('There is no All Components sheet, so the bundle sheets were used on their own.');
   }
 
   /* ---- Bundle Catalog: prose and totals ---- */
@@ -248,6 +271,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
           if (name && /total/i.test(name)) totalRow = { row, map: header.map };
           continue;
         }
+        if (EXAMPLE_ID.test(id)) continue;
         meta.set(id, {
           id,
           name: name ?? id,
@@ -268,7 +292,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
         bundleOrder.push(id);
       }
     } else {
-      warnings.push('“Bundle Catalog” has no recognisable header row — bundle descriptions may be missing.');
+      warnings.push('The Bundle Catalog sheet has no header row we recognise, so bundle descriptions may be missing.');
     }
     for (const row of table) {
       const first = row?.[0]?.trim();
@@ -278,7 +302,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
       notes.push(note);
     }
   } else {
-    warnings.push('No “Bundle Catalog” sheet — bundle pitches unavailable.');
+    warnings.push('There is no Bundle Catalog sheet, so bundles have no pitch unless their own sheets carry one.');
   }
 
   /* ---- per-bundle detail sheets ---- */
@@ -290,7 +314,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
     const table = workbook[sheetName]!;
     const header = findHeader(table, ITEM_ALIASES, ['id', 'name']);
     if (!header) {
-      warnings.push(`Sheet “${sheetName}” skipped — no header row found.`);
+      warnings.push(`Sheet "${sheetName}" was skipped: it has no header row.`);
       continue;
     }
     const items: Solution[] = [];
@@ -298,7 +322,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
       const row = table[r];
       if (!row) continue;
       const rawId = text(cell(row, header.map, 'id'));
-      if (!rawId || /total/i.test(rawId)) continue;
+      if (!rawId || /total/i.test(rawId) || EXAMPLE_ID.test(rawId) || !SOLUTION_ID.test(rawId)) continue;
       const solution = buildSolution(row, header.map, byId.get(rawId));
       if (solution) items.push(solution);
     }
@@ -388,7 +412,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
       bundles.push({
         id: key,
         name,
-        pitch: 'Added to the master sheet — no bundle sheet written yet.',
+        pitch: 'Added to the master sheet, with no bundle sheet written yet.',
         offerWhen: '',
         featureCount: items.length,
         solutionIds: null,
@@ -403,13 +427,13 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
         items
       });
       warnings.push(
-        `${items.length} new solution${items.length === 1 ? '' : 's'} under “${key}” had no bundle sheet — grouped as “${name}”.`
+        `${items.length} new solution${items.length === 1 ? '' : 's'} under ${key} had no bundle sheet, so ${items.length === 1 ? 'it was' : 'they were'} grouped as "${name}".`
       );
     }
   }
 
   const every = bundles.flatMap((bundle) => bundle.items);
-  if (every.length === 0) throw new Error('No solutions found in that workbook — is it the Open edX Solution Bundles sheet?');
+  if (every.length === 0) throw new Error('No solutions found in that workbook. Is it the Solution Bundles sheet?');
 
   const recordedAll = every.filter((it) => it.first !== null && it.build !== null);
   const sumFirst = recordedAll.reduce((total, it) => total + (it.first ?? 0), 0);
@@ -443,7 +467,7 @@ export async function parseCatalogWorkbook(input: ArrayBuffer | Uint8Array): Pro
         subtitle: subtitle || `${totals.features} solutions across ${bundles.length} bundles.`,
         compiled,
         totals,
-        notes: notes.length > 0 ? notes : ['Imported from the master sales sheet — hours are the delivery team’s recorded engineering estimates.']
+        notes: notes.length > 0 ? notes : ['Imported from the master sales sheet. Hours are the delivery team’s recorded engineering estimates.']
       },
       bundles
     }

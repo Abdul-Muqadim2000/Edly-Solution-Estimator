@@ -4,7 +4,10 @@ import { useApp } from '@/state/AppProvider';
 import type { AppState } from '@/state/reducer';
 import { platformEstimations, platformRequests, requestsFor } from '@/state/reducer';
 import { calcEstimate } from '@/domain/estimate';
-import { categories, guessBundle, subCategories } from '@/domain/catalog';
+import { categories, CX_BUNDLE_ID, guessBundle, subCategories } from '@/domain/catalog';
+import { importedFiles } from '@/domain/estimateImport';
+import { downloadTemplate } from '@/lib/catalogImport';
+import { ImportModal } from '@/components/ImportModal';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
 import { hours, hours1, money, plural, today } from '@/lib/format';
 import { AppHeader } from '@/components/AppHeader';
@@ -349,7 +352,7 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
 
   const bundleOptions = [
     ...catalog.bundles.map((bundle) => ({ value: bundle.id, label: `${bundle.id} · ${bundle.name}` })),
-    ...(catalog.bundles.some((bundle) => bundle.id === 'CX') ? [] : [{ value: 'CX', label: 'CX · Estimated solutions (new group)' }])
+    ...(catalog.bundles.some((bundle) => bundle.id === 'CX') ? [] : [{ value: 'CX', label: 'CX · Unassigned, to file later' }])
   ];
 
   return (
@@ -456,15 +459,15 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         {done ? (
           <span style={{ fontSize: 12, fontWeight: 600, color: color.brandInk }}>
             Estimated {hours(Number(request.est))} h · by {request.estBy ?? 'estimator'}
-            {request.estAt ? ` · ${request.estAt}` : ''} — live in the sales total
-            {request.csId ? ` · reusable as ${request.csId} in ${request.catBundle || 'CX'}, tagged Estimation` : ''}
+            {request.estAt ? ` · ${request.estAt}` : ''}, live in the sales total
+            {request.csId ? ` · reusable as ${request.csId} in ${request.catBundle || 'CX'}, listed under Estimates` : ''}
           </span>
         ) : null}
       </Row>
       <div style={{ fontSize: 11, color: color.faint, lineHeight: 1.55, marginTop: 8 }}>
-        On submit this becomes a reusable catalog solution in the bundle you pick, tagged{' '}
-        <span style={{ fontWeight: 700, color: color.violet }}>Estimation</span> — priced and scoped, not yet engineered — so the
-        next client can select it without re-requesting.
+        On submit this becomes a reusable catalog solution in the bundle you pick, listed under{' '}
+        <span style={{ fontWeight: 700, color: color.violet }}>Estimates</span>: priced and scoped, not built yet, so the next
+        client can select it without asking again.
       </div>
     </div>
   );
@@ -768,17 +771,25 @@ function AddToCatalog(): JSX.Element {
   const [bundleError, setBundleError] = useState('');
   const [solutionAdded, setSolutionAdded] = useState(false);
   const [bundleAdded, setBundleAdded] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  /* removing a whole import takes two clicks: it can be dozens of estimates */
+  const [confirmRemove, setConfirmRemove] = useState('');
 
   const bundleOptions = useMemo(
     () => [
       ...catalog.bundles.map((entry) => ({ value: entry.id, label: `${entry.id} · ${entry.name}` })),
-      ...(catalog.bundles.some((entry) => entry.id === 'CX') ? [] : [{ value: 'CX', label: 'CX · Estimated solutions (new group)' }])
+      ...(catalog.bundles.some((entry) => entry.id === 'CX') ? [] : [{ value: 'CX', label: 'CX · Unassigned, to file later' }])
     ],
     [catalog.bundles]
   );
 
   const ownBundles = state.bundles.filter((entry) => (entry.plat || 'openedx') === (state.platform || 'openedx'));
   const added = state.solutions.filter((entry) => (entry.plat || 'openedx') === (state.platform || 'openedx'));
+  const imports = importedFiles(state.solutions, state.bundles, state.platform || 'openedx');
+  const filed = new Set(catalog.bundles.filter((entry) => entry.id !== CX_BUNDLE_ID).map((entry) => entry.id));
+  const unassigned = added.filter((entry) => !filed.has(entry.bundleId));
+  /* the ones waiting to be filed first, so the desk sees its to-do list without scrolling */
+  const listed = [...unassigned, ...added.filter((entry) => filed.has(entry.bundleId))];
 
   const addSolution = (): void => {
     const first = Number(solution.first);
@@ -846,10 +857,64 @@ function AddToCatalog(): JSX.Element {
       </datalist>
 
       <section style={{ background: color.surface, border: `1px solid ${color.hairline}`, borderRadius: radius.lg, padding: '18px 22px' }}>
+        <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>Import estimates from Excel</div>
+        <div style={{ fontSize: 12.5, color: color.muted, lineHeight: 1.6, marginTop: 3, maxWidth: 640 }}>
+          Work priced for earlier clients, one row each on the estimates template. Rows with an Area land in a bundle of that name;
+          rows without one go to Unassigned, below, for you to file. Importing the same file again updates it rather than adding it
+          twice.
+        </div>
+        <Row gap={8} style={{ marginTop: 12 }}>
+          <Button tone="primary" onClick={() => setImportOpen(true)} style={{ borderRadius: 9, padding: '11px 18px', fontSize: 12, background: color.violet }} hover={{ background: color.ink }}>
+            Import from Excel
+          </Button>
+          <Button size="sm" onClick={() => downloadTemplate('estimates')} hover={{ borderColor: color.violet, color: color.violet }}>
+            Download the estimates template
+          </Button>
+        </Row>
+        {imports.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            {imports.map((entry) => (
+              <Row key={entry.file} gap={10} style={{ borderTop: `1px solid ${color.hairlineSoft}`, padding: '10px 0 8px' }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600, wordBreak: 'break-all' }}>{entry.file}</span>
+                <span style={{ fontSize: 11, color: color.faint }}>
+                  {plural(entry.estimates, 'estimate')}
+                  {entry.bundles > 0 ? ` · ${plural(entry.bundles, 'bundle')} made from its Area column` : ''}
+                </span>
+                <Spacer />
+                {confirmRemove === entry.file ? (
+                  <>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: color.redInk }}>Remove {plural(entry.estimates, 'estimate')}?</span>
+                    <Button
+                      size="sm"
+                      tone="danger"
+                      onClick={() => {
+                        dispatch({ type: 'removeImport', file: entry.file });
+                        setConfirmRemove('');
+                      }}
+                    >
+                      Yes, remove
+                    </Button>
+                    <Button size="sm" tone="ghost" onClick={() => setConfirmRemove('')}>
+                      Keep
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" tone="danger" title="Remove every estimate this workbook brought in" onClick={() => setConfirmRemove(entry.file)}>
+                    Remove import
+                  </Button>
+                )}
+              </Row>
+            ))}
+          </div>
+        ) : null}
+      </section>
+      {importOpen ? <ImportModal initialKind="estimates" onClose={() => setImportOpen(false)} /> : null}
+
+      <section style={{ background: color.surface, border: `1px solid ${color.hairline}`, borderRadius: radius.lg, padding: '18px 22px' }}>
         <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>New feature estimation</div>
         <div style={{ fontSize: 12.5, color: color.muted, lineHeight: 1.6, marginTop: 3, maxWidth: 620 }}>
-          Price something the team knows how to build without waiting for sales to request it. It joins the catalog tagged{' '}
-          <span style={{ fontWeight: 700, color: color.violet }}>Estimation</span> and is selectable in every future estimation.
+          Price something the team knows how to build without waiting for sales to request it. It joins the catalog under{' '}
+          <span style={{ fontWeight: 700, color: color.violet }}>Estimates</span> and is selectable in every future estimation.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginTop: 14 }}>
           <Field label="Custom feature name" value={solution.name} onChange={set('name')} placeholder="e.g. Blue-green deployment pipeline" />
@@ -942,30 +1007,53 @@ function AddToCatalog(): JSX.Element {
       </section>
 
       <section style={{ background: color.surface, border: `1px solid ${color.hairline}`, borderRadius: radius.lg, padding: '18px 22px' }}>
-        <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>Estimated solutions in the catalog</div>
+        <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>Estimates in the catalog</div>
+        {unassigned.length > 0 ? (
+          <div style={{ marginTop: 10 }}>
+            <Banner tone="warn">
+              {plural(unassigned.length, 'estimate')} {unassigned.length === 1 ? 'is' : 'are'} not filed under a bundle yet. Pick one for
+              each below; add a bundle above if none fits.
+            </Banner>
+          </div>
+        ) : null}
         {added.length === 0 ? (
           <div style={{ fontSize: 12.5, color: color.muted, marginTop: 8 }}>
-            Nothing yet. Anything you estimate here or in the request queue shows up in this list.
+            Nothing yet. Anything you estimate here, in the request queue or through an import shows up in this list.
           </div>
         ) : (
-          added.map((entry) => (
-            <Row key={entry.id} gap={10} style={{ borderTop: `1px solid ${color.hairlineSoft}`, padding: '10px 0 8px', marginTop: 4 }}>
-              <Chip bg={color.violetWash} co={color.violet}>
-                {entry.id}
-              </Chip>
-              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{entry.name}</span>
-              <span style={{ fontSize: 11, color: color.faint }}>
-                {catalog.bundles.find((candidate) => candidate.id === entry.bundleId)?.name ?? entry.bundleId} ·{' '}
-                {entry.direct ? 'Added here' : `From request ${entry.from || '—'}`}
-              </span>
-              <Spacer />
-              <Mono size={11}>
-                {hours(entry.first)} h first · {hours(entry.repeat)} h repeat
-              </Mono>
-              <Button size="sm" tone="danger" title="Remove from the catalog" onClick={() => dispatch({ type: 'removeSolution', id: entry.id })}>
-                Remove
-              </Button>
-            </Row>
+          listed.map((entry) => (
+            <div key={entry.id} style={{ borderTop: `1px solid ${color.hairlineSoft}`, padding: '10px 0 8px', marginTop: 4, display: 'grid', gap: 7 }}>
+              <Row gap={10}>
+                <Chip bg={color.violetWash} co={color.violet}>
+                  {entry.id}
+                </Chip>
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{entry.name}</span>
+                <span style={{ fontSize: 11, color: color.faint }}>
+                  {entry.imported
+                    ? `Imported from ${entry.imported}${entry.client ? `, for ${entry.client}` : ''}`
+                    : entry.direct
+                      ? 'Added here'
+                      : `From request ${entry.from || '—'}`}
+                </span>
+              </Row>
+              <Row gap={10}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.muted }}>Filed under</span>
+                <Select
+                  value={filed.has(entry.bundleId) ? entry.bundleId : CX_BUNDLE_ID}
+                  options={bundleOptions}
+                  hint="The bundle this estimate is filed under"
+                  onChange={(value) => dispatch({ type: 'moveSolutions', ids: [entry.id], bundleId: value })}
+                  style={{ width: 'auto', maxWidth: 280, padding: '6px 8px', fontSize: 12, borderRadius: 8 }}
+                />
+                <Spacer />
+                <Mono size={11}>
+                  {hours(entry.first)} h first · {hours(entry.repeat)} h repeat
+                </Mono>
+                <Button size="sm" tone="danger" title="Remove from the catalog" onClick={() => dispatch({ type: 'removeSolution', id: entry.id })}>
+                  Remove
+                </Button>
+              </Row>
+            </div>
           ))
         )}
       </section>

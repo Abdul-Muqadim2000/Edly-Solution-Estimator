@@ -410,6 +410,52 @@ describe('spreadsheet round-trip', () => {
     expect(back.bundles[0]?.name).toBe('Deployment & Infrastructure');
   });
 
+  it('keeps where an imported estimate came from: the file, its own id, the client and who priced it', async () => {
+    /* the file name is what "Remove import" removes by, and the Estimate ID is what a second
+       import of the same file updates by, so losing either on reload breaks both */
+    const original = sample();
+    original.solutions.push({
+      ...original.solutions[1]!,
+      id: 'CS-03',
+      plat: 'openedx',
+      bundleId: 'CB-02',
+      from: '',
+      direct: false,
+      imported: 'Nordic estimates.xlsx',
+      sourceId: 'NU-014',
+      client: 'Nordic University',
+      estBy: 'Estimation desk'
+    });
+    original.bundles.push({ id: 'CB-02', plat: 'openedx', name: 'Mobile Apps', pitch: '', offerWhen: '', pairsWith: null, at: '2026-09-27', imported: 'Nordic estimates.xlsx' });
+
+    const back = await roundTrip(original);
+    expect(back.solutions[2]).toEqual(original.solutions[2]);
+    expect(back.bundles[1]).toEqual(original.bundles[1]);
+    /* and one priced in the app comes back without any of them, not with blanks */
+    expect(back.solutions[0]).not.toHaveProperty('imported');
+    expect(back.solutions[0]).not.toHaveProperty('sourceId');
+    expect(back.bundles[0]).not.toHaveProperty('imported');
+    expect(storedForm(original)).toEqual(back);
+  });
+
+  it('reads solutions and bundles sheets written before the import columns existed', async () => {
+    const solutionColumns = COLUMNS.solutions.filter((name) => !['importedFrom', 'sourceId', 'client', 'estimatedBy'].includes(name));
+    const bundleColumns = COLUMNS.bundles.filter((name) => name !== 'importedFrom');
+    const back = sheetsToState(
+      await readWorkbook(
+        writeWorkbook({
+          [SHEETS.solutions]: [solutionColumns, ['CS-01', 'openedx', 'B05', 'Proctoring', '', 48, 12, '', '', '', '', '', '', '', '', 'RQ-01', '', '2026-09-12', '']],
+          [SHEETS.bundles]: [bundleColumns, ['CB-01', 'openedx', 'Compliance', '', '', '', '2026-09-12']]
+        })
+      )
+    );
+
+    expect(back.solutions[0]).toMatchObject({ id: 'CS-01', first: 48, from: 'RQ-01' });
+    expect(back.solutions[0]?.imported).toBeUndefined();
+    expect(back.bundles[0]).toMatchObject({ id: 'CB-01', name: 'Compliance' });
+    expect(back.bundles[0]?.imported).toBeUndefined();
+  });
+
   it('keeps the words on the Excel sheet: contact, comments and every line note', async () => {
     const back = await roundTrip(sample());
     /* written by sales for one client, so they travel with the deal, blank lines and all */

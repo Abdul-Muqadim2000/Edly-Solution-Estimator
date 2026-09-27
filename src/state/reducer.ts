@@ -38,6 +38,7 @@ import {
   type NewTenderInput
 } from '@/domain/tender';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
+import { planEstimateImport, type EstimateRow } from '@/domain/estimateImport';
 import { nextId, today, uniqueSlug } from '@/lib/format';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
 
@@ -88,6 +89,17 @@ export const EMPTY_SNAPSHOT: EstimationSnapshot = {
 
 export type { DeskTab };
 
+/** Where the catalog in play came from. */
+export interface CatalogSource {
+  source: 'auto' | 'file' | 'builtin';
+  name?: string;
+  hash?: string;
+  at?: string;
+  warnings?: string[];
+  /** Bundles workbooks added on top of `name`, oldest first. */
+  added?: string[];
+}
+
 export interface AppState {
   ready: boolean;
   auth: Auth | null;
@@ -119,7 +131,7 @@ export interface AppState {
   /** Set when the catalog sheet could not be read — the UI must say so, not show an empty catalog. */
   catalogError: string | null;
   /** Where the catalog in play came from, for the Catalog panel. */
-  catalogSource: { source: 'auto' | 'file' | 'builtin'; name?: string; hash?: string; at?: string; warnings?: string[] } | null;
+  catalogSource: CatalogSource | null;
   /** A sheet is sitting beside the app that differs from the one in play. */
   autoAvail: boolean;
 
@@ -249,6 +261,10 @@ export type Action =
   | { type: 'removeSolution'; id: string }
   | { type: 'addBundle'; name: string; pitch: string; offerWhen: string }
   | { type: 'removeBundle'; id: string }
+  /** `catalogBundles`: the bundles on screen when the person clicked, which rows are filed under. */
+  | { type: 'importEstimates'; rows: EstimateRow[]; file: string; catalogBundles: { id: string; name: string }[] }
+  | { type: 'removeImport'; file: string }
+  | { type: 'moveSolutions'; ids: string[]; bundleId: string }
   | { type: 'setLoadedCatalog'; platform: string; catalog: Catalog | null; source: AppState['catalogSource'] }
   | { type: 'applyRoute'; route: Route }
   | { type: 'setAutoAvail'; available: boolean }
@@ -744,6 +760,48 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'removeBundle':
       return { ...state, bundles: state.bundles.filter((bundle) => bundle.id !== action.id) };
 
+    case 'importEstimates': {
+      if (action.rows.length === 0) return state;
+      const plan = planEstimateImport({
+        rows: action.rows,
+        file: action.file,
+        platform: platOf(state),
+        catalogBundles: action.catalogBundles,
+        solutions: state.solutions,
+        bundles: state.bundles,
+        today: today()
+      });
+      return { ...state, solutions: plan.solutions, bundles: plan.bundles };
+    }
+
+    /* Undoing an import takes its estimates out of every open selection, like removing one does,
+       and the bundles its Area column made, unless the desk has since filed something else there. */
+    case 'removeImport': {
+      const plat = platOf(state);
+      const mine = (one: { plat: string; imported?: string }): boolean => (one.plat || 'openedx') === plat && one.imported === action.file;
+      const gone = new Set(state.solutions.filter(mine).map((one) => one.id));
+      if (gone.size === 0) return state;
+      const solutions = state.solutions.filter((one) => !gone.has(one.id));
+      const occupied = new Set(solutions.map((one) => one.bundleId));
+      const sel = { ...state.draft.sel };
+      for (const id of gone) delete sel[id];
+      return {
+        ...state,
+        solutions,
+        bundles: state.bundles.filter((bundle) => !(mine(bundle) && !occupied.has(bundle.id))),
+        draft: { ...state.draft, sel }
+      };
+    }
+
+    case 'moveSolutions': {
+      const ids = new Set(action.ids);
+      if (!action.bundleId || ids.size === 0) return state;
+      return {
+        ...state,
+        solutions: state.solutions.map((one) => (ids.has(one.id) && one.bundleId !== action.bundleId ? { ...one, bundleId: action.bundleId } : one))
+      };
+    }
+
     case 'setCatalogError':
       return { ...state, catalogError: action.message };
 
@@ -1111,17 +1169,77 @@ export function findEstimation(state: AppState, slugOrId: string): Estimation | 
   return here.find((one) => (one.slug ?? '').toLowerCase() === key) ?? here.find((one) => one.id.toLowerCase() === key) ?? null;
 }
 
+const addedLabel = (source: { added?: string[] }): string => (source.added && source.added.length > 0 ? `, plus ${source.added.join(', ')}` : '');
+
+/**
+ * Whether the catalog stored for a platform is pinned against the served sheet, and the
+ * fingerprint a newer served sheet is compared with.
+ *
+ * An imported catalog carries its own record (`meta.loaded`), which survives the platform choice
+ * a reload makes. A pin in the workspace's source is still honoured for catalogs loaded before
+ * that record existed, though the next reload clears it as it always did.
+ */
+export function catalogPin(stored: Readonly<Record<string, Catalog>>, source: CatalogSource | null, platform: string): { pinned: boolean; hash?: string } {
+  const loaded = stored[platform]?.meta.loaded;
+  if (loaded) return loaded.hash ? { pinned: true, hash: loaded.hash } : { pinned: true };
+  const pinned = source?.source === 'file' || source?.source === 'builtin';
+  return source?.hash ? { pinned, hash: source.hash } : { pinned };
+}
+
+/** A path or URL's last part: the served sheet is recorded by its URL, and a label wants its name. */
+const fileName = (value: string): string => value.split(/[\\/]/).pop() || value;
+
+/**
+ * Where the catalog a bundles workbook would be added to came from, for this platform only.
+ * `catalogSource` is kept once for the workspace, so on a platform nothing was loaded for it
+ * describes some other platform's catalog; the base here is then the benchmark set, or nothing.
+ */
+export function baseSourceOf(state: AppState): CatalogSource | null {
+  const plat = platOf(state);
+  const loaded = state.loadedCatalogs[plat]?.meta.loaded;
+  if (loaded) return { source: 'file', ...loaded };
+  if (state.loadedCatalogs[plat]) return state.catalogSource;
+  return benchmarkCatalog(plat) ? { source: 'file', name: 'the benchmark set' } : null;
+}
+
+/**
+ * Where the catalog came from after a bundles workbook was imported.
+ *
+ * Replacing starts the record again from the file. Adding keeps what the catalog was loaded from
+ * and lists the file beside it, so the label reads "loaded from the master sheet, plus Mobile.xlsx"
+ * instead of claiming the whole catalog came from the last file. Either way the source is a file
+ * now, which pins it: the served sheet no longer replaces it on the next visit.
+ */
+export function sourceAfterImport(
+  previous: CatalogSource | null,
+  file: { name: string; hash: string },
+  mode: 'add' | 'replace',
+  at: string
+): CatalogSource {
+  if (mode === 'replace' || !previous || previous.source === 'builtin') return { source: 'file', name: file.name, hash: file.hash, at };
+  return {
+    source: 'file',
+    name: fileName(previous.name ?? 'the master sheet'),
+    /* the hash is what a newer served sheet is detected against, so it stays the base's */
+    hash: previous.hash ?? file.hash,
+    at,
+    added: [...(previous.added ?? []), file.name]
+  };
+}
+
 /**
  * Where the catalog in play came from, in the phrasing the rail and the catalog panel share.
  */
 export function catalogSourceLabel(state: AppState): string {
   const live = isLiveCatalog(state.platform);
   const source = state.catalogSource;
+  const loaded = state.loadedCatalogs[state.platform]?.meta.loaded;
+  if (loaded) return `loaded from ${loaded.name}${addedLabel(loaded)}`;
   if (!live) {
-    if (state.loadedCatalogs[state.platform]) return `loaded from ${source?.name ?? 'your sheet'}`;
+    if (state.loadedCatalogs[state.platform]) return `loaded from ${source?.name ?? 'your sheet'}${source ? addedLabel(source) : ''}`;
     return `industry benchmark set for ${findPlatform(state.platform)?.platform.name ?? 'this platform'}`;
   }
-  if (source?.source === 'file') return `loaded from ${source.name ?? 'your sheet'}`;
+  if (source?.source === 'file') return `loaded from ${source.name ?? 'your sheet'}${addedLabel(source)}`;
   if (source?.source === 'builtin') return 'built-in copy of the master sheet';
   if (source?.source === 'auto') return `live from ${source.name ?? 'the sheet beside the app'}`;
   return 'from the master sales sheet';
