@@ -39,6 +39,7 @@ import {
 } from '@/domain/tender';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
 import { planEstimateImport, type EstimateRow } from '@/domain/estimateImport';
+import type { ImportReview } from '@/domain/importReview';
 import { nextId, today, uniqueSlug } from '@/lib/format';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
 
@@ -261,8 +262,9 @@ export type Action =
   | { type: 'removeSolution'; id: string }
   | { type: 'addBundle'; name: string; pitch: string; offerWhen: string }
   | { type: 'removeBundle'; id: string }
-  /** `catalogBundles`: the bundles on screen when the person clicked, which rows are filed under. */
-  | { type: 'importEstimates'; rows: EstimateRow[]; file: string; catalogBundles: { id: string; name: string }[] }
+  /** `catalogBundles`: the bundles on screen when the person clicked, which rows are filed under.
+      `review`: what the person approved, renamed and moved; without one, everything as proposed. */
+  | { type: 'importEstimates'; rows: EstimateRow[]; file: string; catalogBundles: { id: string; name: string }[]; review?: ImportReview }
   | { type: 'removeImport'; file: string }
   | { type: 'moveSolutions'; ids: string[]; bundleId: string }
   | { type: 'setLoadedCatalog'; platform: string; catalog: Catalog | null; source: AppState['catalogSource'] }
@@ -769,8 +771,11 @@ export function reducer(state: AppState, action: Action): AppState {
         catalogBundles: action.catalogBundles,
         solutions: state.solutions,
         bundles: state.bundles,
-        today: today()
+        today: today(),
+        review: action.review
       });
+      /* a review with groups still pending imports only what was approved; nothing at all is no change */
+      if (plan.added.length === 0 && plan.updated.length === 0) return state;
       return { ...state, solutions: plan.solutions, bundles: plan.bundles };
     }
 

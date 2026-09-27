@@ -139,8 +139,9 @@ start `EXAMPLE`, and the import always leaves them out, so they can stay or go.
 pitch, "offer when") and an *All Components* sheet (Bundle ID, Solution ID, Feature,
 First-delivery hrs, plus Status, What it does, Repeat config hrs and Original build hrs), with a
 `B01 …` sheet per bundle if you like. It can be **added** to the catalog, updating the solutions it
-names and keeping the rest, or it can **replace** the catalog. Adding is refused when a Bundle ID is
-already used by a bundle with another name; the message names a free ID. An imported catalog stays
+names and keeping the rest, or it can **replace** the catalog. A Bundle ID the catalog already uses
+for a different bundle is a decision in the review: a new bundle under a free ID, or the existing
+one. An imported catalog stays
 in place over the sheet served beside the app, across reloads.
 
 **An estimates workbook** is one sheet named *Estimates*, headers in one row, one estimate per row.
@@ -152,6 +153,13 @@ under its Bundle ID, else under the bundle its Area names (a new bundle if none 
 *Unassigned estimates*, where the desk files it. Importing the same file again updates rows by
 Estimate ID, or by Feature and Estimated for, instead of adding them twice, and the desk can remove
 a whole import.
+
+**Nothing is saved until you review it.** After the checks, the file's rows are shown as groups:
+rows going into an existing bundle, a new bundle per Area (or per new Bundle ID), a Bundle ID the
+catalog uses for a different bundle, and Unassigned. Approve each group or leave it out; rename a
+new bundle, or send the whole group into another bundle; open a group to move single rows or
+untick them. Import stays disabled until every group is decided, and "Approve all remaining" is
+there for a large file.
 
 Imports are strict. A file of the wrong kind, a missing required column, a duplicate solution ID,
 negative hours or a sheet with nothing to import is refused with the reason. Hours that are not a

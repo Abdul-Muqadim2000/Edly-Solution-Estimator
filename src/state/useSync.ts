@@ -3,7 +3,7 @@ import type { PersistedState } from '@/types';
 import { beaconSave, fetchState, saveState } from '@/api/client';
 import { countRows, syncKey } from '@server/schema';
 import { ALL_SYNCED_KEYS, readStorage, STORAGE_KEYS, SYNCED_SETTING_KEYS, writeStorage } from '@/state/keys';
-import { pullStep } from '@/state/syncPolicy';
+import { pullStep, unloadStep } from '@/state/syncPolicy';
 
 /**
  * Keeps the spreadsheet and the browser in step.
@@ -239,18 +239,40 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
     };
   }, [enabled, pollMs, pull]);
 
-  /* last chance on the way out */
+  /* Last chance on the way out. A beacon is the only send that outlives the page, and Chrome
+     drops one over 64 KB without telling the page, which is every save once a workspace holds a
+     large import. So a save too big for one starts now, and the browser is asked to hold the
+     page ("Leave site?") while it goes, instead of the change being lost in silence. */
   useEffect(() => {
     if (!enabled) return;
-    const onLeave = (): void => {
-      if (!hydrated.current) return;
+    const onLeave = (event: BeforeUnloadEvent): void => {
       const state = current();
-      if (syncKey(state) === lastSynced.current) return;
-      beaconSave(state);
+      const unsaved = hydrated.current && (inFlight.current || syncKey(state) !== lastSynced.current);
+      const json = JSON.stringify(state);
+      const step = unloadStep({ hydrated: hydrated.current, unsaved, bytes: new Blob([json]).size });
+      if (step === 'beacon') beaconSave(state);
+      if (step === 'save-and-ask') {
+        if (pushTimer.current) clearTimeout(pushTimer.current);
+        void push();
+        event.preventDefault();
+        /* older browsers ask only when returnValue is set */
+        event.returnValue = '';
+      }
+    };
+    /* hidden is often the last event a phone or a closing tab delivers, so a pending save goes now */
+    const onHidden = (): void => {
+      if (document.visibilityState !== 'hidden' || !hydrated.current || !pushTimer.current) return;
+      clearTimeout(pushTimer.current);
+      pushTimer.current = null;
+      void push();
     };
     window.addEventListener('beforeunload', onLeave);
-    return () => window.removeEventListener('beforeunload', onLeave);
-  }, [enabled, current]);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      window.removeEventListener('beforeunload', onLeave);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [enabled, current, push]);
 
   return useMemo<SyncApi>(
     () => ({

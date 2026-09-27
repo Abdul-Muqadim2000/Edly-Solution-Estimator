@@ -16,7 +16,7 @@ import { discover, exportBytes, loadState, saveState, storeLabel } from '../serv
 import { EMPTY_STATE } from '../server/schema';
 import { readWorkbook } from '../src/lib/xlsx';
 import type { Estimation } from '../src/types';
-import { pullStep, type PullInput } from '../src/state/syncPolicy';
+import { BEACON_LIMIT, pullStep, unloadStep, type PullInput } from '../src/state/syncPolicy';
 
 /**
  * Browser storage, and the store layer above the providers.
@@ -458,5 +458,24 @@ describe('what a read of the store does to a tab', () => {
 
   it('follows a store that really was emptied when this tab holds nothing either', () => {
     expect(pullStep(read({ empty: true, localRows: 0 }))).toBe('update');
+  });
+});
+
+describe('what leaving the page does to an unsaved change', () => {
+  it('does nothing when everything is saved, or before any read has succeeded', () => {
+    expect(unloadStep({ hydrated: true, unsaved: false, bytes: 10 })).toBe('nothing');
+    /* nothing is pushed before a read succeeds, on the way out included */
+    expect(unloadStep({ hydrated: false, unsaved: true, bytes: 10 })).toBe('nothing');
+  });
+
+  it('sends a small unsaved change as the page goes', () => {
+    expect(unloadStep({ hydrated: true, unsaved: true, bytes: BEACON_LIMIT })).toBe('beacon');
+  });
+
+  it('saves and asks the browser to hold the page when the change is too big to send on the way out', () => {
+    /* Chrome refuses an unload send over 64 KB without a word, so a workspace holding a large
+       import lost whatever was edited in the second before a reload */
+    expect(unloadStep({ hydrated: true, unsaved: true, bytes: BEACON_LIMIT + 1 })).toBe('save-and-ask');
+    expect(BEACON_LIMIT).toBeLessThan(64 * 1024);
   });
 });

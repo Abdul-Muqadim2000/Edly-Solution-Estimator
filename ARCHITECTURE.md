@@ -24,6 +24,8 @@ src/
     planner.ts          the delivery schedule
     catalog.ts          catalog composition, diffing, bundle guessing, bundles vs estimates, merging
     estimateImport.ts   what an estimates import does: new or updated, and which bundle each lands in
+    bundleImport.ts     what a bundles workbook does once reviewed: updates, new bundles, renumbered clashes
+    importReview.ts     the review both imports share: groups, decisions, where each row lands
     tender.ts           tender intake: narrowing AI output, ranges, desk drafts
     taskBreakdown.ts    the Excel sheet: deliverables per area, lines, totals, column choices
     team.ts             team composition: rate-card role and seniority, people and weeks from the plan
@@ -44,7 +46,8 @@ src/
     builder/CatalogTable.tsx  the catalog grid table and its expandable rows
     builder/SheetPanel.tsx    what the downloaded Excel sheet contains: columns, sheets, notes
     builder/KindFilter.tsx    All / Bundles / Estimates on the catalog page, which is also the legend
-    ImportModal.tsx     Import from Excel: pick the kind, read the checks and the preview, apply
+    ImportModal.tsx     Import from Excel: pick the kind, read the checks, review, apply
+    ImportReview.tsx    the review step: approve, rename, redirect or leave out each group and row
     tender/             tender intake: upload modal, then requirements, match, apply
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links
@@ -157,6 +160,12 @@ They also arrive differently, which is why they are stored differently:
   the file they came from. `planEstimateImport` decides new versus updated (by Estimate ID, else by
   Feature and client) and where each lands (Bundle ID, else the bundle its Area names, else a new
   bundle, else Unassigned for the desk to file). The preview and the reducer call the same function.
+
+Neither saves anything until a person has reviewed it. The file's proposals become groups (an
+existing bundle, a new one, a same-ID clash, Unassigned); each is approved or left out, can be
+renamed or sent to another bundle, and single rows can be moved or dropped. Import is disabled
+while a group is pending. The review is plain data (`ImportReview`), and the same pure function
+turns it into both the preview and the result, so what a person approves is what lands.
 
 Both go through `readImport` in `lib/catalogImport.ts` first, which is strict where
 `catalogSheet.ts` is forgiving: the served sheet must load whatever someone did to it, but a file a

@@ -79,6 +79,8 @@ describe('hours', () => {
     expect(plural(1, 'person')).toBe('1 person');
     expect(plural(0, 'week')).toBe('0 weeks');
     expect(plural(3, 'week')).toBe('3 weeks');
+    /* an import preview counts past a thousand, and "1203 estimates" reads as a code, not a count */
+    expect(plural(1203, 'estimate')).toBe('1,203 estimates');
   });
 });
 
