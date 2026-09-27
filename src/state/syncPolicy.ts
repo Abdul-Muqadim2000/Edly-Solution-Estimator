@@ -50,3 +50,31 @@ export function pullStep(input: PullInput): PullStep {
   if (input.empty && input.localRows > 0) return 'keep-local';
   return 'update';
 }
+
+/**
+ * The most a save sent while the page unloads may carry. Chrome refuses a `sendBeacon` or
+ * keepalive body over 64 KB, and refuses it without an error the page could act on, so the
+ * limit sits under that with room for the request's own overhead.
+ */
+export const BEACON_LIMIT = 60_000;
+
+export type UnloadStep =
+  /** Nothing unsaved, or no read has succeeded, so there is nothing this tab may send. */
+  | 'nothing'
+  /** Small enough to go with the page. */
+  | 'beacon'
+  /** Too big to go with the page: start the save now and ask the browser to hold the page. */
+  | 'save-and-ask';
+
+export interface UnloadInput {
+  hydrated: boolean;
+  /** This tab holds a change the store does not have yet. */
+  unsaved: boolean;
+  /** Size of the save, in bytes. */
+  bytes: number;
+}
+
+export function unloadStep(input: UnloadInput): UnloadStep {
+  if (!input.hydrated || !input.unsaved) return 'nothing';
+  return input.bytes <= BEACON_LIMIT ? 'beacon' : 'save-and-ask';
+}
