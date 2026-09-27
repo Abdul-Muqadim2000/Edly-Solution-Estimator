@@ -58,23 +58,32 @@ export function pullStep(input: PullInput): PullStep {
  */
 export const BEACON_LIMIT = 60_000;
 
-export type UnloadStep =
-  /** Nothing unsaved, or no read has succeeded, so there is nothing this tab may send. */
-  | 'nothing'
-  /** Small enough to go with the page. */
-  | 'beacon'
-  /** Too big to go with the page: start the save now and ask the browser to hold the page. */
-  | 'save-and-ask';
-
 export interface UnloadInput {
   hydrated: boolean;
-  /** This tab holds a change the store does not have yet. */
+  /** This tab holds a change the store does not have yet, including one still on its way. */
   unsaved: boolean;
+  /** A save is on its way right now. */
+  inFlight: boolean;
   /** Size of the save, in bytes. */
   bytes: number;
 }
 
-export function unloadStep(input: UnloadInput): UnloadStep {
-  if (!input.hydrated || !input.unsaved) return 'nothing';
-  return input.bytes <= BEACON_LIMIT ? 'beacon' : 'save-and-ask';
+export interface UnloadPlan {
+  /** `beacon` goes with the page; `now` is an ordinary save, started before the page can go. */
+  send: 'nothing' | 'beacon' | 'now';
+  /** Ask the browser to hold the page ("Leave site?") while the save goes up. */
+  ask: boolean;
+  /**
+   * Cancel a save still on its way, and send the newest copy, which holds everything it carried.
+   * Cancelled while still uploading, the older save never reaches the server; already received,
+   * it started first and finishes first. Waiting for it is not an option: nothing runs while the
+   * browser holds the page, so the newest copy would never be sent.
+   */
+  cancelInFlight: boolean;
+}
+
+export function unloadPlan(input: UnloadInput): UnloadPlan {
+  if (!input.hydrated || !input.unsaved) return { send: 'nothing', ask: false, cancelInFlight: false };
+  const big = input.bytes > BEACON_LIMIT;
+  return { send: big ? 'now' : 'beacon', ask: big, cancelInFlight: input.inFlight };
 }

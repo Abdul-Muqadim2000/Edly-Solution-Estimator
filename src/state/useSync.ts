@@ -3,7 +3,7 @@ import type { PersistedState } from '@/types';
 import { beaconSave, fetchState, saveState } from '@/api/client';
 import { countRows, syncKey } from '@server/schema';
 import { ALL_SYNCED_KEYS, readStorage, STORAGE_KEYS, SYNCED_SETTING_KEYS, writeStorage } from '@/state/keys';
-import { pullStep, unloadStep } from '@/state/syncPolicy';
+import { pullStep, unloadPlan } from '@/state/syncPolicy';
 
 /**
  * Keeps the spreadsheet and the browser in step.
@@ -68,6 +68,8 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
      comparing the browser's text with the store's text rewrote the workbook on every poll. */
   const lastSynced = useRef('');
   const inFlight = useRef(false);
+  /* the save on its way, so a newer one sent as the page goes can cancel it */
+  const saving = useRef<AbortController | null>(null);
   /* A save asked for while this tab could not make one (no read had succeeded yet, or another save
      was on its way) is owed rather than dropped. Dropping it left the change unsaved until the
      next edit, and a reload before that edit lost it: an import made just after selecting a
@@ -82,37 +84,46 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
 
   const current = useCallback((): PersistedState => ({ ...latest.current, settings: SETTINGS_SNAPSHOT() }), []);
 
-  const push = useCallback(async () => {
+  /* `supersede`: the page is going, so cancel a save still on its way and send the newest copy now */
+  const push = useCallback(async (supersede = false) => {
     if (!hydrated.current) {
       owed.current = true;
       setStatus((s) => ({ ...s, tone: 'warn', message: 'waiting for the store before saving…' }));
       return;
     }
-    if (inFlight.current) {
+    if (inFlight.current && !supersede) {
       owed.current = true;
       return;
     }
     owed.current = false;
     const state = current();
     const key = syncKey(state);
-    if (key === lastSynced.current) return;
+    if (key === lastSynced.current && !inFlight.current) return;
 
+    saving.current?.abort();
+    const controller = new AbortController();
+    saving.current = controller;
     inFlight.current = true;
     setStatus((s) => ({ ...s, tone: 'busy', message: 'saving…' }));
     try {
-      const result = await saveState(state);
+      const result = await saveState(state, controller.signal);
       lastSynced.current = key;
       failures.current = 0;
       const store = shortStore(result.label ?? 'store');
       setStatus({ tone: 'good', store, hydrated: true, message: `saved to ${store} · ${result.counts?.estimations ?? 0} estimations` });
     } catch (error) {
+      /* cancelled by a newer save, which reports for both */
+      if (controller.signal.aborted) return;
       failures.current += 1;
       setStatus((s) => ({ ...s, tone: 'bad', message: `NOT SAVED — ${(error as Error).message} · retrying` }));
       const delay = Math.min(30_000, 2000 * failures.current);
       if (pushTimer.current) clearTimeout(pushTimer.current);
       pushTimer.current = setTimeout(() => void push(), delay);
     } finally {
-      inFlight.current = false;
+      if (saving.current === controller) {
+        saving.current = null;
+        inFlight.current = false;
+      }
     }
     /* after a failure a retry is already scheduled, and it sends the latest copy */
     if (owed.current && failures.current === 0) {
@@ -242,18 +253,26 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
   /* Last chance on the way out. A beacon is the only send that outlives the page, and Chrome
      drops one over 64 KB without telling the page, which is every save once a workspace holds a
      large import. So a save too big for one starts now, and the browser is asked to hold the
-     page ("Leave site?") while it goes, instead of the change being lost in silence. */
+     page ("Leave site?") while it goes, instead of the change being lost in silence. A save
+     still on its way is cancelled first: on production a desk's own 600 KB save was going up when
+     a filing and a reload came, and the filing was lost waiting behind it. */
   useEffect(() => {
     if (!enabled) return;
     const onLeave = (event: BeforeUnloadEvent): void => {
       const state = current();
       const unsaved = hydrated.current && (inFlight.current || syncKey(state) !== lastSynced.current);
       const json = JSON.stringify(state);
-      const step = unloadStep({ hydrated: hydrated.current, unsaved, bytes: new Blob([json]).size });
-      if (step === 'beacon') beaconSave(state);
-      if (step === 'save-and-ask') {
+      const plan = unloadPlan({ hydrated: hydrated.current, unsaved, inFlight: inFlight.current, bytes: new Blob([json]).size });
+      if (plan.send === 'beacon') {
+        if (plan.cancelInFlight) saving.current?.abort();
+        beaconSave(state);
+      }
+      if (plan.send === 'now') {
         if (pushTimer.current) clearTimeout(pushTimer.current);
-        void push();
+        /* sent inside this handler, before the browser holds the page and nothing else can run */
+        void push(plan.cancelInFlight);
+      }
+      if (plan.ask) {
         event.preventDefault();
         /* older browsers ask only when returnValue is set */
         event.returnValue = '';

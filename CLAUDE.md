@@ -533,14 +533,24 @@ everything else waiting on a server, are in DEFERRED.md.
 13. **A compliance-matrix export** from a tender: requirement, comply / partial / custom, the
     solution that covers it. Bid submissions usually demand one, and the match step already holds
     it; the workbook writer in `src/lib/xlsx.ts` does the rest.
-14. **One sync issue left in `useSync.ts`:** the sync pill keeps saying "saved" while a change is
-    still waiting for its debounce, found on 2026-09-26. Fixing it cleanly means the `persisted`
-    memo in `AppProvider.tsx` changing only when data or synced settings change, not on every
-    state change, which would also save work with large data. Fixed on 2026-09-27: the unload
+14. **Sync issues left, found on production (Google Sheets) on 2026-09-28.** (a) A page saves the
+    whole workbook on load with nobody touching it: the open estimation's id and the catalog
+    source (dated, so every first load of a day) live in the shared Settings tab, and the desk
+    rewrites its display settings. That save is what lost a change: a page reloaded a second
+    after an edit read the sheet before the unload save landed, then saved its older copy over
+    it. Keep per-tab state (the open estimation) out of the synced settings and leave the catalog
+    source alone when the served sheet is unchanged. (b) Anything done before a page's first read
+    of the sheet lands (the pill says "connecting") is replaced by that read. Block edits until
+    then, or merge. (c) The sync pill says "saved" while a change waits for its debounce; the
+    `persisted` memo in `AppProvider.tsx` changes on every state change, not only on data. Also
+    worth knowing: every tab reads and writes as one Google service account, about 60 reads a
+    minute between them, so many open tabs can run into the quota. Fixed on 2026-09-28: a save
+    still on its way when the page is left is cancelled and the newest copy sent at once
+    (`unloadPlan`); waiting behind it lost a desk filing on production. Fixed on 2026-09-27: the unload
     save was a beacon, and Chrome drops one over 64 KB without telling the page, so once a
     workspace held a large import any change made in the second before a reload was lost. A save
     too big for a beacon now starts at once and the browser is asked to hold the page
-    (`unloadStep` in `state/syncPolicy.ts`, and a 1,203-estimate drive that fails on the old code).
+    (`unloadPlan` in `state/syncPolicy.ts`, and a 1,203-estimate drive that fails on the old code).
     Also fixed on 2026-09-27: a save that could not run, before the tab's first read or while another save
     was in flight, used to be dropped until the next change; it is now owed and made as soon as it
     can be. That was the in-flight issue this item listed, and it lost imports. Fixed alongside
