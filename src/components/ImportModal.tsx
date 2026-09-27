@@ -2,8 +2,11 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Catalog } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { baseSourceOf, currentPlatform, sourceAfterImport } from '@/state/reducer';
-import { allSolutions, CX_BUNDLE_ID, diffCatalogs, mergeCatalogs } from '@/domain/catalog';
+import { allSolutions } from '@/domain/catalog';
 import { planEstimateImport } from '@/domain/estimateImport';
+import { planBundleImport } from '@/domain/bundleImport';
+import { EMPTY_REVIEW, type ImportReview } from '@/domain/importReview';
+import { ImportReviewPanel } from '@/components/ImportReview';
 import { downloadTemplate, ESTIMATE_COLUMNS, hasErrors, readImport, type ImportIssue, type ImportKind, type ImportRead } from '@/lib/catalogImport';
 import { plural, today } from '@/lib/format';
 import { useHover } from '@/lib/useHover';
@@ -11,12 +14,13 @@ import { color, font, radius } from '@/theme';
 import { Banner, Button, Modal, Row, useRowHover } from '@/components/ui';
 
 /**
- * Importing a workbook into the catalog, in three steps a person can see: pick which kind it is,
- * pick the file, then read what it would do before anything changes.
+ * Importing a workbook into the catalog, in steps a person can see: pick which kind it is, pick
+ * the file, review every group it brings, then import.
  *
- * Nothing is applied on reading. A file with an error cannot be applied at all, and the preview
- * is worked out by the same functions that apply it (`mergeCatalogs`, `planEstimateImport`), so
- * the numbers a person approves are the numbers that land.
+ * Nothing is applied on reading. A file with an error cannot be applied at all, and nothing can be
+ * imported while a group is still pending. The review is worked out by the same functions that
+ * apply it (`planEstimateImport`, `planBundleImport`), so the numbers a person approves are the
+ * numbers that land.
  */
 
 const KINDS: { kind: ImportKind; title: string; body: string; tone: string; wash: string }[] = [
@@ -56,6 +60,8 @@ export function ImportModal({
   const [read, setRead] = useState<ImportRead | null>(null);
   const [done, setDone] = useState('');
   const [showFormat, setShowFormat] = useState(false);
+  /* a new file, or a new kind, starts its review from nothing decided */
+  const [review, setReview] = useState<ImportReview>(EMPTY_REVIEW);
   const input = useRef<HTMLInputElement | null>(null);
   const platform = currentPlatform(state);
 
@@ -65,12 +71,14 @@ export function ImportModal({
     setRead(null);
     setFile('');
     setDone('');
+    setReview(EMPTY_REVIEW);
   };
 
   const pick = async (picked: File): Promise<void> => {
     setBusy(true);
     setDone('');
     setFile(picked.name);
+    setReview(EMPTY_REVIEW);
     try {
       setRead(await readImport(await picked.arrayBuffer(), kind));
     } finally {
@@ -78,10 +86,10 @@ export function ImportModal({
     }
   };
 
-  const bundlesPreview = useMemo(() => {
+  const bundlesPlan = useMemo(() => {
     if (read?.kind !== 'bundles' || !read.catalog) return null;
-    return { merge: mergeCatalogs(baseCatalog, read.catalog), diff: diffCatalogs(baseCatalog, read.catalog), incoming: read.catalog };
-  }, [read, baseCatalog]);
+    return planBundleImport({ current: baseCatalog, incoming: read.catalog, review });
+  }, [read, baseCatalog, review]);
 
   const catalogBundles = useMemo(() => catalog.bundles.map((bundle) => ({ id: bundle.id, name: bundle.name })), [catalog.bundles]);
   const estimatesPlan = useMemo(() => {
@@ -93,9 +101,10 @@ export function ImportModal({
       catalogBundles,
       solutions: state.solutions,
       bundles: state.bundles,
-      today: today()
+      today: today(),
+      review
     });
-  }, [read, file, platform, catalogBundles, state.solutions, state.bundles]);
+  }, [read, file, platform, catalogBundles, state.solutions, state.bundles, review]);
 
   const issues: ImportIssue[] = [...(read?.issues ?? []), ...(estimatesPlan?.warnings ?? []).map((text) => ({ level: 'warning' as const, text }))];
   const errors = issues.filter((issue) => issue.level === 'error');
@@ -103,8 +112,8 @@ export function ImportModal({
   const notes = issues.filter((issue) => issue.level === 'note');
 
   const applyBundles = (mode: 'add' | 'replace'): void => {
-    if (read?.kind !== 'bundles' || !bundlesPreview) return;
-    const built = mode === 'add' ? bundlesPreview.merge.catalog : bundlesPreview.incoming;
+    if (read?.kind !== 'bundles' || !bundlesPlan || bundlesPlan.review.pending > 0) return;
+    const built = mode === 'add' ? bundlesPlan.merge.catalog : bundlesPlan.reviewed;
     const source = sourceAfterImport(baseSourceOf(state), { name: file, hash: read.hash }, mode, today());
     /* the record on the catalog is what keeps it pinned over the served sheet after a reload */
     const next: Catalog = {
@@ -122,8 +131,8 @@ export function ImportModal({
   };
 
   const applyEstimates = (): void => {
-    if (read?.kind !== 'estimates' || !estimatesPlan) return;
-    dispatch({ type: 'importEstimates', rows: read.rows, file, catalogBundles });
+    if (read?.kind !== 'estimates' || !estimatesPlan || estimatesPlan.review.pending > 0) return;
+    dispatch({ type: 'importEstimates', rows: read.rows, file, catalogBundles, review });
     const total = estimatesPlan.added.length + estimatesPlan.updated.length;
     setDone(`Imported ${plural(total, 'estimate')} from ${file}. They are listed under Estimates, marked in violet.`);
     setRead(null);
@@ -133,7 +142,7 @@ export function ImportModal({
 
   return (
     <Modal
-      width={760}
+      width={880}
       onClose={onClose}
       title={
         <>
@@ -213,34 +222,50 @@ export function ImportModal({
           {!hasErrors(issues) && notes.length > 0 ? (
             <div style={{ fontSize: 12, color: color.muted, lineHeight: 1.5 }}>{notes.map((issue) => issue.text).join(' ')}</div>
           ) : null}
-          {!hasErrors(issues) && bundlesPreview ? (
-            <BundlesPreview preview={bundlesPreview} onApply={applyBundles} />
+          {!hasErrors(issues) && bundlesPlan ? (
+            <>
+              <ImportReviewPanel summary={bundlesPlan.review} review={review} onChange={setReview} noun="solution" />
+              <BundlesPreview plan={bundlesPlan} onApply={applyBundles} />
+            </>
           ) : null}
           {!hasErrors(issues) && estimatesPlan ? (
-            <Preview>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: color.ink }}>
-                {plural(estimatesPlan.added.length + estimatesPlan.updated.length, 'estimate')} ready:{' '}
-                {estimatesPlan.added.length} new
-                {estimatesPlan.updated.length > 0 ? `, ${estimatesPlan.updated.length} updating an earlier import` : ''}.
-              </div>
-              <PreviewLines
-                lines={[
-                  ...placedLines(estimatesPlan, catalogBundles),
-                  ...estimatesPlan.newBundles.map((bundle) => `New bundle ${bundle.id}, "${bundle.name}", named by the Area column: ${plural(bundle.count, 'estimate')}.`),
-                  estimatesPlan.unassigned > 0
-                    ? `${plural(estimatesPlan.unassigned, 'estimate')} with no Area or Bundle ID ${estimatesPlan.unassigned === 1 ? 'goes' : 'go'} to Unassigned, for the estimation desk to file.`
-                    : ''
-                ]}
-              />
-              <Row gap={8} style={{ marginTop: 12 }}>
-                <Button tone="primary" onClick={applyEstimates} style={{ background: color.violet }} hover={{ background: color.ink }}>
-                  Import {plural(estimatesPlan.added.length + estimatesPlan.updated.length, 'estimate')}
-                </Button>
-                <Button tone="ghost" onClick={() => setRead(null)}>
-                  Cancel
-                </Button>
-              </Row>
-            </Preview>
+            <>
+              <ImportReviewPanel summary={estimatesPlan.review} review={review} onChange={setReview} noun="estimate" />
+              <Preview>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: color.ink }}>
+                  {estimatesPlan.review.pending > 0
+                    ? `${plural(estimatesPlan.review.pending, 'group')} still to review before anything can be imported.`
+                    : `${plural(estimatesPlan.review.included, 'estimate')} to import: ${estimatesPlan.added.length.toLocaleString('en-US')} new${
+                        estimatesPlan.updated.length > 0 ? `, ${estimatesPlan.updated.length.toLocaleString('en-US')} updating an earlier import` : ''
+                      }.`}
+                </div>
+                <PreviewLines
+                  lines={[
+                    estimatesPlan.review.pending === 0 && estimatesPlan.newBundles.length > 0
+                      ? `New ${estimatesPlan.newBundles.length === 1 ? 'bundle' : 'bundles'}: ${estimatesPlan.newBundles.map((bundle) => `${bundle.name} (${bundle.count.toLocaleString('en-US')})`).join(', ')}.`
+                      : '',
+                    estimatesPlan.review.pending === 0 && estimatesPlan.unassigned > 0
+                      ? `${plural(estimatesPlan.unassigned, 'estimate')} ${estimatesPlan.unassigned === 1 ? 'goes' : 'go'} to Unassigned, for the estimation desk to file.`
+                      : '',
+                    estimatesPlan.review.leftOut > 0 ? `${plural(estimatesPlan.review.leftOut, 'estimate')} left out.` : ''
+                  ]}
+                />
+                <Row gap={8} style={{ marginTop: 12 }}>
+                  <Button
+                    tone="primary"
+                    disabled={estimatesPlan.review.pending > 0 || estimatesPlan.review.included === 0}
+                    onClick={applyEstimates}
+                    style={{ background: color.violet }}
+                    hover={{ background: color.ink }}
+                  >
+                    Import {plural(estimatesPlan.review.included, 'estimate')}
+                  </Button>
+                  <Button tone="ghost" onClick={() => setRead(null)}>
+                    Cancel
+                  </Button>
+                </Row>
+              </Preview>
+            </>
           ) : null}
         </div>
       ) : null}
@@ -248,57 +273,51 @@ export function ImportModal({
   );
 }
 
-/** Where the estimates land, counted by bundle, for the preview. */
-function placedLines(plan: NonNullable<ReturnType<typeof planEstimateImport>>, bundles: readonly { id: string; name: string }[]): string[] {
-  const made = new Set(plan.newBundles.map((bundle) => bundle.id));
-  const counts = new Map<string, number>();
-  for (const one of [...plan.added, ...plan.updated]) {
-    if (one.bundleId === CX_BUNDLE_ID || made.has(one.bundleId)) continue;
-    counts.set(one.bundleId, (counts.get(one.bundleId) ?? 0) + 1);
-  }
-  return [...counts].map(([id, count]) => `${plural(count, 'estimate')} under ${id}, ${bundles.find((bundle) => bundle.id === id)?.name ?? 'a bundle already in the catalog'}.`);
-}
-
-function BundlesPreview({
-  preview,
-  onApply
-}: {
-  preview: { merge: ReturnType<typeof mergeCatalogs>; diff: ReturnType<typeof diffCatalogs>; incoming: Catalog };
-  onApply: (mode: 'add' | 'replace') => void;
-}): JSX.Element {
-  const { merge, diff, incoming } = preview;
-  const items = allSolutions(incoming);
+function BundlesPreview({ plan, onApply }: { plan: ReturnType<typeof planBundleImport>; onApply: (mode: 'add' | 'replace') => void }): JSX.Element {
+  const { merge, replace, reviewed, review } = plan;
+  const items = allSolutions(reviewed);
   const unpriced = items.filter((item) => item.first === null).length;
   const building = items.filter((item) => item.status === 'In Development').length;
+  const waiting = review.pending > 0 ? [`${plural(review.pending, 'group')} still to review.`] : review.included === 0 ? ['Nothing approved to import.'] : [];
 
   return (
     <Preview>
       <div style={{ fontSize: 13.5, fontWeight: 700, color: color.ink }}>
-        {plural(items.length, 'solution')} in {plural(incoming.bundles.length, 'bundle')}
-        {unpriced > 0 ? `, ${unpriced} not priced yet` : ''}
-        {building > 0 ? `, ${building} in development` : ''}.
+        {review.pending > 0
+          ? `${plural(review.pending, 'group')} still to review before anything can be imported.`
+          : `${plural(items.length, 'solution')} in ${plural(reviewed.bundles.length, 'bundle')}${unpriced > 0 ? `, ${unpriced} not priced yet` : ''}${
+              building > 0 ? `, ${building} in development` : ''
+            }${review.leftOut > 0 ? `, ${review.leftOut} left out` : ''}.`}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10, marginTop: 12 }}>
         <Choice
           title="Add to the catalog"
-          lines={[
-            `${merge.added.length} new, ${merge.updated.length} updated from this file.`,
-            `The other ${plural(merge.kept, 'solution')} stay as they are.`,
-            merge.bundlesAdded.length > 0 ? `New ${merge.bundlesAdded.length === 1 ? 'bundle' : 'bundles'}: ${merge.bundlesAdded.join(', ')}.` : ''
-          ]}
-          blocked={merge.conflicts}
+          lines={
+            review.pending > 0
+              ? []
+              : [
+                  `${merge.added.length.toLocaleString('en-US')} new, ${merge.updated.length.toLocaleString('en-US')} updated from this file.`,
+                  `The other ${plural(merge.kept, 'solution')} stay as they are.`,
+                  merge.bundlesAdded.length > 0 ? `New ${merge.bundlesAdded.length === 1 ? 'bundle' : 'bundles'}: ${merge.bundlesAdded.join(', ')}.` : ''
+                ]
+          }
+          blocked={[...waiting, ...merge.conflicts]}
           action="Add to the catalog"
           primary
           onClick={() => onApply('add')}
         />
         <Choice
           title="Replace the catalog"
-          lines={[
-            `The catalog becomes this workbook.`,
-            diff.removed.length > 0 ? `${plural(diff.removed.length, 'solution')} not in this file will leave the catalog.` : 'Nothing in the catalog is missing from this file.',
-            'Estimates stay: they are kept apart from the workbook.'
-          ]}
-          blocked={[]}
+          lines={
+            review.pending > 0
+              ? []
+              : [
+                  'The catalog becomes this workbook, as reviewed.',
+                  replace.removed.length > 0 ? `${plural(replace.removed.length, 'solution')} not in it will leave the catalog.` : 'Nothing in the catalog is missing from it.',
+                  'Estimates stay: they are kept apart from the workbook.'
+                ]
+          }
+          blocked={waiting}
           action="Replace the catalog"
           onClick={() => onApply('replace')}
         />

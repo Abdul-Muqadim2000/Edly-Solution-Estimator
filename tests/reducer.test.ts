@@ -27,7 +27,8 @@ import {
   type Action,
   type AppState
 } from '../src/state/reducer';
-import type { EstimateRow } from '../src/domain/estimateImport';
+import { TO_UNASSIGNED, toBundle, toNew, type EstimateRow } from '../src/domain/estimateImport';
+import { EMPTY_REVIEW, setGroup, setRow } from '../src/domain/importReview';
 import type { Catalog, EstimateRequest, Estimation, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
 import { NO_TOKENS, type DeskDraft, type ExtractedRequirement, type NewTenderInput } from '../src/domain/tender';
 
@@ -1265,6 +1266,34 @@ describe('importing estimates from a workbook', () => {
     const again = imported(filed, [row(1, { first: 11 })]);
 
     expect(again.solutions[0]).toMatchObject({ bundleId: 'B15', first: 11 });
+  });
+
+  it('saves only what the review approved, where the person put it', () => {
+    const review = setRow(
+      setGroup(setGroup(EMPTY_REVIEW, toNew('Mobile Apps'), { status: 'approved', name: 'Mobile Learning' }), TO_UNASSIGNED, { status: 'approved', to: toBundle('B15') }),
+      '3',
+      { skip: true }
+    );
+    const next = reducer(workspace(), {
+      type: 'importEstimates',
+      rows: [row(1, { area: 'Mobile Apps' }), row(2, { area: 'Mobile Apps' }), row(3), row(4, { area: 'Gamification' })],
+      file: 'nordic.xlsx',
+      catalogBundles: onScreen,
+      review
+    });
+
+    /* sheet row 3 (Estimate 2) was left out, the unassigned one was sent to B15, and Gamification
+       was never approved, so neither it nor its bundle is saved */
+    expect(next.solutions.map((one) => [one.name, one.bundleId])).toEqual([
+      ['Estimate 1', 'CB-01'],
+      ['Estimate 3', 'B15']
+    ]);
+    expect(next.bundles.map((one) => one.name)).toEqual(['Mobile Learning']);
+  });
+
+  it('changes nothing when the review has approved nothing yet', () => {
+    const state = workspace();
+    expect(reducer(state, { type: 'importEstimates', rows: [row(1)], file: 'nordic.xlsx', catalogBundles: onScreen, review: EMPTY_REVIEW })).toBe(state);
   });
 
   it('does nothing for an empty import', () => {

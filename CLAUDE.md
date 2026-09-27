@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 713 tests across twenty files.
+`bun run test` runs 741 tests across twenty-one files.
 
 | File | Covers |
 |---|---|
@@ -160,6 +160,7 @@ reference.
 | `tests/xlsx.test.ts` | the hand-written `.xlsx` reader and writer |
 | `tests/catalogSheet.test.ts` | the master catalog workbook and hand-edited sheets |
 | `tests/catalogImport.test.ts` | importing a bundles or estimates workbook: which kind a file is, every refusal and warning, the templates, the preview |
+| `tests/importReview.test.ts` | the review before an import saves: groups, approval, renames, redirects, moved and dropped rows, for both kinds |
 | `tests/quoteExport.test.ts` | the branded task-breakdown workbook a client receives |
 | `tests/taskBreakdown.test.ts` | the Excel sheet's deliverables, lines and totals, checked against `calcEstimate` |
 | `tests/team.test.ts` | the team composition: role and seniority from the rate card, people and weeks from the plan |
@@ -176,10 +177,10 @@ reference.
 
 | | |
 |---|---|
-| Statements | 97.1% |
-| Lines | 98.3% |
-| Functions | 98.2% |
-| Branches | 86.2% |
+| Statements | 97.2% |
+| Lines | 98.4% |
+| Functions | 98.4% |
+| Branches | 86.7% |
 
 The thresholds in `vitest.config.ts` are floors: 96% statements, 86% branches, 98% functions and
 98% lines, each set just under the figures above when the bundles and estimates import landed. A change that
@@ -395,7 +396,9 @@ The spreadsheets hold real deal names, client names and pricing.
 
 ## Where to be careful
 
-- `src/state/useSync.ts`: the data-safety rules. Read the comments before editing.
+- `src/state/useSync.ts`: the data-safety rules. Read the comments before editing. A save over
+  `BEACON_LIMIT` cannot leave with the page, so leaving with one unsaved asks "Leave site?" on
+  purpose; keep that, or large workspaces lose their last edit in silence.
 - `server/providers/gsheet.ts`: a save is one `values:batchUpdate`. Do not add a clear step before
   it, however tidy it looks: that is the window in which the whole workbook reads as empty.
 - `api/state.ts`: the empty-payload guard.
@@ -423,6 +426,11 @@ The spreadsheets hold real deal names, client names and pricing.
 - **An imported catalog is pinned by `meta.loaded` on the catalog**, not by `catalogSource`, which
   `choosePlatform` clears and every reload goes through. Losing the record means the served sheet
   replaces the import on the next visit; `catalogPin` in the reducer and its tests hold this.
+- **Nothing an import brings is saved before a person decides it.** Both imports go through a review
+  (`src/domain/importReview.ts`): each group the file proposes is approved or left out, and can be
+  renamed or sent elsewhere; single rows can be moved or dropped. Import stays disabled while any
+  group is pending, and the reducer saves only approved rows. `planEstimateImport` and
+  `planBundleImport` compute the preview and the result from the same decisions; keep it that way.
 - **Bundles and estimates never mix.** `solutionKind` decides which is which, estimates are violet
   everywhere, and the hero's client-facing stats count bundles only.
 - `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses.
@@ -525,12 +533,15 @@ everything else waiting on a server, are in DEFERRED.md.
 13. **A compliance-matrix export** from a tender: requirement, comply / partial / custom, the
     solution that covers it. Bid submissions usually demand one, and the match step already holds
     it; the workbook writer in `src/lib/xlsx.ts` does the rest.
-14. **Two sync questions left in `useSync.ts`.** (a) The sync pill keeps saying "saved" while a
-    change is still waiting for its debounce, found on 2026-09-26. (b) The unload save
-    (`beaconSave`) and the reloaded page's first read are not ordered. On the local store a reload
-    100 ms after an import kept it (2026-09-27), but a slower store could let the read win, and the
-    page would then take the older copy. Not seen yet; worth a drive against Google Sheets. Fixed
-    on 2026-09-27: a save that could not run, before the tab's first read or while another save
+14. **One sync issue left in `useSync.ts`:** the sync pill keeps saying "saved" while a change is
+    still waiting for its debounce, found on 2026-09-26. Fixing it cleanly means the `persisted`
+    memo in `AppProvider.tsx` changing only when data or synced settings change, not on every
+    state change, which would also save work with large data. Fixed on 2026-09-27: the unload
+    save was a beacon, and Chrome drops one over 64 KB without telling the page, so once a
+    workspace held a large import any change made in the second before a reload was lost. A save
+    too big for a beacon now starts at once and the browser is asked to hold the page
+    (`unloadStep` in `state/syncPolicy.ts`, and a 1,203-estimate drive that fails on the old code).
+    Also fixed on 2026-09-27: a save that could not run, before the tab's first read or while another save
     was in flight, used to be dropped until the next change; it is now owed and made as soon as it
     can be. That was the in-flight issue this item listed, and it lost imports. Fixed alongside
     the tender work, in `AppProvider.tsx` and `state/keys.ts`: three ways one tab wrote an older
