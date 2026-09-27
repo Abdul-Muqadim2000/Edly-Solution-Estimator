@@ -68,6 +68,11 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
      comparing the browser's text with the store's text rewrote the workbook on every poll. */
   const lastSynced = useRef('');
   const inFlight = useRef(false);
+  /* A save asked for while this tab could not make one (no read had succeeded yet, or another save
+     was on its way) is owed rather than dropped. Dropping it left the change unsaved until the
+     next edit, and a reload before that edit lost it: an import made just after selecting a
+     solution, or in a new workspace's first seconds, never reached the store. */
+  const owed = useRef(false);
   const failures = useRef(0);
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef(snapshot);
@@ -79,10 +84,15 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
 
   const push = useCallback(async () => {
     if (!hydrated.current) {
+      owed.current = true;
       setStatus((s) => ({ ...s, tone: 'warn', message: 'waiting for the store before saving…' }));
       return;
     }
-    if (inFlight.current) return;
+    if (inFlight.current) {
+      owed.current = true;
+      return;
+    }
+    owed.current = false;
     const state = current();
     const key = syncKey(state);
     if (key === lastSynced.current) return;
@@ -103,6 +113,11 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
       pushTimer.current = setTimeout(() => void push(), delay);
     } finally {
       inFlight.current = false;
+    }
+    /* after a failure a retry is already scheduled, and it sends the latest copy */
+    if (owed.current && failures.current === 0) {
+      if (pushTimer.current) clearTimeout(pushTimer.current);
+      pushTimer.current = setTimeout(() => void push(), 0);
     }
   }, [current]);
 
@@ -147,6 +162,13 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
         }
         hydrated.current = true;
         lastSynced.current = step === 'start-fresh' ? '' : incoming;
+        /* Only after starting fresh: this tab's copy is then the one to keep. After a hydrate the
+           store's copy has not rendered yet, so saving now would send the old one over it; the
+           save that follows the render does the job. */
+        if (step === 'start-fresh' && owed.current) {
+          if (pushTimer.current) clearTimeout(pushTimer.current);
+          pushTimer.current = setTimeout(() => void push(), 0);
+        }
         setStatus({
           tone: 'good',
           store,
@@ -179,7 +201,7 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
       });
       if (failures.current < 6) setTimeout(() => void pull(), Math.min(15_000, 1500 * failures.current));
     }
-  }, [current]);
+  }, [current, push]);
 
   /* first read */
   useEffect(() => {
@@ -189,7 +211,11 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
 
   /* debounced write whenever the data changes */
   useEffect(() => {
-    if (!enabled || !hydrated.current) return;
+    if (!enabled) return;
+    if (!hydrated.current) {
+      owed.current = true;
+      return;
+    }
     if (pushTimer.current) clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(() => void push(), debounceMs);
     return () => {
