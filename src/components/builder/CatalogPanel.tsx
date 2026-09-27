@@ -1,50 +1,26 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useApp } from '@/state/AppProvider';
 import { catalogSourceLabel } from '@/state/reducer';
-import { allSolutions, diffCatalogs } from '@/domain/catalog';
-import { benchmarkCatalog, isLiveCatalog } from '@/data/practices';
+import { allSolutions, kindCounts } from '@/domain/catalog';
+import { isLiveCatalog } from '@/data/practices';
+import { plural } from '@/lib/format';
 import { color, font, radius } from '@/theme';
 import { Button, Mono, Popover, Row, useRowHover } from '@/components/ui';
 
-/** Where the catalog came from, and how to replace it with your own sheet. */
-export function CatalogPanel({ onClose, onLoaded }: { onClose: () => void; onLoaded?: () => void }): JSX.Element {
-  const { state, catalog, importCatalog, resetCatalog, reloadCatalog } = useApp();
-  const fileInput = useRef<HTMLInputElement | null>(null);
+/** Where the catalog came from, and the way in for workbooks of bundles or of estimates. */
+export function CatalogPanel({ onClose, onImport }: { onClose: () => void; onImport: () => void }): JSX.Element {
+  const { state, catalog, resetCatalog, reloadCatalog } = useApp();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [changes, setChanges] = useState<string[]>([]);
-  const dropHover = useRowHover({ background: color.brandWash, borderColor: color.brand });
+  const importHover = useRowHover({ background: color.brandWash, borderColor: color.brand });
 
   const live = isLiveCatalog(state.platform);
   const loaded = state.loadedCatalogs[state.platform];
   const source = state.catalogSource;
   /* offered whenever the copy in play did not come from the served sheet, or a newer one is out */
-  const canReadLive = live && (source?.source === 'builtin' || source?.source === 'file' || state.autoAvail);
-
-  const pick = async (file: File): Promise<void> => {
-    setBusy(true);
-    setError('');
-    try {
-      const before = loaded ?? benchmarkCatalog(state.platform) ?? null;
-      const result = await importCatalog(file);
-      const after = state.loadedCatalogs[state.platform];
-      const lines: string[] = [];
-      if (before && after) {
-        const diff = diffCatalogs(before, after);
-        if (diff.added.length > 0) lines.push(`+ ${diff.added.length} new — ${diff.added.slice(0, 5).map((entry) => entry.id).join(', ')}`);
-        if (diff.changed.length > 0) lines.push(`~ ${diff.changed.length} updated — ${diff.changed.slice(0, 4).map((entry) => `${entry.id} (${entry.fields.join('/')})`).join(', ')}`);
-        if (diff.removed.length > 0) lines.push(`− ${diff.removed.length} no longer in the sheet`);
-        if (diff.bundlesAdded.length > 0) lines.push(`+ new bundle — ${diff.bundlesAdded.join(', ')}`);
-      }
-      for (const warning of result?.warnings ?? []) lines.push(`⚠ ${warning}`);
-      setChanges(lines.length > 0 ? lines : ['Loaded. No differences from what was already in play.']);
-      onLoaded?.();
-    } catch (problem) {
-      setError((problem as Error).message || 'That workbook could not be read.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const canReadLive = live && (source?.source === 'builtin' || source?.source === 'file' || Boolean(loaded?.meta.loaded) || state.autoAvail);
+  const counts = kindCounts(catalog);
 
   return (
     <Popover>
@@ -61,6 +37,10 @@ export function CatalogPanel({ onClose, onLoaded }: { onClose: () => void; onLoa
       <Mono block size={11} style={{ marginTop: 3 }}>
         {allSolutions(catalog).length} solutions · {catalog.bundles.length} bundles · sheet compiled {catalog.meta.compiled || '—'}
       </Mono>
+      <div style={{ fontSize: 11.5, color: color.muted, marginTop: 6, lineHeight: 1.5 }}>
+        <span style={{ fontWeight: 700, color: color.brandDeep }}>{counts.bundles} in bundles</span>, built before.{' '}
+        <span style={{ fontWeight: 700, color: color.violet }}>{plural(counts.estimates, 'estimate')}</span>, priced but not built.
+      </div>
 
       {changes.length > 0 ? (
         <div style={{ marginTop: 10, background: color.brandWashPale, border: `1px solid ${color.brandEdgePale}`, borderRadius: radius.md, padding: '9px 11px', display: 'grid', gap: 4 }}>
@@ -72,39 +52,32 @@ export function CatalogPanel({ onClose, onLoaded }: { onClose: () => void; onLoa
         </div>
       ) : null}
 
-      <div
-        onClick={() => fileInput.current?.click()}
-        {...dropHover.bind}
+      <button
+        type="button"
+        onClick={onImport}
+        {...importHover.bind}
         style={{
+          display: 'block',
+          width: '100%',
           marginTop: 12,
-          border: `1.5px dashed ${color.brandEdge}`,
+          borderWidth: 1.5,
+          borderStyle: 'dashed',
+          borderColor: color.brandEdge,
           background: color.brandWashTint,
           borderRadius: radius.md + 1,
           padding: 12,
           textAlign: 'center',
           cursor: 'pointer',
+          fontFamily: font.body,
           transition: 'background 120ms ease, border-color 120ms ease',
-          ...dropHover.style
+          ...importHover.style
         }}
       >
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: color.brandDeep }}>
-          {busy ? 'Reading sheet…' : live ? 'Load an updated sheet (.xlsx)' : 'Load this platform’s sheet (.xlsx)'}
-        </span>
+        <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: color.brandDeep }}>Import from Excel</span>
         <span style={{ display: 'block', fontSize: 11, color: color.muted, lineHeight: 1.5, marginTop: 3 }}>
-          Solutions, hours, bundles, search and every export update immediately.
+          A bundles workbook of built features, or an estimates sheet of priced work. You see what it would change first.
         </span>
-        <input
-          ref={fileInput}
-          type="file"
-          accept=".xlsx"
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = '';
-            if (file) void pick(file);
-          }}
-        />
-      </div>
+      </button>
 
       {error ? (
         <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: color.redInk, background: color.redWash, borderRadius: 8, padding: '8px 10px', lineHeight: 1.5 }}>
@@ -126,7 +99,7 @@ export function CatalogPanel({ onClose, onLoaded }: { onClose: () => void; onLoa
                 .finally(() => setBusy(false));
             }}
           >
-            {state.autoAvail ? 'A newer sheet sits beside the app — use it' : 'Re-read the sheet beside the app'}
+            {busy ? 'Reading the sheet…' : state.autoAvail ? 'A newer sheet sits beside the app: use it' : 'Re-read the sheet beside the app'}
           </Button>
         ) : null}
         {loaded ? (
@@ -150,3 +123,4 @@ export function CatalogPanel({ onClose, onLoaded }: { onClose: () => void; onLoa
     </Popover>
   );
 }
+

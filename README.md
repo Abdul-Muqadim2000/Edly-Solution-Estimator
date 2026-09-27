@@ -121,14 +121,51 @@ Only Open edX uses that sheet. The other 19 platforms ship benchmark catalogs in
 `src/data/practices.ts` and are labelled *Sample* throughout — load a sheet for one of them through
 the in-app **📚 Catalog** panel to replace it.
 
+### Importing bundles and estimates
+
+The catalog holds two kinds of thing, and the catalog page filters and colours them apart:
+
+- **Bundles**: features Edly built for a client before and delivers again for less. Their hours
+  are a record.
+- **Estimates**, in violet: work the estimation desk priced, or that was priced for an earlier
+  client, and never built. Their hours are a forecast.
+
+Both come in through **📚 Catalog → Import from Excel** in the builder (estimates also from the
+desk's *Add to catalog* tab). Pick the kind, pick the file, read what it would do, then apply it.
+Each kind has a template to download from the same dialog, with example rows in grey. Their IDs
+start `EXAMPLE`, and the import always leaves them out, so they can stay or go.
+
+**A bundles workbook** is the master sheet's format: a *Bundle Catalog* sheet (Bundle ID, Bundle,
+pitch, "offer when") and an *All Components* sheet (Bundle ID, Solution ID, Feature,
+First-delivery hrs, plus Status, What it does, Repeat config hrs and Original build hrs), with a
+`B01 …` sheet per bundle if you like. It can be **added** to the catalog, updating the solutions it
+names and keeping the rest, or it can **replace** the catalog. Adding is refused when a Bundle ID is
+already used by a bundle with another name; the message names a free ID. An imported catalog stays
+in place over the sheet served beside the app, across reloads.
+
+**An estimates workbook** is one sheet named *Estimates*, headers in one row, one estimate per row.
+*Feature* and *First-delivery hrs* are required. *What it does* and *Estimated for* (the client) are
+recommended. The optional columns are *Estimate ID*, *Repeat hrs*, *Bundle ID*, *Area*,
+*Category*, *Sub category*, *Delivery form*, *Std deployment time*, *Integrations*,
+*3rd-party account*, *Notes & limits*, *Assumptions*, *Estimated by* and *Estimated on*. A row goes
+under its Bundle ID, else under the bundle its Area names (a new bundle if none matches), else to
+*Unassigned estimates*, where the desk files it. Importing the same file again updates rows by
+Estimate ID, or by Feature and Estimated for, instead of adding them twice, and the desk can remove
+a whole import.
+
+Imports are strict. A file of the wrong kind, a missing required column, a duplicate solution ID,
+negative hours or a sheet with nothing to import is refused with the reason. Hours that are not a
+plain number ("40-60", "TBC"), an unknown status or a missing recommended column are listed as
+warnings, and the row is skipped or read as the warning says.
+
 **State.** Five sheets, rewritten on every change:
 
 | Sheet | Holds |
 |---|---|
 | `Estimations` | One row per deal, with a URL `slug` and selections/buffers/rates/plan in a `snapshotJson` column |
 | `Requests` | The custom-estimate queue, including hours the desk returned |
-| `EstimatedSolutions` | Anything the desk added to a catalog |
-| `CustomBundles` | Bundle categories created in the app |
+| `EstimatedSolutions` | Anything the desk added to a catalog, and estimates imported from a workbook (with the file, its Estimate ID, the client and who priced it) |
+| `CustomBundles` | Bundle categories created in the app, including those an estimates workbook's Area column made |
 | `Settings` | Last platform, open estimation, display preferences, loaded catalogs |
 
 Scalar columns stay readable so anyone can scan it in Excel; nested state sits in one JSON column

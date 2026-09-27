@@ -32,6 +32,7 @@ interface ViewParts {
   bundle?: string;
   plan?: boolean;
   q?: string;
+  kind?: Route['kind'];
 }
 
 export interface RouterApi {
@@ -48,6 +49,7 @@ const viewOf = (route: Route): ViewParts => {
   if (route.bundle) parts.bundle = route.bundle;
   if (route.plan) parts.plan = true;
   if (route.q) parts.q = route.q;
+  if (route.kind) parts.kind = route.kind;
   return parts;
 };
 
@@ -186,7 +188,7 @@ export function useRouting(state: AppState, dispatch: (action: Action) => void, 
       const current = routeRef.current;
       const leaving = patch.estimation !== undefined && patch.estimation !== current.estimation;
       const next: Route = leaving
-        ? { ...current, bundle: undefined, plan: undefined, q: undefined, ...patch }
+        ? { ...current, bundle: undefined, plan: undefined, q: undefined, kind: undefined, ...patch }
         : { ...current, ...patch };
       setView({ of: next.estimation, parts: viewOf(next) });
       dispatch({ type: 'applyRoute', route: next });

@@ -2,7 +2,20 @@ import { describe, expect, it } from 'vitest';
 import type { Catalog, EstimateRequest, EstimationSnapshot, Solution } from '../src/types';
 import { cachedTotals, calcEstimate, DEFAULT_ROLES, overheadRoleOf, roleLabel, SENIORITY_LEVELS } from '../src/domain/estimate';
 import { peopleForDuration, reorder, schedule } from '../src/domain/planner';
-import { allSolutions, categories, composeCatalog, diffCatalogs, guessBundle, subCategories, toSolution } from '../src/domain/catalog';
+import {
+  allSolutions,
+  bundlesOfKind,
+  categories,
+  composeCatalog,
+  diffCatalogs,
+  guessBundle,
+  kindCounts,
+  mergeCatalogs,
+  solutionKind,
+  subCategories,
+  toSolution
+} from '../src/domain/catalog';
+import type { AddedSolution, Bundle } from '../src/types';
 import { nextId } from '../src/lib/format';
 
 const solution = (id: string, first: number | null, extra: Partial<Solution> = {}): Solution => ({
@@ -358,5 +371,131 @@ describe('reading a catalog', () => {
   it('offers the sub-categories in use, and nothing for a catalog without any', () => {
     expect(subCategories(book)).toEqual(['Bespoke', 'Out-of-the-box']);
     expect(subCategories(catalog([solution('A', 10)]))).toEqual([]);
+  });
+});
+
+/* --------------------------------------------- bundles and estimates */
+
+const added = (id: string, over: Partial<AddedSolution> = {}): AddedSolution => ({
+  id, plat: 'openedx', bundleId: 'B01', name: `Estimate ${id}`, desc: '',
+  first: 20, repeat: 6, form: '', deploy: '', integrations: '', category: '', subCategory: '',
+  account: '', limits: '', note: '', from: '', estAt: '2026-03-01', ...over
+});
+
+const bundle = (id: string, name: string, items: Solution[]): Bundle => ({
+  ...catalog(items).bundles[0]!,
+  id,
+  name,
+  items
+});
+
+const book = (...bundles: Bundle[]): Catalog => ({ ...catalog([]), bundles });
+
+describe('telling bundles from estimates', () => {
+  const composed = composeCatalog({
+    base: catalog([solution('EDU-1', 5), solution('EDU-2', null, { status: 'In Development' }), solution('EDU-3', 8, { status: 'Sample' })]),
+    platform: 'openedx',
+    added: [added('CS-01'), added('CS-02', { bundleId: 'CX' })],
+    ownBundles: []
+  });
+
+  it('counts what was built, still being built, or a benchmark as bundles, and what the desk priced as estimates', () => {
+    expect(composed.bundles.flatMap((one) => one.items).map((item) => [item.id, solutionKind(item)])).toEqual([
+      ['EDU-1', 'bundles'],
+      ['EDU-2', 'bundles'],
+      ['EDU-3', 'bundles'],
+      ['CS-01', 'estimates'],
+      ['CS-02', 'estimates']
+    ]);
+    expect(kindCounts(composed)).toEqual({ all: 5, bundles: 3, estimates: 2 });
+  });
+
+  it('lists only one kind, and drops a bundle left with none of it', () => {
+    const estimates = bundlesOfKind(composed.bundles, 'estimates');
+    expect(estimates.map((one) => [one.id, one.items.map((item) => item.id)])).toEqual([
+      ['B01', ['CS-01']],
+      ['CX', ['CS-02']]
+    ]);
+    /* the rail lists bundles, not "Unassigned estimates", when only built work is showing */
+    expect(bundlesOfKind(composed.bundles, 'bundles').map((one) => one.id)).toEqual(['B01']);
+    expect(bundlesOfKind(composed.bundles, null)).toEqual(composed.bundles);
+  });
+
+  it('calls the group an estimate lands in when nobody filed it Unassigned', () => {
+    expect(composed.bundles.find((one) => one.id === 'CX')?.name).toBe('Unassigned estimates');
+  });
+
+  it('says where an imported estimate came from, for whoever reads the row', () => {
+    const row = toSolution(added('CS-03', { imported: 'Nordic.xlsx', sourceId: 'NU-014', client: 'Nordic University', estBy: 'Sam' }));
+    expect(row.ref).toBe('Imported from Nordic.xlsx (NU-014), estimated for Nordic University on 2026-03-01 by Sam');
+    expect(row.status).toBe('Estimation');
+  });
+});
+
+describe('adding a bundles workbook to the catalog', () => {
+  const current = book(
+    bundle('B01', 'Commerce & Monetization', [solution('EDU-071', 5), solution('EDU-073', 5)]),
+    bundle('B02', 'Localization', [solution('EDU-004', 160)])
+  );
+
+  it('adds what is new, updates what it names, and keeps everything it does not mention', () => {
+    const incoming = book(
+      bundle('B01', 'Commerce and monetization', [solution('EDU-071', 9), solution('EDU-200', 12)]),
+      bundle('B16', 'Mobile Apps', [solution('EDU-300', 40)])
+    );
+    const merge = mergeCatalogs(current, incoming);
+
+    expect(merge.conflicts).toEqual([]);
+    expect(merge.added.sort()).toEqual(['EDU-200', 'EDU-300']);
+    expect(merge.updated).toEqual(['EDU-071']);
+    expect(merge.kept).toBe(2);
+    expect(merge.bundlesAdded).toEqual(['B16 · Mobile Apps']);
+    expect(merge.catalog.bundles.map((one) => [one.id, one.items.map((item) => `${item.id}:${item.first}`)])).toEqual([
+      ['B01', ['EDU-073:5', 'EDU-071:9', 'EDU-200:12']],
+      ['B02', ['EDU-004:160']],
+      ['B16', ['EDU-300:40']]
+    ]);
+  });
+
+  it('works out the figures again for a bundle it changed, and for the whole catalog', () => {
+    const incoming = book(bundle('B01', 'Commerce & Monetization', [solution('EDU-200', null)]));
+    const merged = mergeCatalogs(current, incoming).catalog;
+    const b01 = merged.bundles[0]!;
+
+    expect(b01).toMatchObject({ featureCount: 3, firstHrs: 10, noEstimate: 1 });
+    /* the hero reads these, so a stale total would show the old catalog's engineered hours */
+    expect(merged.meta.totals).toMatchObject({ features: 4, firstHrs: 170, noEstimate: 1 });
+  });
+
+  it('moves a solution to the bundle the workbook now puts it in, and drops a bundle it emptied', () => {
+    const incoming = book(bundle('B01', 'Commerce & Monetization', [solution('EDU-004', 100)]));
+    const merged = mergeCatalogs(current, incoming).catalog;
+    expect(merged.bundles.map((one) => [one.id, one.items.map((item) => item.id)])).toEqual([['B01', ['EDU-071', 'EDU-073', 'EDU-004']]]);
+  });
+
+  it('works out the figures again for a bundle that lost a solution to another one', () => {
+    const incoming = book(bundle('B02', 'Localization', [solution('EDU-073', 5)]));
+    const merged = mergeCatalogs(current, incoming).catalog;
+    /* B01 is not in the workbook, but it no longer holds EDU-073, so its 10 h would be stale */
+    expect(merged.bundles[0]).toMatchObject({ id: 'B01', featureCount: 1, firstHrs: 5 });
+    expect(merged.bundles[1]?.items.map((item) => item.id)).toEqual(['EDU-004', 'EDU-073']);
+  });
+
+  it('refuses a bundle id the catalog already uses for a different bundle, and names a free one', () => {
+    const incoming = book(bundle('B02', 'AI Tutoring', [solution('EDU-500', 30)]));
+    const merge = mergeCatalogs(current, incoming);
+
+    expect(merge.conflicts).toHaveLength(1);
+    expect(merge.conflicts[0]).toMatch(/B02 is "Localization" in the catalog but "AI Tutoring" in this workbook/);
+    expect(merge.conflicts[0]).toMatch(/B03 is free/);
+    /* nothing is merged while a conflict stands */
+    expect(merge.catalog).toBe(current);
+  });
+
+  it('takes the whole workbook when the catalog in play is empty', () => {
+    const incoming = book(bundle('B01', 'Commerce', [solution('EDU-1', 5)]));
+    const merged = mergeCatalogs(book(), incoming);
+    expect(merged.catalog.bundles.map((one) => one.id)).toEqual(['B01']);
+    expect(merged.added).toEqual(['EDU-1']);
   });
 });

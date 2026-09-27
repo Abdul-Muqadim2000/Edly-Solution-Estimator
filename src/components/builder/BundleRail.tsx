@@ -1,5 +1,6 @@
 import type { Bundle, Solution } from '@/types';
 import { useApp } from '@/state/AppProvider';
+import { solutionKind } from '@/domain/catalog';
 import { color, font, radius } from '@/theme';
 import { useRowHover } from '@/components/ui';
 
@@ -17,18 +18,21 @@ export interface RailEntry {
   name: string;
   total: number;
   selected: number;
+  /** Every item in it is an estimate: its tag is violet, like the rows. */
+  estimatesOnly: boolean;
 }
 
 export function railEntries(bundles: readonly Bundle[], everySolution: readonly Solution[], sel: Record<string, boolean>): RailEntry[] {
   const count = (items: readonly Solution[]): number => items.filter((item) => sel[item.id]).length;
   return [
-    { key: 'ALL', tag: 'ALL', name: 'All solutions', total: everySolution.length, selected: count(everySolution) },
+    { key: 'ALL', tag: 'ALL', name: 'All solutions', total: everySolution.length, selected: count(everySolution), estimatesOnly: false },
     ...bundles.map((bundle) => ({
       key: bundle.id,
       tag: bundle.id,
       name: bundle.name,
       total: bundle.items.length,
-      selected: count(bundle.items)
+      selected: count(bundle.items),
+      estimatesOnly: bundle.items.length > 0 && bundle.items.every((item) => solutionKind(item) === 'estimates')
     }))
   ];
 }
@@ -58,10 +62,13 @@ function RailRow({ entry, on, narrow, onPick }: { entry: RailEntry; on: boolean;
           fontFamily: font.mono,
           fontSize: 10,
           fontWeight: 600,
-          width: 27,
-          flex: '0 0 27px',
-          color: on ? color.brand : color.chevron
+          /* wide enough for a custom bundle's "CB-01", which wrapped onto two lines at 27px */
+          width: 34,
+          flex: '0 0 34px',
+          whiteSpace: 'nowrap',
+          color: entry.estimatesOnly ? color.violet : on ? color.brand : color.chevron
         }}
+        title={entry.estimatesOnly ? 'Estimates only: priced, not built' : undefined}
       >
         {entry.tag}
       </span>
@@ -200,6 +207,9 @@ export function BundleHeader({
   onGoBundle: (id: string) => void;
 }): JSX.Element {
   const { catalog } = useApp();
+  /* counted from the rows listed, which the kind filter may have narrowed */
+  const estimates = bundle.items.filter((item) => solutionKind(item) === 'estimates').length;
+  const inDev = bundle.items.filter((item) => item.status === 'In Development').length;
   const chips = (bundle.offerWhen || '').split(/[,;·]/).map((part) => part.trim()).filter(Boolean);
   const pairs = (bundle.pairsWith || '')
     .split(/[,;·]/)
@@ -227,9 +237,17 @@ export function BundleHeader({
         >
           {bundle.id}
         </span>
-        {bundle.inDev > 0 ? (
+        {estimates > 0 ? (
+          <span
+            title="Priced by the estimation desk, not built yet"
+            style={{ fontSize: 11, fontWeight: 600, color: color.violet, background: color.violetWash, borderRadius: radius.pill, padding: '3px 10px' }}
+          >
+            {estimates >= bundle.items.length ? 'Estimates, not built' : `${estimates} ${estimates === 1 ? 'estimate' : 'estimates'}, not built`}
+          </span>
+        ) : null}
+        {inDev > 0 ? (
           <span style={{ fontSize: 11, fontWeight: 600, color: color.amber, background: color.amberWash, borderRadius: radius.pill, padding: '3px 10px' }}>
-            {bundle.inDev >= bundle.items.length ? 'In development' : `${bundle.inDev} items in development`}
+            {inDev >= bundle.items.length ? 'In development' : `${inDev} items in development`}
           </span>
         ) : null}
         <span style={{ flex: 1 }} />

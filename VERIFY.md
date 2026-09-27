@@ -24,9 +24,15 @@ this directory.
 ## verify-domain.html — the logic and the schema
 
 Runs `tests/domain.test.ts` and `tests/schema.test.ts` against the real sources, with a small
-`describe/it/expect` shim. **59 assertions**, all green on 2026-09-26. Same code Vitest runs, so a
+`describe/it/expect` shim. **81 assertions**, all green on 2026-09-27 (59 on 2026-09-26). Same code Vitest runs, so a
 green run here and a green `bun run test` mean the same thing. The shim covers `toMatchObject` and
-`.not` since that date; before it did, four assertions failed on the shim rather than on the code.
+`.not` since that date, and `toMatch` and `toHaveProperty` since 2026-09-27; before each, some
+assertions failed on the shim rather than on the code.
+
+Both runners stopped loading anything between 2026-09-26 and 2026-09-27, when server files began
+importing each other by their `.js` names for Node on Vercel: the loaders asked for
+`format.js.ts`. They now drop the `.js` before trying `.ts` and `.tsx`. If a runner shows
+"cannot resolve module", look there first.
 Chrome caches the page between runs, so add a query string (`?fresh=1`) after editing it.
 
 Covers the estimate maths (buffer ordering, role-aware cost, PM/QA overhead, double-billing
@@ -40,7 +46,8 @@ Mounts the real `<App />` and walks a full session: sign in → practice → pla
 desk → tab switches → role swap → create an estimation → parse the catalog workbook → select
 solutions → rate card → assign a role → planner → staffing → presentation mode → back to the hub.
 **29 steps**, with a final check that nothing threw. On 2026-09-26, 26 of the 29 passed on both the
-committed code and the tender-intake branch: the desk's "Add to catalog" and "Estimations" tab steps
+committed code and the tender-intake branch, and on 2026-09-27 the same 26 passed on `main` and on
+the bundles-and-estimates branch: the desk's "Add to catalog" and "Estimations" tab steps
 and the timed hover probe fail on both, so they predate the tender work and are still to be looked into.
 
 Six of those steps guard the *design and the feel*, not the logic. Two drive real `mouseover`

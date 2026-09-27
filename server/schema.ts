@@ -39,14 +39,15 @@ export const COLUMNS = {
     'integrations', 'requestedBy', 'email', 'org', 'submitted', 'estimateHours', 'repeatHours',
     'catalogId', 'bundleId', 'estimatedBy', 'estimatedOn', 'note', 'tenderId', 'tenderRequirement', 'extraJson'
   ],
-  /* `integrations` and `estimationName` came later. Both are read by name and default when absent,
-     so a sheet written before them still loads. */
+  /* `integrations` and `estimationName` came later, and so did the four columns after `direct`,
+     which only an estimate imported from a workbook fills in. All are read by name and default
+     when absent, so a sheet written before them still loads. */
   solutions: [
     'id', 'plat', 'bundleId', 'name', 'description', 'firstHours', 'repeatHours', 'form', 'deploy',
     'integrations', 'category', 'subCategory', 'account', 'limits', 'note', 'fromRequest', 'estimationName',
-    'addedOn', 'direct'
+    'addedOn', 'direct', 'importedFrom', 'sourceId', 'client', 'estimatedBy'
   ],
-  bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn'],
+  bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn', 'importedFrom'],
   settings: ['key', 'valueJson'],
   /* The counts between `updated` and `sentOn` are written for whoever scans the sheet and never
      read back: the requirements in `detailJson` are the record, and the counts follow from them. */
@@ -136,14 +137,15 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       s.first !== undefined && s.first !== null ? Number(s.first) : '',
       s.repeat !== undefined && s.repeat !== null ? Number(s.repeat) : '',
       str(s.form), str(s.deploy), str(s.integrations), str(s.category), str(s.subCategory), str(s.account),
-      str(s.limits), str(s.note), str(s.from), str(s.estName), str(s.estAt), s.direct ? 'yes' : ''
+      str(s.limits), str(s.note), str(s.from), str(s.estName), str(s.estAt), s.direct ? 'yes' : '',
+      str(s.imported), str(s.sourceId), str(s.client), str(s.estBy)
     ]);
   }
   sheets[SHEETS.solutions] = solutions;
 
   const bundles = header('bundles');
   for (const b of state.bundles ?? []) {
-    bundles.push([str(b.id), str(b.plat || 'openedx'), str(b.name), str(b.pitch), str(b.offerWhen), str(b.pairsWith), str(b.at)]);
+    bundles.push([str(b.id), str(b.plat || 'openedx'), str(b.name), str(b.pitch), str(b.offerWhen), str(b.pairsWith), str(b.at), str(b.imported)]);
   }
   sheets[SHEETS.bundles] = bundles;
 
@@ -293,20 +295,29 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       };
       /* only a solution priced from a request belongs to a deal; one entered at the desk has none */
       if (r.estimationName) out.estName = r.estimationName;
+      /* set only when present, like estName, so a solution priced in the app reads back as written */
+      if (r.importedFrom) out.imported = r.importedFrom;
+      if (r.sourceId) out.sourceId = r.sourceId;
+      if (r.client) out.client = r.client;
+      if (r.estimatedBy) out.estBy = r.estimatedBy;
       return out;
     })
     .filter((s) => s.id);
 
   const bundles: AddedBundle[] = objects(workbook[SHEETS.bundles])
-    .map((r) => ({
-      id: r.id ?? '',
-      plat: r.plat || 'openedx',
-      name: r.name ?? '',
-      pitch: r.pitch ?? '',
-      offerWhen: r.offerWhen ?? '',
-      pairsWith: r.pairsWith || null,
-      at: r.addedOn ?? ''
-    }))
+    .map((r) => {
+      const out: AddedBundle = {
+        id: r.id ?? '',
+        plat: r.plat || 'openedx',
+        name: r.name ?? '',
+        pitch: r.pitch ?? '',
+        offerWhen: r.offerWhen ?? '',
+        pairsWith: r.pairsWith || null,
+        at: r.addedOn ?? ''
+      };
+      if (r.importedFrom) out.imported = r.importedFrom;
+      return out;
+    })
     .filter((b) => b.id);
 
   const settings: Record<string, unknown> = {};

@@ -94,8 +94,12 @@ export const color = {
   amberGlow: '#F3C88B',
   amberOnDark: '#3B3222',
 
+  /** Estimates: priced by the desk, never built. Everything violet in the app means that. */
   violet: '#5B3FBF',
   violetWash: '#F0ECFB',
+  violetEdge: '#C9BDF0',
+  /** Violet legible on the dark estimate column. */
+  violetGlow: '#B7A6F5',
 
   dark: '#242424',
   darkSoft: '#363636',

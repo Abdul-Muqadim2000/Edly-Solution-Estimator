@@ -76,6 +76,15 @@ describe('parseRoute', () => {
     expect(parseRoute('/p/openedx/e/%E0%A4%A')).toMatchObject({ screen: 'builder', platform: 'openedx' });
   });
 
+  it('reads the bundles-or-estimates filter off a builder link', () => {
+    expect(parseRoute('/p/openedx/e/acme-academy/b/all?kind=estimates')).toMatchObject({ bundle: 'all', kind: 'estimates' });
+    expect(parseRoute('/p/openedx/e/acme-academy?kind=bundles').kind).toBe('bundles');
+  });
+
+  it('drops a filter it does not know, rather than filtering the catalog down to nothing', () => {
+    expect(parseRoute('/p/openedx/e/acme-academy?kind=everything')).toEqual({ screen: 'builder', platform: 'openedx', estimation: 'acme-academy' });
+  });
+
   it('ignores an unknown desk tab instead of showing a blank one', () => {
     expect(parseRoute('/p/openedx/desk/nope')).toEqual({ screen: 'desk', platform: 'openedx', tab: 'queue' });
   });
@@ -90,6 +99,8 @@ describe('formatRoute', () => {
     { screen: 'builder', platform: 'openedx', estimation: 'acme-academy' },
     { screen: 'builder', platform: 'openedx', estimation: 'acme-academy', bundle: 'B03' },
     { screen: 'builder', platform: 'openedx', estimation: 'acme-academy', bundle: ALL_BUNDLES, q: 'sso', plan: true },
+    { screen: 'builder', platform: 'openedx', estimation: 'acme-academy', bundle: ALL_BUNDLES, kind: 'estimates' },
+    { screen: 'builder', platform: 'openedx', estimation: 'acme-academy', bundle: 'B03', q: 'sso', kind: 'bundles', plan: true },
     { screen: 'desk', platform: 'openedx', tab: 'queue' },
     { screen: 'desk', platform: 'openedx', tab: 'add' },
     { screen: 'desk', platform: 'openedx', estimation: 'acme-academy', tab: 'estimations' }
@@ -107,7 +118,7 @@ describe('formatRoute', () => {
 
   it('keeps search and the planner off screens that have neither', () => {
     /* emitting them elsewhere would make format and parse disagree, and Back would misbehave */
-    expect(formatRoute({ screen: 'hub', platform: 'openedx', q: 'sso', plan: true })).toBe('/p/openedx');
+    expect(formatRoute({ screen: 'hub', platform: 'openedx', q: 'sso', plan: true, kind: 'estimates' })).toBe('/p/openedx');
   });
 
   it('escapes a slug so a stray slash cannot invent a segment', () => {
@@ -123,6 +134,8 @@ describe('formatRoute', () => {
     expect(withoutSearch(`${bundle}?plan=1`)).not.toBe(withoutSearch(bundle));
     /* and a planner opened over a search is still a push */
     expect(withoutSearch(`${bundle}?q=sso&plan=1`)).not.toBe(withoutSearch(`${bundle}?q=sso`));
+    /* the kind filter is a click, not typing, so Back undoes it */
+    expect(withoutSearch(`${bundle}?kind=estimates`)).not.toBe(withoutSearch(bundle));
   });
 
   it('compares two routes by the URL they produce', () => {
