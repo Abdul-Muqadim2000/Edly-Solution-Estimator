@@ -8,6 +8,7 @@ import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices'
 import { composeCatalog } from '@/domain/catalog';
 import { calcEstimate } from '@/domain/estimate';
 import { schedule as buildSchedule } from '@/domain/planner';
+import { readSheetPrefs } from '@/domain/taskBreakdown';
 import { fetchCatalog, parseCatalogWorkbook } from '@/lib/catalogSheet';
 import { fingerprint } from '@/lib/xlsx';
 import { today, withSlugs } from '@/lib/format';
@@ -74,7 +75,7 @@ function seedEstimation(): Estimation {
 
 function hydrateFromStorage(): Partial<AppState> {
   const platform = readStorage<{ practice?: string; plat?: string } | null>(STORAGE_KEYS.platform, null);
-  const workspace = readStorage<{ display?: DisplayPrefs; presenting?: boolean } | null>(STORAGE_KEYS.workspace, null);
+  const workspace = readStorage<{ display?: DisplayPrefs; sheet?: unknown } | null>(STORAGE_KEYS.workspace, null);
   const stored = readStorage<Estimation[]>(STORAGE_KEYS.estimations, []);
   return {
     auth: readStorage(STORAGE_KEYS.auth, null),
@@ -91,6 +92,7 @@ function hydrateFromStorage(): Partial<AppState> {
     catalogSource: readStorage(STORAGE_KEYS.catalogSource, null),
     display: workspace?.display ?? INITIAL_STATE.display,
     presenting: false,
+    sheet: readSheetPrefs(workspace?.sheet),
     ready: true
   };
 }
@@ -182,7 +184,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     };
     for (const key of changedSlices(written.current, slices)) writeStorage(key, slices[key]);
     written.current = slices;
-    writeStorage(STORAGE_KEYS.workspace, { display: state.display });
+    writeStorage(STORAGE_KEYS.workspace, { display: state.display, sheet: state.sheet });
     writeStorage(STORAGE_KEYS.openEstimation, state.openEstimation ?? '');
     if (state.platform) writeStorage(STORAGE_KEYS.platform, { practice: state.practice, plat: state.platform });
     if (state.auth) writeStorage(STORAGE_KEYS.auth, state.auth);

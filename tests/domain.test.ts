@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Catalog, EstimateRequest, EstimationSnapshot, Solution } from '../src/types';
-import { cachedTotals, calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
+import { cachedTotals, calcEstimate, DEFAULT_ROLES, overheadRoleOf, roleLabel, SENIORITY_LEVELS } from '../src/domain/estimate';
 import { peopleForDuration, reorder, schedule } from '../src/domain/planner';
 import { allSolutions, categories, composeCatalog, diffCatalogs, guessBundle, subCategories, toSolution } from '../src/domain/catalog';
 import { nextId } from '../src/lib/format';
@@ -133,6 +133,57 @@ describe('calcEstimate', () => {
     const result = calcEstimate(book, snapshot({ sel: { A: true, B: true } }), []);
     /* 100 first vs 400 engineered */
     expect(result.savedPct).toBe(75);
+  });
+});
+
+describe('seniority on the rate card', () => {
+  const book = catalog([solution('A', 40), solution('B', 60)]);
+
+  it('names a role by its level and title, the way people say it', () => {
+    expect(roleLabel({ name: 'Engineer', level: 'Senior' })).toBe('Senior Engineer');
+    expect(roleLabel({ name: 'Engineer', level: 'Junior' })).toBe('Junior Engineer');
+    expect(roleLabel({ name: 'Designer' })).toBe('Designer');
+  });
+
+  it('does not say the level twice on a card saved before levels existed', () => {
+    /* an older card already called the role "Senior Engineer"; giving it the level Senior must not
+       turn it into "Senior Senior Engineer" */
+    expect(roleLabel({ name: 'Senior Engineer', level: 'Senior' })).toBe('Senior Engineer');
+    expect(roleLabel({ name: 'Senior Engineer' })).toBe('Senior Engineer');
+  });
+
+  it('gives every default role a level, and keeps the ids lines are assigned to', () => {
+    expect(DEFAULT_ROLES.map((role) => role.id)).toEqual(['sr', 'eng', 'devops', 'qa', 'pm']);
+    for (const role of DEFAULT_ROLES) expect(SENIORITY_LEVELS).toContain(role.level);
+    /* the first default still reads as it always did */
+    expect(roleLabel(DEFAULT_ROLES[0]!)).toBe('Senior Engineer');
+  });
+
+  it('bills one role at two levels at two rates', () => {
+    const roles = [
+      { id: 'eng-sr', name: 'Engineer', level: 'Senior' as const, rate: 60 },
+      { id: 'eng-jr', name: 'Engineer', level: 'Junior' as const, rate: 30 }
+    ];
+    const result = calcEstimate(book, snapshot({ sel: { A: true, B: true }, rate: 100, roles, lineRole: { A: 'eng-sr', B: 'eng-jr' } }), []);
+    expect(result.usd).toBe(40 * 60 + 60 * 30);
+    expect(result.roleRows.map((row) => row.name).sort()).toEqual(['Junior Engineer', 'Senior Engineer']);
+  });
+
+  it('says which role an overhead row bills at, so the team sheet can put it on that role', () => {
+    const result = calcEstimate(book, snapshot({ sel: { A: true }, pm: 10, qa: 5, rate: 100, roles: [...DEFAULT_ROLES] }), []);
+    expect(result.roleRows.find((row) => row.id === 'ov-pm')?.roleId).toBe('pm');
+    expect(result.roleRows.find((row) => row.id === 'ov-qa')?.roleId).toBe('qa');
+    expect(result.roleRows.find((row) => row.id === 'ov-pm')?.name).toBe('PM overhead · Senior Project Manager');
+  });
+
+  it('finds the overhead role by its chosen id, then by name, and falls back to the blended rate', () => {
+    const roles = [
+      { id: 'lead', name: 'Delivery Lead', rate: 70 },
+      { id: 'tester', name: 'Quality Analyst', rate: 30 }
+    ];
+    expect(overheadRoleOf('pm', { pmRole: 'lead' }, roles)?.id).toBe('lead');
+    expect(overheadRoleOf('qa', {}, roles)?.id).toBe('tester');
+    expect(overheadRoleOf('pm', {}, roles)).toBeNull();
   });
 });
 

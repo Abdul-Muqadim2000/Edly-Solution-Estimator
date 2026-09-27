@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
 import { coerceState, COLUMNS, countRows, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
 import type { Catalog, PersistedState, Tender, TenderRequirement } from '../src/types';
+import { DEFAULT_SHEET, readSheetPrefs } from '../src/domain/taskBreakdown';
 
 /**
  * These tests exist because every one of them once failed.
@@ -83,7 +84,9 @@ function sample(): PersistedState {
           gs: { B01: 0, B05: 2.5 },
           roles: [
             { id: 'sr', name: 'Senior Engineer', rate: 55 },
-            { id: 'devops', name: 'DevOps', rate: 50 }
+            { id: 'devops', name: 'DevOps', rate: 50 },
+            { id: 'eng-jr', name: 'Engineer', level: 'Junior', rate: 30 },
+            { id: 'eng-lead', name: 'Engineer', level: 'Lead', rate: 70 }
           ],
           lineRole: { 'EDU-071': 'devops', 'EDU-041': 'sr' },
           pmRole: 'pm',
@@ -91,7 +94,12 @@ function sample(): PersistedState {
           plan: { 'EDU-071': { start: 2, people: 3, order: 0 }, 'EDU-041': { people: 2, order: 1 } },
           hpw: 38,
           maxPar: 5,
-          planStart: '2026-10-01'
+          planStart: '2026-10-01',
+          sheet: {
+            contact: 'Jane Rivera, Edly',
+            comments: 'Phase one covers payments only.\n\nPhase two follows sign-off.',
+            notes: { 'EDU-071': 'Assumes a live Stripe account.', 'RQ-01': 'Proctoring vendor chosen by the client.' }
+          }
         }
       },
       {
@@ -234,7 +242,10 @@ function sample(): PersistedState {
     settings: {
       'edly-platform-v2': { practice: 'edtech', plat: 'openedx' },
       'edly-open-estimation-v2': 'EST-1',
-      'edly-workspace-v2': { display: { savings: true, notes: true, money: false, controls: true, blendBuffer: false } },
+      'edly-workspace-v2': {
+        display: { savings: true, notes: true, money: false, controls: true, blendBuffer: false },
+        sheet: { columns: { ...DEFAULT_SHEET.columns, solutionId: true, notes: false }, sections: { ...DEFAULT_SHEET.sections, cover: false } }
+      },
       'edly-loaded-catalogs-v2': { openedx: catalog, moodle: catalog }
     },
     tenders: [tender()]
@@ -397,6 +408,42 @@ describe('spreadsheet round-trip', () => {
   it('keeps custom bundle categories', async () => {
     const back = await roundTrip(sample());
     expect(back.bundles[0]?.name).toBe('Deployment & Infrastructure');
+  });
+
+  it('keeps the words on the Excel sheet: contact, comments and every line note', async () => {
+    const back = await roundTrip(sample());
+    /* written by sales for one client, so they travel with the deal, blank lines and all */
+    expect(back.estimations[0]?.snap.sheet).toEqual({
+      contact: 'Jane Rivera, Edly',
+      comments: 'Phase one covers payments only.\n\nPhase two follows sign-off.',
+      notes: { 'EDU-071': 'Assumes a live Stripe account.', 'RQ-01': 'Proctoring vendor chosen by the client.' }
+    });
+  });
+
+  it("keeps each rate-card role's seniority, and reads a card saved before levels as having none", async () => {
+    const back = await roundTrip(sample());
+    const roles = back.estimations[0]?.snap.roles ?? [];
+    expect(roles.map((role) => [role.id, role.level])).toEqual([
+      ['sr', undefined],
+      ['devops', undefined],
+      ['eng-jr', 'Junior'],
+      ['eng-lead', 'Lead']
+    ]);
+  });
+
+  it('reads a deal saved before the Excel sheet had words of its own as having none', async () => {
+    const back = await roundTrip(sample());
+    expect(back.estimations[1]?.snap.sheet).toBeUndefined();
+  });
+
+  it('keeps the Excel sheet choices beside the display settings', async () => {
+    const back = await roundTrip(sample());
+    const workspace = back.settings['edly-workspace-v2'] as { sheet?: unknown };
+    const prefs = readSheetPrefs(workspace.sheet);
+    expect(prefs.columns.solutionId).toBe(true);
+    expect(prefs.columns.notes).toBe(false);
+    expect(prefs.sections.cover).toBe(false);
+    expect(prefs).toEqual(workspace.sheet);
   });
 
   it('keeps settings, including a raw string value', async () => {

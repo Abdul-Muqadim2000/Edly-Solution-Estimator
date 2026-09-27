@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState, type PointerEvent as ReactPoint
 import type { PlanTask } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { peopleForDuration, reorder, SNAP } from '@/domain/planner';
+import { roleLabel } from '@/domain/estimate';
 import { color, font, radius, roleColor } from '@/theme';
 import { hours, hours1, plural } from '@/lib/format';
 import { Banner, Button, Modal, Mono, Row, Select, Spacer } from '@/components/ui';
@@ -304,11 +305,12 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
                   </span>
                   {editable ? (
                     <>
-                      <span style={{ flex: '0 0 96px' }}>
+                      {/* wide enough to tell "Mid-level Engineer" from "Mid-level DevOps Engineer" */}
+                      <span style={{ flex: '0 0 150px', minWidth: 0 }}>
                         <Select
                           value={task.role?.id ?? ''}
                           hint={`Who does this work — billed at ${task.role ? task.role.rate : estimate.rate} USD/h. Shared with the rate card.`}
-                          options={[{ value: '', label: 'Unassigned' }, ...estimate.roles.map((role) => ({ value: role.id, label: role.name }))]}
+                          options={[{ value: '', label: 'Unassigned' }, ...estimate.roles.map((role) => ({ value: role.id, label: roleLabel(role) }))]}
                           onChange={(value) => dispatch({ type: 'assignRole', ids: [task.key], roleId: value || null })}
                         />
                       </span>
@@ -411,7 +413,7 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
             {estimate.roles.map((role, index) => (
               <span key={role.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ width: 10, height: 10, borderRadius: 3, background: roleColor(index) }} />
-                {role.name}
+                {roleLabel(role)}
               </span>
             ))}
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

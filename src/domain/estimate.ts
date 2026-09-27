@@ -1,5 +1,6 @@
 import type {
   Catalog,
+  SeniorityLevel,
   EstimateGroup,
   EstimateRequest,
   EstimateResult,
@@ -18,19 +19,50 @@ import { color, roleColor } from '@/theme';
  * hour are not the same money. Lines with no role fall back to the blended rate.
  */
 
+/* The ids are what lines are assigned to, so they never change; names and levels can. */
 export const DEFAULT_ROLES: readonly RateRole[] = [
-  { id: 'sr', name: 'Senior Engineer', rate: 55 },
-  { id: 'eng', name: 'Engineer', rate: 45 },
-  { id: 'devops', name: 'DevOps', rate: 50 },
-  { id: 'qa', name: 'QA Engineer', rate: 35 },
-  { id: 'pm', name: 'Project Manager', rate: 40 }
+  { id: 'sr', name: 'Engineer', level: 'Senior', rate: 55 },
+  { id: 'eng', name: 'Engineer', level: 'Mid-level', rate: 45 },
+  { id: 'devops', name: 'DevOps Engineer', level: 'Mid-level', rate: 50 },
+  { id: 'qa', name: 'QA Engineer', level: 'Mid-level', rate: 35 },
+  { id: 'pm', name: 'Project Manager', level: 'Senior', rate: 40 }
 ];
+
+export const SENIORITY_LEVELS: readonly SeniorityLevel[] = ['Junior', 'Mid-level', 'Senior', 'Lead', 'Principal'];
+
+/**
+ * A role as one phrase: "Senior Engineer", "Junior Engineer", or the bare name without a level.
+ *
+ * A rate card saved before seniority existed may already say "Senior Engineer"; given the level
+ * Senior as well it stays "Senior Engineer" rather than becoming "Senior Senior Engineer".
+ */
+export function roleLabel(role: Pick<RateRole, 'name' | 'level'>): string {
+  const name = role.name.trim();
+  if (!role.level || name.toLowerCase().startsWith(role.level.toLowerCase())) return name;
+  return `${role.level} ${name}`;
+}
 
 export const DEFAULT_RATE = 60;
 
 export function rolesOf(snap: Pick<EstimationSnapshot, 'roles'> | null | undefined): RateRole[] {
   const roles = snap?.roles;
   return Array.isArray(roles) && roles.length > 0 ? roles : [...DEFAULT_ROLES];
+}
+
+/**
+ * The rate-card role PM or QA overhead bills at: the one chosen for it, else the role with that id,
+ * else the first whose name says project manager or QA. Null means the blended rate.
+ */
+export function overheadRoleOf(
+  kind: 'pm' | 'qa',
+  snap: Pick<EstimationSnapshot, 'pmRole' | 'qaRole'>,
+  roles: readonly RateRole[]
+): RateRole | null {
+  const preferred = kind === 'pm' ? snap.pmRole : snap.qaRole;
+  const direct = roles.find((role) => role.id === (preferred ?? kind));
+  if (direct) return direct;
+  const pattern = kind === 'pm' ? /project|manager|^pm$/i : /qa|quality/i;
+  return roles.find((role) => pattern.test(role.name)) ?? null;
 }
 
 /** Ids a request has claimed as its catalog entry — those lines bill through the request. */
@@ -141,7 +173,7 @@ export function calcEstimate(
       agg.get(key) ??
       ({
         id: key,
-        name: role?.name ?? 'Unassigned · blended',
+        name: role ? roleLabel(role) : 'Unassigned · blended',
         rate: lineRate,
         color: role?.color ?? color.faint,
         hrs: 0,
@@ -164,12 +196,8 @@ export function calcEstimate(
   for (const r of requests) if (Number(r.est) > 0) bill(r.id, Number(r.est) * bufferFactor);
 
   const overheadRole = (kind: 'pm' | 'qa'): (RateRole & { color: string }) | null => {
-    const preferred = kind === 'pm' ? snap.pmRole : snap.qaRole;
-    const direct = byId.get(preferred ?? kind);
-    if (direct) return direct;
-    const pattern = kind === 'pm' ? /project|manager|^pm$/i : /qa|quality/i;
-    const found = roles.map((r, i) => ({ ...r, color: roleColor(i) })).find((r) => pattern.test(r.name));
-    return found ?? null;
+    const found = overheadRoleOf(kind, snap, roles);
+    return found ? byId.get(found.id) ?? null : null;
   };
 
   const addOverhead = (kind: 'pm' | 'qa', hrs: number, label: string): void => {
@@ -177,13 +205,14 @@ export function calcEstimate(
     const role = overheadRole(kind);
     agg.set(`ov-${kind}`, {
       id: `ov-${kind}`,
-      name: `${label} · ${role?.name ?? 'blended'}`,
+      name: `${label} · ${role ? roleLabel(role) : 'blended'}`,
       rate: role ? Number(role.rate) : rate,
       color: role?.color ?? color.faint,
       hrs,
       cost: hrs * (role ? Number(role.rate) : rate),
       assigned: Boolean(role),
-      overhead: true
+      overhead: true,
+      roleId: role?.id ?? ''
     });
   };
 

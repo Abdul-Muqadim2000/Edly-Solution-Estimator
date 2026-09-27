@@ -16,6 +16,7 @@ import type {
   RequirementPriority,
   RequirementStatus,
   Role,
+  SheetDetails,
   Tender,
   TenderRange,
   TenderRequirement,
@@ -36,6 +37,7 @@ import {
   type ExtractedRequirement,
   type NewTenderInput
 } from '@/domain/tender';
+import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
 import { nextId, today, uniqueSlug } from '@/lib/format';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
 
@@ -109,6 +111,8 @@ export interface AppState {
 
   display: DisplayPrefs;
   presenting: boolean;
+  /** What goes in the downloaded Excel sheet. Separate from what the screen shows. */
+  sheet: SheetPrefs;
 
   /** Catalog loaded by hand, per platform id. */
   loadedCatalogs: Record<string, Catalog>;
@@ -140,6 +144,7 @@ export const INITIAL_STATE: AppState = {
   draft: { ...EMPTY_SNAPSHOT },
   display: { ...DEFAULT_DISPLAY },
   presenting: false,
+  sheet: DEFAULT_SHEET,
   loadedCatalogs: {},
   catalogError: null,
   catalogSource: null,
@@ -232,6 +237,10 @@ export type Action =
   | { type: 'setCurrency'; currency: CurrencyCode }
   | { type: 'setDisplay'; patch: Partial<DisplayPrefs> }
   | { type: 'togglePresenting' }
+  | { type: 'setSheet'; columns?: Partial<Record<SheetColumnId, boolean>>; sections?: Partial<Record<SheetSectionId, boolean>> }
+  | { type: 'resetSheet' }
+  | { type: 'setSheetDetails'; patch: Pick<SheetDetails, 'contact' | 'comments'> }
+  | { type: 'setLineNote'; id: string; note: string }
   | { type: 'addRequest'; input: NewRequestInput }
   | { type: 'addManualItem'; title: string; hours: number }
   | { type: 'deleteRequest'; id: string }
@@ -568,6 +577,38 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'togglePresenting':
       return { ...state, presenting: !state.presenting };
+
+    /* unlike setDisplay, this leaves presenting alone: the sheet is not what the client is watching */
+    case 'setSheet':
+      return {
+        ...state,
+        sheet: readSheetPrefs({
+          columns: { ...state.sheet.columns, ...action.columns },
+          sections: { ...state.sheet.sections, ...action.sections }
+        })
+      };
+
+    case 'resetSheet':
+      return { ...state, sheet: DEFAULT_SHEET };
+
+    case 'setSheetDetails': {
+      const sheet: SheetDetails = { ...(state.draft.sheet ?? {}) };
+      for (const key of ['contact', 'comments'] as const) {
+        if (!(key in action.patch)) continue;
+        const value = action.patch[key] ?? '';
+        if (value.trim()) sheet[key] = value;
+        else delete sheet[key];
+      }
+      return { ...state, draft: { ...state.draft, sheet } };
+    }
+
+    case 'setLineNote': {
+      const notes = { ...(state.draft.sheet?.notes ?? {}) };
+      /* a cleared note is removed, not stored as an empty string the sheet would print */
+      if (action.note.trim()) notes[action.id] = action.note;
+      else delete notes[action.id];
+      return { ...state, draft: { ...state.draft, sheet: { ...(state.draft.sheet ?? {}), notes } } };
+    }
 
     case 'addRequest': {
       const open = state.estimations.find((estimation) => estimation.id === state.openEstimation);

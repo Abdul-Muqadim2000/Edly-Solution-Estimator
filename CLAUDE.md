@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 514 tests across seventeen files.
+`bun run test` runs 618 tests across nineteen files.
 
 | File | Covers |
 |---|---|
@@ -159,7 +159,9 @@ reference.
 | `tests/providers.test.ts` | Google Sheets, OneDrive, Dropbox, against a stubbed `fetch` |
 | `tests/xlsx.test.ts` | the hand-written `.xlsx` reader and writer |
 | `tests/catalogSheet.test.ts` | the master catalog workbook and hand-edited sheets |
-| `tests/quoteExport.test.ts` | the workbook a client receives |
+| `tests/quoteExport.test.ts` | the branded task-breakdown workbook a client receives |
+| `tests/taskBreakdown.test.ts` | the Excel sheet's deliverables, lines and totals, checked against `calcEstimate` |
+| `tests/team.test.ts` | the team composition: role and seniority from the rate card, people and weeks from the plan |
 | `tests/mail.test.ts` | the desk emails and the clipboard fallback |
 | `tests/format.test.ts` | money, hours, dates, the plain-text quote |
 | `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges, desk drafts |
@@ -169,17 +171,17 @@ reference.
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-09-26):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-09-27):
 
 | | |
 |---|---|
-| Statements | 96.0% |
-| Lines | 97.5% |
-| Functions | 97.3% |
-| Branches | 83.5% |
+| Statements | 96.9% |
+| Lines | 98.1% |
+| Functions | 98.1% |
+| Branches | 85.7% |
 
-The thresholds in `vitest.config.ts` are floors: 95% statements, 82% branches, 96% functions and
-96% lines, each set just under the figures above when the tender intake landed. A change that
+The thresholds in `vitest.config.ts` are floors: 96% statements, 85% branches, 97% functions and
+97% lines, each set just under the figures above when the Excel task breakdown landed. A change that
 drops coverage below them fails the run. Raise them when you can. Do not lower them to make a
 change pass.
 
@@ -399,6 +401,15 @@ The spreadsheets hold real deal names, client names and pricing.
   chunk is pipe-wrapped. Excel truncates a longer cell silently, and the reader trims cells. The
   pipe wrapping applies to the chunked `Settings` rows, not to the estimation snapshot column.
 - `src/domain/planner.ts`: the packing loop is bounded (`guard < 800`). Keep a bound.
+- `src/lib/quoteExport.ts`: the Excel sheet carries what the builder's Excel sheet panel ticks,
+  whatever the Display settings show on screen. Untick Estimate, Rate and Cost by role and no
+  money may reach the file by any route; `tests/quoteExport.test.ts` holds that. Its numbers come
+  from `taskBreakdown` in `src/domain/`, which is checked against `calcEstimate`, so lay figures
+  out there rather than working them out in the writer. Row heights are estimated on purpose:
+  Excel does not grow a wrapped row in a file it did not lay out, nor a merged one ever. The
+  layout copies Edly's own task-breakdown template row for row (widths, spacer rows, fonts, and
+  `sheetColor` in `theme.ts`); anything added beyond the template reuses its bands and header
+  rather than inventing a new look. The tests in the "the look" block pin it.
 - `src/lib/catalogSheet.ts`: header matching claims exact matches before prefixes, so "Bundle ID"
   is not stolen by the "Bundle" alias. Keep that order.
 - `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses.

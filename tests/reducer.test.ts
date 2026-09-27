@@ -261,6 +261,18 @@ describe('selection and per-line settings', () => {
     expect(reducer(state, { type: 'setLineBuffer', id: 'OX-1', hours: null }).draft.buf).toEqual({});
   });
 
+  it('keeps each seniority level of a role as its own rate-card row, assigned by id', () => {
+    const roles = [
+      { id: 'eng-sr', name: 'Engineer', level: 'Senior' as const, rate: 60 },
+      { id: 'eng-jr', name: 'Engineer', level: 'Junior' as const, rate: 30 }
+    ];
+    const state = run(open, { type: 'setRoles', roles }, { type: 'assignRole', ids: ['OX-1'], roleId: 'eng-jr' });
+    expect(state.draft.roles).toEqual(roles);
+    /* the same name twice is fine: a line points at a row, so at a level and its rate */
+    expect(state.draft.lineRole).toEqual({ 'OX-1': 'eng-jr' });
+    expect(commitDraft(state)[0]?.snap.roles?.[1]?.level).toBe('Junior');
+  });
+
   it('assigns a role to several lines, and unassigns with null', () => {
     const assigned = reducer(open, { type: 'assignRole', ids: ['OX-1', 'OX-2'], roleId: 'be' });
     expect(assigned.draft.lineRole).toEqual({ 'OX-1': 'be', 'OX-2': 'be' });
@@ -605,6 +617,83 @@ describe('what the client is allowed to see', () => {
     /* otherwise the toggle appears dead: you flip "show money" and nothing happens */
     expect(next.presenting).toBe(false);
     expect(next.display.money).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------- the Excel sheet */
+
+describe('what goes in the Excel sheet', () => {
+  const open = workspace({ estimations: [estimation('EST-1')], openEstimation: 'EST-1' });
+
+  it("starts with Edly's template columns, hours and estimate ticked", () => {
+    const { columns } = INITIAL_STATE.sheet;
+    for (const id of ['deliverable', 'area', 'component', 'description', 'status', 'notes', 'hours', 'estimate'] as const) {
+      expect(columns[id]).toBe(true);
+    }
+    expect(columns.solutionId).toBe(false);
+    expect(columns.internal).toBe(false);
+  });
+
+  it('ticks and unticks one column without touching the others', () => {
+    const state = reducer(open, { type: 'setSheet', columns: { solutionId: true, notes: false } });
+    expect(state.sheet.columns.solutionId).toBe(true);
+    expect(state.sheet.columns.notes).toBe(false);
+    expect(state.sheet.columns.hours).toBe(true);
+    expect(state.sheet.sections).toEqual(INITIAL_STATE.sheet.sections);
+  });
+
+  it('never drops the Component column, which every other column describes', () => {
+    const state = reducer(open, { type: 'setSheet', columns: { component: false } });
+    expect(state.sheet.columns.component).toBe(true);
+  });
+
+  it('switches sheets and sections independently of the columns', () => {
+    const state = reducer(open, { type: 'setSheet', sections: { cover: false, roles: true } });
+    expect(state.sheet.sections.cover).toBe(false);
+    expect(state.sheet.sections.roles).toBe(true);
+    expect(state.sheet.columns).toEqual(INITIAL_STATE.sheet.columns);
+  });
+
+  it('puts everything back with reset', () => {
+    const changed = run(open, { type: 'setSheet', columns: { hours: false } }, { type: 'setSheet', sections: { terms: false } });
+    expect(reducer(changed, { type: 'resetSheet' }).sheet).toEqual(INITIAL_STATE.sheet);
+  });
+
+  it('leaves presenting alone, unlike a display setting', () => {
+    /* the sheet is not what the client is watching, so choosing columns must not end the demo */
+    const presenting = reducer(open, { type: 'togglePresenting' });
+    expect(reducer(presenting, { type: 'setSheet', columns: { item: true } }).presenting).toBe(true);
+  });
+
+  it("keeps the contact and comments on the open estimation's draft", () => {
+    const state = reducer(open, { type: 'setSheetDetails', patch: { contact: 'Jane Rivera', comments: 'Phase one only.' } });
+    expect(state.draft.sheet).toEqual({ contact: 'Jane Rivera', comments: 'Phase one only.' });
+    /* and they are saved with the deal, not with the browser */
+    expect(commitDraft(state)[0]?.snap.sheet?.contact).toBe('Jane Rivera');
+  });
+
+  it('changes one detail without clearing the other, and removes one cleared to blank', () => {
+    const both = reducer(open, { type: 'setSheetDetails', patch: { contact: 'Jane', comments: 'Phase one.' } });
+    const contactOnly = reducer(both, { type: 'setSheetDetails', patch: { comments: '  ' } });
+    expect(contactOnly.draft.sheet).toEqual({ contact: 'Jane' });
+  });
+
+  it('removes a line note cleared to blank rather than storing an empty string', () => {
+    const noted = reducer(open, { type: 'setLineNote', id: 'OX-1', note: 'Client supplies the logo files.' });
+    expect(noted.draft.sheet?.notes).toEqual({ 'OX-1': 'Client supplies the logo files.' });
+
+    /* an empty string would print as a blank line above the caveats in the client's file */
+    expect(reducer(noted, { type: 'setLineNote', id: 'OX-1', note: ' ' }).draft.sheet?.notes).toEqual({});
+  });
+
+  it('keeps the other notes and the cover details when one note changes', () => {
+    const state = run(
+      open,
+      { type: 'setSheetDetails', patch: { contact: 'Jane' } },
+      { type: 'setLineNote', id: 'OX-1', note: 'One' },
+      { type: 'setLineNote', id: 'RQ-01', note: 'Two' }
+    );
+    expect(state.draft.sheet).toEqual({ contact: 'Jane', notes: { 'OX-1': 'One', 'RQ-01': 'Two' } });
   });
 });
 

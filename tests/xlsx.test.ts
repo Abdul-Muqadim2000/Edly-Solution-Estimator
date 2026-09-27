@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fingerprint, readWorkbook, rowsToObjects, unzip, writeWorkbook, type StyledSheet } from '../src/lib/xlsx';
+import { fingerprint, readWorkbook, rowsToObjects, unzip, writeWorkbook, type CellStyle, type StyledSheet } from '../src/lib/xlsx';
 
 /**
  * The spreadsheet reader and writer, which are written here rather than installed.
@@ -131,24 +131,92 @@ describe('the wide and tall cases', () => {
 });
 
 describe('styled sheets', () => {
+  const heading: CellStyle = { font: { name: 'Arial', size: 20, bold: true, color: '#DD1F25' }, border: { bottom: { style: 'medium', color: '#DD1F25' } } };
+  const figure: CellStyle = { numFmt: '"$"#,##0', align: { h: 'right' }, fill: '#EBF9F6' };
   const styled: StyledSheet = {
     rows: [
-      { cells: [{ v: 'Heading', s: 1 }], h: 24 },
-      { cells: [{ v: 'Body' }, { n: 120, s: 3 }] }
+      { cells: [{ v: 'Heading', s: heading }], h: 24 },
+      { cells: [{ v: 'Body' }, { n: 120, s: figure }, { n: 80, s: { ...figure } }] }
     ],
     merges: ['A1:B1'],
     widths: [40, 12]
   };
+  const text = (files: Record<string, Uint8Array>, name: string): string => new TextDecoder().decode(files[name]);
 
   it('reads back as the same values, whatever the formatting', async () => {
     const back = await readWorkbook(writeWorkbook({ Quote: styled }));
     expect(back.Quote?.[0]?.[0]).toBe('Heading');
-    expect(back.Quote?.[1]).toEqual(['Body', '120']);
+    expect(back.Quote?.[1]).toEqual(['Body', '120', '80']);
   });
 
-  it('writes the styles part, so the formatting is not silently dropped', async () => {
+  it('writes each look into the style table: font, fill, border and number format', async () => {
+    const styles = text(await unzip(writeWorkbook({ Quote: styled })), 'xl/styles.xml');
+    expect(styles).toContain('<b/><sz val="20"/><color rgb="FFDD1F25"/><name val="Arial"/>');
+    expect(styles).toContain('<fgColor rgb="FFEBF9F6"/>');
+    expect(styles).toContain('<bottom style="medium"><color rgb="FFDD1F25"/></bottom>');
+    expect(styles).toContain('formatCode="&quot;$&quot;#,##0"');
+  });
+
+  it('keeps the two fills Excel reserves in the first two places', async () => {
+    /* Excel repairs, or refuses, a file whose fills do not start with none and gray125 */
+    const styles = text(await unzip(writeWorkbook({ Quote: styled })), 'xl/styles.xml');
+    expect(styles).toMatch(/<fills count="\d+"><fill><patternFill patternType="none"\/><\/fill><fill><patternFill patternType="gray125"\/><\/fill>/);
+  });
+
+  it('shares one style between cells that look the same, so a big sheet does not bloat the file', async () => {
     const files = await unzip(writeWorkbook({ Quote: styled }));
-    expect(files['xl/styles.xml']).toBeDefined();
+    const sheet = text(files, 'xl/worksheets/sheet1.xml');
+    const b2 = /<c r="B2" s="(\d+)"/.exec(sheet)?.[1];
+    const c2 = /<c r="C2" s="(\d+)"/.exec(sheet)?.[1];
+    expect(b2).toBeDefined();
+    expect(b2).toBe(c2);
+    /* the default, the heading and the figure: three looks, three entries */
+    expect(text(files, 'xl/styles.xml')).toContain('<cellXfs count="3">');
+  });
+
+  it('tells Excel to substitute a sans-serif face for a font the reader does not have', async () => {
+    const styles = text(await unzip(writeWorkbook({ Quote: styled })), 'xl/styles.xml');
+    const fonts = styles.match(/<font>.*?<\/font>/g) ?? [];
+    expect(fonts.length).toBeGreaterThan(1);
+    for (const one of fonts) expect(one).toContain('<family val="2"/>');
+  });
+
+  it('colours the tab, hides gridlines and freezes the rows above the table', async () => {
+    const sheet = text(await unzip(writeWorkbook({ Quote: { ...styled, tab: '#DD1F25', gridlines: false, freezeRows: 8 } })), 'xl/worksheets/sheet1.xml');
+    expect(sheet).toContain('<tabColor rgb="FFDD1F25"/>');
+    expect(sheet).toContain('showGridLines="0"');
+    expect(sheet).toContain('<pane ySplit="8" topLeftCell="A9" activePane="bottomLeft" state="frozen"/>');
+    /* sheetViews must come before cols and sheetData, or Excel reports the file as damaged */
+    expect(sheet.indexOf('<sheetViews>')).toBeLessThan(sheet.indexOf('<cols>'));
+  });
+
+  it('links a cell to another sheet in the workbook', async () => {
+    const linked: StyledSheet = { rows: [{ cells: [{ v: 'Next sheet', link: "'Task Breakdown'!A1" }] }] };
+    const sheet = text(await unzip(writeWorkbook({ Intro: linked, 'Task Breakdown': [['x']] })), 'xl/worksheets/sheet1.xml');
+    expect(sheet).toContain(`<hyperlink ref="A1" location="'Task Breakdown'!A1" display="Next sheet"/>`);
+  });
+
+  it('prints landscape, one page wide, with the header row on every page', async () => {
+    const printed: StyledSheet = { ...styled, print: { landscape: true, fitWidth: true, repeatRows: [3, 3], footer: '&LEdly&RPage &P' } };
+    const files = await unzip(writeWorkbook({ Cover: [['x']], "Acme's Breakdown": printed }));
+    const sheet = text(files, 'xl/worksheets/sheet2.xml');
+    expect(sheet).toContain('<pageSetUpPr fitToPage="1"/>');
+    expect(sheet).toContain('<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
+    expect(sheet).toContain('<oddFooter>&amp;LEdly&amp;RPage &amp;P</oddFooter>');
+    /* the quote in the name is doubled, as a formula reference needs */
+    expect(text(files, 'xl/workbook.xml')).toContain(`<definedName name="_xlnm.Print_Titles" localSheetId="1">'Acme''s Breakdown'!$3:$3</definedName>`);
+  });
+
+  it('opens on the first sheet', async () => {
+    const files = await unzip(writeWorkbook({ First: [['a']], Second: [['b']] }));
+    expect(text(files, 'xl/worksheets/sheet1.xml')).toContain('tabSelected="1"');
+    expect(text(files, 'xl/worksheets/sheet2.xml')).not.toContain('tabSelected');
+  });
+
+  it('cuts a long sheet name before escaping it, so the cut never splits an entity', async () => {
+    const name = `${'R'.repeat(29)}&D department`;
+    const back = await readWorkbook(writeWorkbook({ [name]: [['x']] }));
+    expect(Object.keys(back)).toEqual([name.slice(0, 31)]);
   });
 });
 
