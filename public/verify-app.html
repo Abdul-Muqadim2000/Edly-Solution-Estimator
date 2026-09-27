@@ -74,7 +74,8 @@
     if (spec.endsWith('.css')) return 'css';
     if (spec.startsWith('@/')) return '../src/' + spec.slice(2);
     if (spec.startsWith('@server/')) return '../server/' + spec.slice(8);
-    if (spec.startsWith('.')) return normalise(from.split('/').slice(0, -1).join('/') + '/' + spec);
+    /* server files name their imports .js for Node on Vercel; the source beside them is .ts */
+    if (spec.startsWith('.')) return normalise(from.split('/').slice(0, -1).join('/') + '/' + spec.replace(/\.js$/, ''));
     return spec;
   };
   const EXTERNAL = { react: () => window.React, 'react-dom/client': () => window.ReactDOM, css: () => ({}) };

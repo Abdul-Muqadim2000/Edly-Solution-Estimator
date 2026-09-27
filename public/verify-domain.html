@@ -73,8 +73,14 @@
       not: {
         toBe: (e) => { if (actual === e) throw new Error('expected anything but ' + fmt(e)); },
         toEqual: (e) => { if (deepEq(actual, e)) throw new Error('expected not to deep-equal ' + fmt(e)); },
-        toContain: (needle) => { if ((actual || []).includes(needle)) throw new Error('expected not to contain ' + fmt(needle)); }
+        toContain: (needle) => { if ((actual || []).includes(needle)) throw new Error('expected not to contain ' + fmt(needle)); },
+        toHaveProperty: (key) => { if (actual != null && key in Object(actual)) throw new Error('expected no ' + key + ' property, got ' + fmt(actual[key])); }
       },
+      toMatch: (pattern) => {
+        const text = String(actual);
+        if (!(typeof pattern === 'string' ? text.includes(pattern) : pattern.test(text))) throw new Error('expected ' + fmt(text) + ' to match ' + String(pattern));
+      },
+      toHaveProperty: (key) => { if (actual == null || !(key in Object(actual))) throw new Error('expected a ' + key + ' property on ' + fmt(actual)); },
       toBe: (e) => { if (actual !== e) throw new Error('expected ' + fmt(e) + ', got ' + fmt(actual)); },
       toEqual: (e) => { if (!deepEq(actual, e)) throw new Error('deep-equal failed\n  expected ' + fmt(e) + '\n  got      ' + fmt(actual)); },
       toBeCloseTo: (e, digits = 2) => { const tol = Math.pow(10, -digits) / 2; if (Math.abs(actual - e) > tol) throw new Error('expected ~' + e + ', got ' + actual); },
@@ -107,7 +113,8 @@
     if (spec === 'vitest') return 'vitest';
     if (spec.startsWith('@/')) return '../src/' + spec.slice(2);
     if (spec.startsWith('@server/')) return '../server/' + spec.slice(8);
-    if (spec.startsWith('.')) return normalise(fromPath.split('/').slice(0, -1).join('/') + '/' + spec);
+    /* server files name their imports .js for Node on Vercel; the source beside them is .ts */
+    if (spec.startsWith('.')) return normalise(fromPath.split('/').slice(0, -1).join('/') + '/' + spec.replace(/\.js$/, ''));
     return spec;
   };
 
