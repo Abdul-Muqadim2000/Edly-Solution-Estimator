@@ -42,11 +42,13 @@ export async function fetchState(): Promise<StateResponse> {
   return body;
 }
 
-export async function saveState(state: PersistedState): Promise<SaveResponse> {
+/** `signal` lets a newer save cancel this one. A request cancelled while still uploading never reaches the server. */
+export async function saveState(state: PersistedState, signal?: AbortSignal): Promise<SaveResponse> {
   const response = await fetch(API, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(state)
+    body: JSON.stringify(state),
+    signal
   });
   const body = (await response.json()) as SaveResponse;
   if (!response.ok || !body.ok) throw new Error(body.error ?? `HTTP ${response.status}`);

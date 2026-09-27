@@ -16,7 +16,7 @@ import { discover, exportBytes, loadState, saveState, storeLabel } from '../serv
 import { EMPTY_STATE } from '../server/schema';
 import { readWorkbook } from '../src/lib/xlsx';
 import type { Estimation } from '../src/types';
-import { BEACON_LIMIT, pullStep, unloadStep, type PullInput } from '../src/state/syncPolicy';
+import { BEACON_LIMIT, pullStep, unloadPlan, type PullInput } from '../src/state/syncPolicy';
 
 /**
  * Browser storage, and the store layer above the providers.
@@ -462,20 +462,30 @@ describe('what a read of the store does to a tab', () => {
 });
 
 describe('what leaving the page does to an unsaved change', () => {
+  const leave = (over: Partial<Parameters<typeof unloadPlan>[0]>) => unloadPlan({ hydrated: true, unsaved: true, inFlight: false, bytes: 10, ...over });
+
   it('does nothing when everything is saved, or before any read has succeeded', () => {
-    expect(unloadStep({ hydrated: true, unsaved: false, bytes: 10 })).toBe('nothing');
+    expect(leave({ unsaved: false })).toEqual({ send: 'nothing', ask: false, cancelInFlight: false });
     /* nothing is pushed before a read succeeds, on the way out included */
-    expect(unloadStep({ hydrated: false, unsaved: true, bytes: 10 })).toBe('nothing');
+    expect(leave({ hydrated: false })).toEqual({ send: 'nothing', ask: false, cancelInFlight: false });
   });
 
   it('sends a small unsaved change as the page goes', () => {
-    expect(unloadStep({ hydrated: true, unsaved: true, bytes: BEACON_LIMIT })).toBe('beacon');
+    expect(leave({ bytes: BEACON_LIMIT })).toEqual({ send: 'beacon', ask: false, cancelInFlight: false });
   });
 
-  it('saves and asks the browser to hold the page when the change is too big to send on the way out', () => {
+  it('saves at once and asks the browser to hold the page when the change is too big to send on the way out', () => {
     /* Chrome refuses an unload send over 64 KB without a word, so a workspace holding a large
        import lost whatever was edited in the second before a reload */
-    expect(unloadStep({ hydrated: true, unsaved: true, bytes: BEACON_LIMIT + 1 })).toBe('save-and-ask');
+    expect(leave({ bytes: BEACON_LIMIT + 1 })).toEqual({ send: 'now', ask: true, cancelInFlight: false });
     expect(BEACON_LIMIT).toBeLessThan(64 * 1024);
+  });
+
+  it('cancels a save still on its way and sends the newest copy, rather than waiting behind it', () => {
+    /* On production a desk tab's own 600 KB save was still going up when a filing and a reload
+       came. Waiting for it meant the newest copy was never sent: nothing runs while the browser
+       holds the page, and the filing was lost. The newest copy holds everything the older did. */
+    expect(leave({ inFlight: true, bytes: BEACON_LIMIT + 1 })).toEqual({ send: 'now', ask: true, cancelInFlight: true });
+    expect(leave({ inFlight: true, bytes: 10 })).toEqual({ send: 'beacon', ask: false, cancelInFlight: true });
   });
 });
