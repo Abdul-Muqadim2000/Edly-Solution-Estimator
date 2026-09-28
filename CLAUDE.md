@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 812 tests across twenty-one files.
+`bun run test` runs 814 tests across twenty-one files.
 
 | File | Covers |
 |---|---|
@@ -173,14 +173,14 @@ reference.
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-09-28):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-09-29):
 
 | | |
 |---|---|
 | Statements | 97.3% |
 | Lines | 98.5% |
 | Functions | 98.5% |
-| Branches | 87.4% |
+| Branches | 87.3% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that

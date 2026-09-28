@@ -240,6 +240,44 @@ describe('hidden sheets', () => {
   });
 });
 
+describe('workbooks written by something other than Excel', () => {
+  /*
+   * XML attributes have no order, and not every writer uses Excel's. openpyxl, which a filled-in
+   * template from a Python script comes out of, writes Target before Id with an absolute path. The
+   * reader used to expect Id first, found no sheets at all, and the import called a valid file "not
+   * an Excel workbook".
+   */
+  const reordered = async (): Promise<Uint8Array> => {
+    const files = await unzip(writeWorkbook({ Estimates: [['Feature', 'First-delivery hrs'], ['Bulk enrolment', '12']], Notes: [['x']] }));
+    const decode = (name: string): string => new TextDecoder().decode(files[name]);
+    const rels = decode('xl/_rels/workbook.xml.rels').replace(
+      /<Relationship Id="([^"]+)" Type="([^"]+)" Target="([^"]+)"\/>/g,
+      (_, id: string, type: string, target: string) => `<Relationship Type="${type}" Target="/xl/${target}" Id="${id}"/>`
+    );
+    const workbook = decode('xl/workbook.xml').replace(
+      /<sheet name="([^"]+)" sheetId="(\d+)" r:id="([^"]+)"\/>/g,
+      (_, name: string, sheetId: string, id: string) => `<sheet r:id="${id}" sheetId="${sheetId}" name="${name}"/>`
+    );
+    const replaced: Record<string, string> = { 'xl/_rels/workbook.xml.rels': rels, 'xl/workbook.xml': workbook };
+    return zipStored(Object.entries(files).map(([name, data]) => ({ name, data: replaced[name] ?? data })));
+  };
+
+  it('finds every sheet whatever order the attributes come in', async () => {
+    const workbook = await readWorkbook(await reordered());
+    expect(Object.keys(workbook)).toEqual(['Estimates', 'Notes']);
+    expect(workbook.Estimates).toEqual([
+      ['Feature', 'First-delivery hrs'],
+      ['Bulk enrolment', '12']
+    ]);
+  });
+
+  it('checks the fixture really is reordered, so the case above cannot pass by accident', async () => {
+    const files = await unzip(await reordered());
+    expect(new TextDecoder().decode(files['xl/_rels/workbook.xml.rels'])).toContain('Target="/xl/worksheets/sheet1.xml" Id="rId1"');
+    expect(new TextDecoder().decode(files['xl/workbook.xml'])).toContain('<sheet r:id="rId1"');
+  });
+});
+
 describe('rowsToObjects', () => {
   const table = [
     ['id', 'name', ' spaced '],
