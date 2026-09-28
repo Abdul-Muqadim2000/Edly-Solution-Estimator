@@ -5,6 +5,7 @@ import {
   discardDocuments,
   extractRange,
   fitTender,
+  keepWarm,
   matchRequirements,
   readCatalog,
   readDocRefs,
@@ -17,6 +18,7 @@ import {
  * GET  /api/tender?probe=1                           whether the AI is set up here, and the model
  * POST /api/tender?op=upload&name=…&kind=pdf|text    raw file bytes in, a Files API id out
  * POST /api/tender?op=fit       { docs, platforms }  platform fit, deal details, outline, page counts
+ * POST /api/tender?op=warm      { docs }             keeps the tender's cache alive, nothing answered
  * POST /api/tender?op=extract   { docs, range }      one range's requirements
  * POST /api/tender?op=match     { catalog, reqs }    catalog matches for up to 60 requirements
  * POST /api/tender?op=discard   { fileIds }          deletes tender files at Anthropic
@@ -76,6 +78,10 @@ export async function handle(request: Request): Promise<Response> {
     if (op === 'fit') {
       const { result, tokens } = await fitTender(readDocRefs(body.docs), readPlatforms(body.platforms));
       return json({ ok: true, result, tokens });
+    }
+
+    if (op === 'warm') {
+      return json({ ok: true, ...(await keepWarm(readDocRefs(body.docs))) });
     }
 
     if (op === 'extract') {

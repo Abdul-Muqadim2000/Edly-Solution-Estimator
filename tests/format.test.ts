@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CURRENCIES, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
+import { andList, CURRENCIES, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
 import { quoteText } from '../src/lib/quoteExport';
 import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { schedule } from '../src/domain/planner';
@@ -81,6 +81,13 @@ describe('hours', () => {
     expect(plural(3, 'week')).toBe('3 weeks');
     /* an import preview counts past a thousand, and "1203 estimates" reads as a code, not a count */
     expect(plural(1203, 'estimate')).toBe('1,203 estimates');
+  });
+
+  it('lists items the way a sentence does', () => {
+    expect(andList([])).toBe('');
+    expect(andList(['Cover'])).toBe('Cover');
+    expect(andList(['Cover', 'Pricing'])).toBe('Cover and Pricing');
+    expect(andList(['Cover', 'Evaluation', 'Pricing'])).toBe('Cover, Evaluation and Pricing');
   });
 });
 

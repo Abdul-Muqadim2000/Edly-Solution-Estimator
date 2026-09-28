@@ -7,8 +7,11 @@ import {
   deskDrafts,
   documentLength,
   matchBatches,
+  KEEP_WARM_EVERY_MS,
+  KEEP_WARM_MAX,
   needsMatching,
   newTender,
+  nextKeepWarm,
   NO_TOKENS,
   outOfScopeMatches,
   planRanges,
@@ -22,8 +25,13 @@ import {
   heldDocs,
   readFit,
   readMatches,
+  readingPlan,
+  readingSummary,
   readRequirements,
+  sectionPages,
+  sectionRanges,
   shortTitle,
+  skippedSections,
   SOMETHING_NEW,
   sortRequirements,
   sourceLabel,
@@ -37,7 +45,7 @@ import {
   type ExtractedRequirement
 } from '../src/domain/tender';
 import { PRACTICES } from '../src/data/practices';
-import type { Catalog, EstimateRequest, RequirementMatch, Solution, Tender, TenderDocument, TenderRange, TenderRequirement } from '../src/types';
+import type { Catalog, EstimateRequest, RequirementMatch, Solution, Tender, TenderDocument, TenderRange, TenderRequirement, TenderSection } from '../src/types';
 
 /**
  * The line between what the AI proposes and what the app trusts runs through this module.
@@ -234,6 +242,47 @@ describe('reading the platform fit', () => {
     );
     expect(result.outline).toEqual([{ doc: 1, title: 'Scope', from: 3, to: 48 }]);
     expect(result.header.deadline).toBe('');
+  });
+
+  it('skips a section only when the model says so plainly', () => {
+    /* a section left unread loses its requirements silently, so anything short of true is read */
+    const { outline } = readFit(
+      {
+        documents: [{ doc: 1, pages: 48 }],
+        outline: [
+          { doc: 1, title: 'Instructions to bidders', from: 2, to: 6, skip: true },
+          { doc: 1, title: 'Scope', from: 7, to: 30, skip: false },
+          { doc: 1, title: 'Terms', from: 31, to: 40, skip: 'yes' },
+          { doc: 1, title: 'Annexes', from: 41, to: 48 }
+        ]
+      },
+      platforms,
+      docs
+    );
+    expect(outline.map((section) => [section.title, section.skip === true])).toEqual([
+      ['Instructions to bidders', true],
+      ['Scope', false],
+      ['Terms', false],
+      ['Annexes', false]
+    ]);
+    expect(outline[1]).not.toHaveProperty('skip');
+  });
+
+  it('puts the outline in document order, whatever order the model answered in', () => {
+    /* the documents go to the model converted text first, so its outline tends to start with the annexes */
+    const { outline } = readFit(
+      {
+        documents: [{ doc: 1, pages: 48 }],
+        outline: [
+          { doc: 2, title: 'Matrix', from: 1, to: 7 },
+          { doc: 1, title: 'Terms', from: 30, to: 48 },
+          { doc: 1, title: 'Scope', from: 3, to: 29 }
+        ]
+      },
+      platforms,
+      docs
+    );
+    expect(outline.map((section) => section.title)).toEqual(['Scope', 'Terms', 'Matrix']);
     expect(readFit({ deadline: '2026-11-30' }, platforms, docs).header.deadline).toBe('2026-11-30');
   });
 
@@ -254,6 +303,17 @@ describe('reading extracted requirements', () => {
       40
     );
     expect(found).toEqual([{ doc: 2, page: 4, section: 'Identity', text: 'Single sign-on', quote: 'The platform shall support SSO', priority: 'must', outOfScope: false }]);
+  });
+
+  it("keeps the tender's own reference, which is what the bid team answers against", () => {
+    const [withRef, without] = readRequirements(
+      { requirements: [{ text: 'Grades export nightly', ref: '  FR-012 ', page: 2 }, { text: 'Branded theme', ref: '' }] },
+      { doc: 1 },
+      5
+    );
+    expect(withRef?.ref).toBe('FR-012');
+    /* no reference is no field, so requirements from before references read the same */
+    expect(without).not.toHaveProperty('ref');
   });
 
   it('drops a page outside the document rather than pointing somewhere that does not exist', () => {
@@ -294,6 +354,13 @@ describe('reading extracted requirements', () => {
     expect(sourceLabel({ doc: 1, page: 0 }, docs)).toBe('RFP.pdf');
     expect(sourceLabel({ doc: 0, page: 0 }, docs)).toBe('added by hand');
   });
+
+  it("names the tender's own reference, in place of a part number nobody holding the original can find", () => {
+    const docs = [doc(1, { name: 'RFP.pdf' }), doc(2, { name: 'Matrix.xlsx', kind: 'text' })];
+    expect(sourceLabel({ doc: 1, page: 14, ref: '4.2.3' }, docs)).toBe('RFP.pdf, p. 14, 4.2.3');
+    expect(sourceLabel({ doc: 2, page: 7, ref: 'FR-012' }, docs)).toBe('Matrix.xlsx, FR-012');
+    expect(sourceLabel({ doc: 2, page: 7, ref: '  ' }, docs)).toBe('Matrix.xlsx, part 7');
+  });
 });
 
 /* ------------------------------------------------------------------ ranges */
@@ -323,6 +390,122 @@ describe('planning the extraction calls', () => {
   it('reads a document of unknown length in one call, and plans each document separately', () => {
     const ranges = planRanges([{ n: 1, pages: 0 }, { n: 2, pages: 3 }], []);
     expect(ranges.map((range) => range.key)).toEqual(['1:1-end', '2:1-3']);
+  });
+
+  /* the fictional tender the stand-in drives use: 45 pages, requirements in 3-4, 10-22 and 27-38 */
+  const itt: TenderSection[] = [
+    { doc: 1, title: 'Cover', from: 1, to: 1, skip: true },
+    { doc: 1, title: 'Contents', from: 2, to: 2, skip: true },
+    { doc: 1, title: 'Introduction', from: 3, to: 4 },
+    { doc: 1, title: 'Instructions to bidders', from: 5, to: 9, skip: true },
+    { doc: 1, title: 'Statement of requirements', from: 10, to: 22 },
+    { doc: 1, title: 'Evaluation', from: 23, to: 26, skip: true },
+    { doc: 1, title: 'Terms and service levels', from: 27, to: 38 },
+    { doc: 1, title: 'Pricing schedule', from: 39, to: 43, skip: true },
+    { doc: 1, title: 'Form of tender', from: 44, to: 45, skip: true }
+  ];
+
+  it('leaves out skipped sections, less a page at each edge in case the outline is a page out', () => {
+    const ranges = planRanges([{ n: 1, pages: 45 }], itt, 20);
+    expect(ranges.map((range) => range.key)).toEqual(['1:2-5', '1:9-23', '1:26-39']);
+    /* every page that holds a requirement is inside a range */
+    const read = (page: number): boolean => ranges.some((range) => range.from <= page && page <= range.to);
+    for (const page of [3, 4, ...Array.from({ length: 13 }, (_, i) => 10 + i), ...Array.from({ length: 12 }, (_, i) => 27 + i)]) expect(read(page)).toBe(true);
+    expect(readingPlan([{ n: 1, pages: 45 }], itt)).toEqual({ read: 33, total: 45 });
+  });
+
+  it('reads a page no section claims, and a page a read section shares with a skipped one', () => {
+    const ranges = planRanges(
+      [{ n: 1, pages: 30 }],
+      [
+        { doc: 1, title: 'Forms', from: 1, to: 10, skip: true },
+        { doc: 1, title: 'Scope', from: 10, to: 12 },
+        { doc: 1, title: 'Terms', from: 13, to: 20, skip: true }
+      ],
+      20
+    );
+    /* 9, 13 and 20 are margin, 10 is shared with Scope, 21 to 30 belong to no section */
+    expect(ranges.map((range) => range.key)).toEqual(['1:9-13', '1:20-30']);
+  });
+
+  it('reads a short gap between two stretches when that saves a call, and not otherwise', () => {
+    const outline = (gapTo: number): TenderSection[] => [
+      { doc: 1, title: 'Scope', from: 1, to: 6 },
+      { doc: 1, title: 'Divider', from: 7, to: gapTo, skip: true },
+      { doc: 1, title: 'More scope', from: gapTo + 1, to: gapTo + 6 }
+    ];
+    /* skipped 8 and 9 only, after margins: reading them turns two calls into one */
+    expect(planRanges([{ n: 1, pages: 16 }], outline(10), 20).map((range) => range.key)).toEqual(['1:1-16']);
+    /* skipped 8 to 13: six pages is more than a gap worth reading */
+    expect(planRanges([{ n: 1, pages: 20 }], outline(14), 20).map((range) => range.key)).toEqual(['1:1-7', '1:14-20']);
+    /* a merge that saves no call is not made, even over a short gap */
+    expect(planRanges([{ n: 1, pages: 16 }], outline(10), 8).map((range) => range.key)).toEqual(['1:1-7', '1:10-16']);
+  });
+
+  it('reads nothing of a document whose every section is skipped, and all of one with no outline', () => {
+    const ranges = planRanges(
+      [
+        { n: 1, pages: 6 },
+        { n: 2, pages: 4 }
+      ],
+      [{ doc: 1, title: 'Pricing workbook', from: 1, to: 6, skip: true }],
+      20
+    );
+    expect(ranges.map((range) => range.key)).toEqual(['2:1-4']);
+    expect(readingPlan([{ n: 1, pages: 6 }], [{ doc: 1, title: 'Pricing workbook', from: 1, to: 6, skip: true }])).toEqual({ read: 0, total: 6 });
+  });
+
+  it("uses a spreadsheet's own span, because its parts are dense with requirements", () => {
+    const ranges = planRanges([{ n: 1, pages: 10, span: 3 }, { n: 2, pages: 25 }], [], 20);
+    expect(ranges.map((range) => range.key)).toEqual(['1:1-3', '1:4-6', '1:7-9', '1:10-10', '2:1-20', '2:21-25']);
+  });
+
+  it("reads a skipped section after all, without reading again a page a range already covers", () => {
+    const base = tender({ docs: [doc(1, { pages: 45 })], outline: itt, ranges: planRanges([{ n: 1, pages: 45 }], itt, 20) });
+    const instructions = itt[3]!;
+    /* 5 and 9 are already read as margin; 6 to 8 are new */
+    expect(sectionRanges(base, instructions).map((range) => [range.key, range.status])).toEqual([['1:6-8', 'pending']]);
+    const failedOver = { ...base, ranges: [...base.ranges, { key: '1:6-8', doc: 1, from: 6, to: 8, status: 'failed' as const }] };
+    /* a failed range still covers its pages: it has Retry, and reading them twice would pay twice */
+    expect(sectionRanges(failedOver, instructions)).toEqual([]);
+    expect(sectionRanges(base, { doc: 9, title: 'Not a document', from: 1, to: 3 })).toEqual([]);
+  });
+
+  it('keeps the cache warm every four minutes from the last read, and stops when a write is cheaper', () => {
+    const fit = 1_000_000;
+    expect(nextKeepWarm(fit, 0)).toBe(fit + KEEP_WARM_EVERY_MS);
+    /* four minutes leaves a margin inside the five-minute cache, timed from the start of a request */
+    expect(KEEP_WARM_EVERY_MS).toBeLessThan(5 * 60_000);
+    expect(nextKeepWarm(fit + 90_000, 3)).toBe(fit + 90_000 + KEEP_WARM_EVERY_MS);
+    /* past six the reads cost more than the hour-long cache they replace would have */
+    expect(nextKeepWarm(fit, KEEP_WARM_MAX)).toBeNull();
+    expect(KEEP_WARM_MAX * 0.1).toBeLessThan(0.75);
+    expect(nextKeepWarm(0, 0)).toBeNull();
+  });
+
+  it('says how much of each document is read, in its own unit', () => {
+    expect(readingSummary({ n: 1, pages: 45, kind: 'pdf', name: 'RFP.pdf' }, itt)).toBe('reads 33 of 45 pages');
+    const sheets: TenderSection[] = [
+      { doc: 2, title: 'Instructions', from: 1, to: 1, skip: true },
+      { doc: 2, title: 'Functional', from: 2, to: 12 },
+      { doc: 2, title: 'Non-functional', from: 13, to: 15 },
+      { doc: 2, title: 'Pricing', from: 16, to: 16, skip: true }
+    ];
+    /* part counts mean nothing to someone holding the workbook; sheets do */
+    expect(readingSummary({ n: 2, pages: 16, kind: 'text', name: 'Matrix.xlsx' }, sheets)).toBe('reads 2 of 4 sheets');
+    expect(readingSummary({ n: 2, pages: 16, kind: 'text', name: 'Matrix.xlsx' }, [])).toBe('reads 16 of 16 parts');
+    expect(readingSummary({ n: 3, pages: 0, kind: 'pdf', name: 'Scan.pdf' }, [])).toBe('reads all of it');
+  });
+
+  it('lists the sections left out, and their pages in words', () => {
+    const docs = [doc(1, { name: 'RFP.pdf' }), doc(2, { name: 'Annex.docx', kind: 'text' }), doc(3, { name: 'Matrix.xlsx', kind: 'text' })];
+    expect(skippedSections({ outline: itt }).map(({ index }) => index)).toEqual([0, 1, 3, 5, 7, 8]);
+    expect(sectionPages({ doc: 1, from: 5, to: 9 }, docs)).toBe('pp. 5 to 9');
+    expect(sectionPages({ doc: 1, from: 1, to: 1 }, docs)).toBe('p. 1');
+    expect(sectionPages({ doc: 2, from: 1, to: 2 }, docs)).toBe('parts 1 to 2');
+    expect(sectionPages({ doc: 2, from: 4, to: 4 }, docs)).toBe('part 4');
+    /* a person thinks of a spreadsheet in sheets; part numbers exist only in the converted text */
+    expect(sectionPages({ doc: 3, from: 1, to: 1 }, docs)).toBe('sheet');
   });
 
   it('cuts a range that was too much for one call in half, until a single page is left', () => {

@@ -28,6 +28,7 @@ import {
   addExtracted,
   addTokens,
   newTender,
+  sectionRanges,
   sortRequirements,
   splitRange,
   tenderRequests,
@@ -282,6 +283,8 @@ export type Action =
   /* `claim`: the tab that asked takes the range in the same step, so no other tab sees it unclaimed */
   | { type: 'retryRange'; id: string; key: string; claim?: Claim }
   | { type: 'splitRange'; id: string; key: string; claim?: Claim }
+  /** `index`: the section's place in the tender's outline, which never changes after creation */
+  | { type: 'readSection'; id: string; index: number }
   | { type: 'addRequirement'; id: string; input: { text: string; section: string; priority: RequirementPriority } }
   | { type: 'editRequirement'; id: string; reqId: string; patch: Partial<Pick<TenderRequirement, 'text' | 'section' | 'priority' | 'outOfScope'>> }
   | { type: 'setRequirementStatus'; id: string; reqIds: string[]; status: RequirementStatus }
@@ -969,6 +972,19 @@ export function reducer(state: AppState, action: Action): AppState {
         if (halves) ranges.splice(index, 1, ...halves.map((half) => withClaim(half, action.claim)));
         else ranges[index] = { ...range, status: 'failed', error: 'Too much on one page to read in one go. Add these requirements by hand.' };
         return { ...tender, ranges };
+      });
+
+    /* A person wants a section the AI left out read after all. It is marked read and its pages
+       join the queue as pending ranges; the runner picks them up like any other. */
+    case 'readSection':
+      return withTender(state, action.id, (tender) => {
+        const section = tender.outline[action.index];
+        if (!section?.skip) return tender;
+        return {
+          ...tender,
+          outline: tender.outline.map((one, index) => (index === action.index ? { doc: one.doc, title: one.title, from: one.from, to: one.to } : one)),
+          ranges: [...tender.ranges, ...sectionRanges(tender, section)]
+        };
       });
 
     case 'addRequirement':

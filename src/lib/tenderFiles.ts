@@ -16,15 +16,27 @@ export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 export const MAX_FILES = 5;
 /** Characters per part of converted text: about a printed page. */
 export const PART_CHARS = 4000;
+/**
+ * Rows per part of a converted spreadsheet. A requirements matrix has a requirement on nearly
+ * every row, so a part of rows is much denser than a page of prose.
+ */
+export const SHEET_ROWS = 20;
+/**
+ * Parts of a spreadsheet one extraction call reads: 60 rows, about 7,500 tokens of answer. The
+ * usual 20 parts would be 400 rows, which no call finishes inside the function's time limit, so
+ * the call is thrown away (and billed) before the range is split and read again.
+ */
+export const SHEET_SPAN = 3;
 
-export type TenderFileKind = 'pdf' | 'docx' | 'xlsx' | 'text';
+export type TenderFileKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'text';
 
 export function tenderFileKind(name: string): TenderFileKind | null {
   const extension = name.toLowerCase().split('.').pop() ?? '';
   if (extension === 'pdf') return 'pdf';
   if (extension === 'docx') return 'docx';
   if (extension === 'xlsx') return 'xlsx';
-  if (extension === 'txt' || extension === 'md' || extension === 'csv') return 'text';
+  if (extension === 'csv') return 'csv';
+  if (extension === 'txt' || extension === 'md') return 'text';
   return null;
 }
 
@@ -99,21 +111,94 @@ export async function docxToText(bytes: Uint8Array): Promise<string> {
   return docxXmlToText(new TextDecoder().decode(body));
 }
 
-/** Every sheet as text: a heading, then a line per non-empty row with its cells joined by " | ". */
-export function workbookToText(workbook: Workbook): string {
-  const blocks: string[] = [];
-  for (const [name, rows] of Object.entries(workbook)) {
-    const lines = rows
-      .map((row) => row.map((cell) => String(cell ?? '').replace(/\s+/g, ' ').trim()))
-      .map((cells) => {
+/**
+ * Every sheet as parts of text, the layout `SHEET_CONTEXT` in server/ai/prompts.ts describes.
+ *
+ * Each sheet starts a part of its own, so the AI can leave a whole sheet out (instructions,
+ * pricing) without cutting into the next. Each row keeps its real row number, which is the only
+ * place a person can find it again in the client's file. The header row, the first of the opening
+ * rows with three cells filled, is written as a Columns line and repeated at the top of every part
+ * that continues the sheet, so a row is never read without its column names.
+ */
+export function workbookToParts(workbook: Workbook, rowsPerPart = SHEET_ROWS): string[] {
+  const parts: string[] = [];
+  for (const [name, table] of Object.entries(workbook)) {
+    const filled = table
+      .map((row, index) => {
+        const cells = row.map((cell) => String(cell ?? '').replace(/\s+/g, ' ').trim());
         let end = cells.length;
         while (end > 0 && !cells[end - 1]) end -= 1;
-        return cells.slice(0, end).join(' | ');
+        return { index, cells: cells.slice(0, end) };
       })
-      .filter((line) => line.replace(/[|\s]/g, ''));
-    if (lines.length > 0) blocks.push([`## ${name}`, ...lines].join('\n'));
+      .filter((row) => row.cells.some(Boolean));
+    if (filled.length === 0) continue;
+
+    const header = filled.slice(0, 10).find((row) => row.cells.filter(Boolean).length >= 3);
+    const columns = header ? `Columns (row ${header.index + 1}): ${header.cells.join(' | ')}` : '';
+    let lines = [`## Sheet: ${name}`];
+    let rows = 0;
+    let chars = lines[0]!.length;
+    for (const row of filled) {
+      if (row === header) {
+        lines.push(columns);
+        chars += columns.length + 1;
+        continue;
+      }
+      const line = `Row ${row.index + 1}: ${row.cells.join(' | ')}`;
+      if (rows > 0 && (rows >= rowsPerPart || chars + line.length + 1 > PART_CHARS)) {
+        parts.push(lines.join('\n'));
+        lines = [`## Sheet: ${name} (continued)`, ...(columns ? [columns] : [])];
+        rows = 0;
+        chars = lines.join('\n').length;
+      }
+      lines.push(line);
+      rows += 1;
+      chars += line.length + 1;
+    }
+    parts.push(lines.join('\n'));
   }
-  return blocks.join('\n\n');
+  return parts;
+}
+
+/**
+ * A CSV file's rows. Handles quoted cells with commas, doubled quotes and line breaks inside them,
+ * and takes a semicolon or tab as the separator when the first line uses one, as Excel does in
+ * locales where the comma is the decimal mark.
+ */
+export function csvToRows(input: string): string[][] {
+  const text = input.replace(/^\uFEFF/, '');
+  const firstLine = text.split(/\r?\n/, 1)[0] ?? '';
+  const count = (mark: string): number => firstLine.split(mark).length - 1;
+  const separator = [';', '\t'].find((mark) => count(mark) > count(',')) ?? ',';
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quoted) {
+      if (ch !== '"') cell += ch;
+      else if (text[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else quoted = false;
+    } else if (ch === '"' && cell === '') quoted = true;
+    else if (ch === separator) {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i += 1;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else cell += ch;
+  }
+  if (cell || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
 }
 
 /**
@@ -156,15 +241,29 @@ export interface PreparedDocument {
   body: Uint8Array;
   /** Parts of converted text. 0 for a PDF: the fit step counts its pages. */
   pages: number;
+  /** Parts one extraction call reads, for a spreadsheet (`SHEET_SPAN`). Missing means the usual. */
+  span?: number;
 }
+
+const encoded = (name: string, text: string): Uint8Array => {
+  const body = new TextEncoder().encode(text);
+  if (body.length > MAX_UPLOAD_BYTES) throw new Error(`${name} converts to ${megabytes(body.length)} of text, over the ${megabytes(MAX_UPLOAD_BYTES)} limit.`);
+  return body;
+};
 
 /** Turns converted text into the upload body, refusing text that would not survive the trip. */
 export function preparedText(name: string, text: string): PreparedDocument {
   if (!text.trim()) throw new Error(`${name} has no text in it. If it is a scan, export it as a PDF instead.`);
   const paged = paginate(text);
-  const body = new TextEncoder().encode(paged.text);
-  if (body.length > MAX_UPLOAD_BYTES) throw new Error(`${name} converts to ${megabytes(body.length)} of text, over the ${megabytes(MAX_UPLOAD_BYTES)} limit.`);
-  return { name, kind: 'text', body, pages: paged.parts };
+  return { name, kind: 'text', body: encoded(name, paged.text), pages: paged.parts };
+}
+
+/** A spreadsheet's rows as the upload body, in parts of rows, read `SHEET_SPAN` parts at a time. */
+export function preparedSheet(name: string, workbook: Workbook): PreparedDocument {
+  const parts = workbookToParts(workbook);
+  if (parts.length === 0) throw new Error(`${name} has no filled cells in it.`);
+  const text = parts.map((part, index) => `[[Part ${index + 1}]]\n${part}`).join('\n\n');
+  return { name, kind: 'text', body: encoded(name, text), pages: parts.length, span: SHEET_SPAN };
 }
 
 /** Reads a chosen file into what the server uploads. */
@@ -175,7 +274,9 @@ export async function prepareTenderFile(name: string, bytes: Uint8Array): Promis
     return { name, kind: 'pdf', body: bytes, pages: 0 };
   }
   if (kind === 'docx') return preparedText(name, await docxToText(bytes));
-  if (kind === 'xlsx') return preparedText(name, workbookToText(await readWorkbook(bytes)));
+  /* hidden sheets are the workbook's plumbing (dropdown lists, lookups), not the tender */
+  if (kind === 'xlsx') return preparedSheet(name, await readWorkbook(bytes, { skipHidden: true }));
+  if (kind === 'csv') return preparedSheet(name, { [name.replace(/\.csv$/i, '')]: csvToRows(new TextDecoder().decode(bytes)) });
   if (kind === 'text') return preparedText(name, new TextDecoder().decode(bytes));
   throw new Error(`${name} is not a PDF, Word (.docx), Excel (.xlsx) or text file.`);
 }

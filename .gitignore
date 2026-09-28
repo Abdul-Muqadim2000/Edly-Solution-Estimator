@@ -13,6 +13,9 @@ dist
 .env
 .env.local
 
+# Personal Claude Code settings (the .env read guard lives here)
+.claude/settings.local.json
+
 # Logs and OS noise
 coverage
 *.log

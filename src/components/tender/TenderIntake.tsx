@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import type { TenderDocument, TenderTokens } from '@/types';
+import type { TenderDocument, TenderSection, TenderTokens } from '@/types';
 import { PRACTICES, findPlatform } from '@/data/practices';
 import { useApp } from '@/state/AppProvider';
-import { tenderDiscard, tenderFit, tenderProbe, tenderUpload, TenderApiError, type AiProbe } from '@/api/client';
-import { addTokens, documentLength, NO_TOKENS, platformDigest, tokenSummary, type FitResult } from '@/domain/tender';
+import { tenderDiscard, tenderFit, tenderProbe, tenderUpload, tenderWarm, TenderApiError, type AiProbe } from '@/api/client';
+import { addTokens, documentLength, KEEP_WARM_MAX, nextKeepWarm, NO_TOKENS, platformDigest, readingSummary, sectionPages, skippedSections, tokenSummary, type FitResult } from '@/domain/tender';
+import { andList } from '@/lib/format';
 import { checkTenderFiles, MAX_FILES, prepareTenderFile } from '@/lib/tenderFiles';
 import { color, font, radius } from '@/theme';
 import { useHover } from '@/lib/useHover';
 import { Banner, Button, Field, Modal, Mono, Row, Select, Spacer } from '@/components/ui';
-import { ConfidenceChip, TextButton } from '@/components/tender/parts';
+import { Check, ConfidenceChip, TextButton } from '@/components/tender/parts';
 
 /**
  * Start from a tender: upload, let the AI read it and recommend a platform, then choose.
@@ -82,6 +83,58 @@ function PlatformChoice({ id, picked, recommended, reasons, onPick }: { id: stri
   );
 }
 
+/**
+ * Which sections the AI will read for requirements. It proposes leaving out the ones with nothing
+ * to deliver in them; the person sees which, and can change any section either way.
+ */
+function ReadingPlan({ docs, outline, onRead }: { docs: TenderDocument[]; outline: TenderSection[]; onRead: (index: number, read: boolean) => void }): JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  if (outline.length === 0) return null;
+  const skipped = skippedSections({ outline });
+  return (
+    <div style={{ border: `1px solid ${color.hairline}`, borderRadius: radius.lg, padding: '12px 16px' }}>
+      <Row gap={8}>
+        <span style={{ fontFamily: font.display, fontSize: 15, fontWeight: 600 }}>What the AI will read</span>
+        <Spacer />
+        <TextButton onClick={() => setOpen((value) => !value)} title="Choose which sections are read for requirements">
+          {open ? 'Done' : 'Change'}
+        </TextButton>
+      </Row>
+      <div style={{ fontSize: 12.5, color: color.body, lineHeight: 1.6, marginTop: 6 }}>
+        {docs.map((doc) => (
+          <div key={doc.n}>
+            {doc.name}: {readingSummary(doc, outline)}
+          </div>
+        ))}
+        <div style={{ marginTop: 4 }}>
+          {skipped.length > 0
+            ? `Leaves out ${andList(skipped.map(({ section }) => `${section.title} (${sectionPages(section, docs)})`))}, which hold nothing to build, host, support or provide.`
+            : 'Every section is read.'}
+        </div>
+        {skipped.length > 0 ? (
+          <div style={{ fontSize: 11.5, color: color.faint, marginTop: 2 }}>
+            The page either side of a left-out section is still read, in case a requirement starts or ends there.
+          </div>
+        ) : null}
+      </div>
+      {open ? (
+        <div role="group" aria-label="Sections to read" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+          {outline.map((section, index) => (
+            <label key={`${section.doc}-${section.from}-${section.title}`} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12.5, color: color.ink, cursor: 'pointer' }}>
+              <Check checked={!section.skip} onChange={(read) => onRead(index, read)} label={`Read ${section.title}`} />
+              <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: section.skip ? color.muted : color.ink }}>{section.title}</span>
+              <Mono size={11} tone={color.faint}>
+                {docs.length > 1 ? `${docs.find((doc) => doc.n === section.doc)?.name ?? ''}, ` : ''}
+                {sectionPages(section, docs)}
+              </Mono>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element {
   const { state, dispatch, router } = useApp();
   const [files, setFiles] = useState<File[]>([]);
@@ -93,7 +146,12 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
   const [probe, setProbe] = useState<AiProbe | null>(null);
   const [docs, setDocs] = useState<TenderDocument[]>([]);
   const [fit, setFit] = useState<FitResult | null>(null);
+  /* the fit's outline, with the person's choice of what to read */
+  const [outline, setOutline] = useState<TenderSection[]>([]);
   const [tokens, setTokens] = useState<TenderTokens>(NO_TOKENS);
+  /* when the last request that read the documents started, and how many keep-warms have gone out */
+  const [lastReadAt, setLastReadAt] = useState(0);
+  const [warmSent, setWarmSent] = useState(0);
   const [platform, setPlatform] = useState('');
   const [name, setName] = useState('');
   const [client, setClient] = useState('');
@@ -122,6 +180,34 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
     return () => window.clearInterval(timer);
   }, [phase]);
 
+  /* The tender is cached for five minutes from the start of the last read, and the person may take
+     longer than that to choose. Keep it warm while they do (see `nextKeepWarm`), so the first
+     extraction reads it rather than paying for all of it again. A failed keep-warm stops them: the
+     worst that follows is one fresh write, not a loop of failing requests. */
+  useEffect(() => {
+    if (phase !== 'fit' || docs.length === 0) return;
+    const at = nextKeepWarm(lastReadAt, warmSent);
+    if (at === null) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      const started = Date.now();
+      tenderWarm(docs.map(({ n, name, kind, fileId, pages }) => ({ n, name, kind, fileId, pages })))
+        .then(({ tokens: spent }) => {
+          if (!live) return;
+          setTokens((total) => addTokens(total, spent));
+          setLastReadAt(started);
+          setWarmSent((count) => count + 1);
+        })
+        .catch(() => {
+          if (live) setWarmSent(KEEP_WARM_MAX);
+        });
+    }, Math.max(0, at - Date.now()));
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [phase, docs, lastReadAt, warmSent]);
+
   /* Navigating away mid-way still deletes the uploads. `closed` is reset on mount because
      StrictMode runs this cleanup once straight after the first mount in development. */
   useEffect(() => {
@@ -137,6 +223,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
     uploaded.current = [];
     setDocs([]);
     setFit(null);
+    setOutline([]);
   };
 
   const close = (): void => {
@@ -195,6 +282,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
             kind: prepared.kind,
             bytes: prepared.body.length,
             pages: prepared.pages,
+            ...(prepared.span ? { span: prepared.span } : {}),
             fileId: stored.fileId,
             expiresAt: stored.expiresAt
           });
@@ -203,6 +291,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
       }
 
       setProgress('Reading the tender and weighing the platforms');
+      const fitStarted = Date.now();
       const answer = await tenderFit(
         current.map(({ n, name: docName, kind, fileId, pages }) => ({ n, name: docName, kind, fileId, pages })),
         platformDigest(PRACTICES, state.loadedCatalogs)
@@ -211,6 +300,9 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
       setDocs(current.map((doc) => ({ ...doc, pages: answer.result.pages[doc.n] || doc.pages })));
       setTokens((total) => addTokens(total, answer.tokens));
       setFit(answer.result);
+      setOutline(answer.result.outline);
+      setLastReadAt(fitStarted);
+      setWarmSent(0);
       setPlatform(answer.result.fit.platform || state.platform || state.lastPlatform || '');
       setName(answer.result.header.title);
       setClient(answer.result.header.client);
@@ -241,7 +333,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
     dispatch({
       type: 'createTender',
       id,
-      input: { plat: platform, name: name.trim(), client: client.trim(), due, summary: fit.header.summary, docs, fit: fit.fit, outline: fit.outline, tokens }
+      input: { plat: platform, name: name.trim(), client: client.trim(), due, summary: fit.header.summary, docs, fit: fit.fit, outline, tokens }
     });
     handedOver.current = true;
     router.navigate({ screen: 'tender', platform, tender: id });
@@ -336,6 +428,10 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
               The files go to Anthropic&apos;s API for this analysis and nowhere else. They are deleted there when you finish with the tender,
               or automatically after 72 hours.
             </div>
+            <div style={{ fontSize: 11.5, color: color.faint, lineHeight: 1.55 }}>
+              If the tender comes as both a PDF and a Word or Excel file, the Word or Excel copy costs much less to read: the AI reads each
+              PDF page as text and as an image. Keep the PDF when its scans or diagrams matter.
+            </div>
 
             {error ? <Banner tone="bad">{error}</Banner> : null}
 
@@ -395,6 +491,16 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
                 />
               </div>
             </div>
+
+            <ReadingPlan
+              docs={docs}
+              outline={outline}
+              onRead={(index, read) =>
+                setOutline((current) =>
+                  current.map((section, at) => (at === index ? { doc: section.doc, title: section.title, from: section.from, to: section.to, ...(read ? {} : { skip: true }) } : section))
+                )
+              }
+            />
 
             {fit.fit.elsewhere.length > 0 ? (
               <Banner tone="warn">

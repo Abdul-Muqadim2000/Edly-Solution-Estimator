@@ -30,11 +30,12 @@ beforeEach(() => {
   calls = [];
   replies = [];
   route = null;
-  for (const key of ['ANTHROPIC_API_KEY', 'EDLY_AI_MODEL', 'EDLY_AI_RETRIES', 'EDLY_AI_DEADLINE_MS']) saved[key] = process.env[key];
+  for (const key of ['ANTHROPIC_API_KEY', 'EDLY_AI_MODEL', 'EDLY_AI_RETRIES', 'EDLY_AI_DEADLINE_MS', 'EDLY_AI_EFFORT']) saved[key] = process.env[key];
   process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
   /* a retry would replay the next stubbed reply and hide the failure under test */
   process.env.EDLY_AI_RETRIES = '0';
   delete process.env.EDLY_AI_MODEL;
+  delete process.env.EDLY_AI_EFFORT;
 
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     /* before a multipart upload the SDK fetches `data:,` to check FormData works; that is not a call to Anthropic */
@@ -132,14 +133,16 @@ const sentMessage = (): Record<string, unknown> => {
 
 describe('the probe', () => {
   it('says whether the AI is set up here, and which model it uses', async () => {
-    process.env.EDLY_AI_MODEL = 'claude-opus-5-5';
+    /* the way back for a key that cannot use the default yet */
+    process.env.EDLY_AI_MODEL = 'claude-opus-5';
     const body = (await (await handle(new Request('http://localhost/api/tender?probe=1'))).json()) as { configured: boolean; model: string };
-    expect(body).toMatchObject({ configured: true, model: 'claude-opus-5-5' });
+    expect(body).toMatchObject({ configured: true, model: 'claude-opus-5' });
 
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.EDLY_AI_MODEL;
     const bare = (await (await handle(new Request('http://localhost/api/tender?probe=1'))).json()) as { configured: boolean; model: string };
-    expect(bare).toMatchObject({ configured: false, model: 'claude-opus-5' });
+    /* Opus 5.5: cheaper per token than Opus 5, and cheaper still to read from cache */
+    expect(bare).toMatchObject({ configured: false, model: 'claude-opus-5-5' });
   });
 });
 
@@ -214,7 +217,7 @@ describe('the fit step', () => {
 
     const sent = sentMessage();
     const call = calls.find((one) => one.url.includes('/v1/messages'));
-    expect(sent.model).toBe('claude-opus-5');
+    expect(sent.model).toBe('claude-opus-5-5');
     expect(sent.thinking).toEqual({ type: 'adaptive' });
     expect(sent.fallbacks).toBe('default');
     expect(call?.headers.get('anthropic-beta')).toContain('server-side-fallback-2026-07-01');
@@ -225,13 +228,41 @@ describe('the fit step', () => {
     expect(tools.every((tool) => tool.strict)).toBe(true);
 
     const content = (sent.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
-    /* the documents lead, so every later call over the same tender reads them from cache */
-    expect(content[0]).toMatchObject({ type: 'document', source: { type: 'file', file_id: 'file_1' }, title: 'Document 1: Acme RFP.pdf' });
-    expect(content[0]?.cache_control).toBeUndefined();
-    expect(content[1]).toMatchObject({ type: 'document', source: { type: 'file', file_id: 'file_2' }, cache_control: { type: 'ephemeral', ttl: '1h' } });
-    expect(String(content[1]?.context)).toContain('[[Part N]]');
+    /* the documents lead, converted text before the PDF, each ending in a cache marker, so a later
+       call about one document reads everything up to it from cache */
+    expect(content[0]).toMatchObject({ type: 'document', source: { type: 'file', file_id: 'file_2' }, title: 'Document 2: Annex B.docx', cache_control: { type: 'ephemeral' } });
+    expect(String(content[0]?.context)).toContain('[[Part N]]');
+    expect(content[1]).toMatchObject({ type: 'document', source: { type: 'file', file_id: 'file_1' }, title: 'Document 1: Acme RFP.pdf', cache_control: { type: 'ephemeral' } });
+    /* five minutes, the default: an hour's entry is written at twice the input price, and the keep-warm covers the wait */
+    expect(content[1]?.cache_control).not.toHaveProperty('ttl');
     expect(content[2]?.type).toBe('text');
     expect(String(content[2]?.text)).toContain('- openedx: Open edX.');
+  });
+
+  it('asks for physical page numbers and a skip flag the model must set on every section', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx', outline: [{ doc: 1, title: 'Bid instructions', from: 2, to: 6, skip: true }], documents: [{ doc: 1, pages: 48 }] } }) }];
+    const body = (await (await post('fit', { docs, platforms })).json()) as { result: { outline: { skip?: boolean }[] } };
+    expect(body.result.outline[0]?.skip).toBe(true);
+
+    const sent = sentMessage();
+    const fit = (sent.tools as { name: string; input_schema: { properties: { outline: { items: { required: string[]; properties: Record<string, { description?: string }> } } } } }[])[0]!;
+    const section = fit.input_schema.properties.outline.items;
+    /* strict tools make every listed field required, so a section the model is unsure of still says so */
+    expect(section.required).toContain('skip');
+    /* a printed page number is often two or more off the file's, and skipping would then drop real pages */
+    expect(section.properties.from?.description).toContain('not the number printed');
+    const instruction = String(((sent.messages as { content: { text?: string }[] }[])[0]?.content ?? []).at(-1)?.text);
+    expect(instruction).toContain('When in doubt, leave skip false');
+    expect(instruction).toContain('service levels');
+  });
+
+  it('describes a converted spreadsheet as rows under column names, and other text as parts', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx' } }) }];
+    await post('fit', { docs: [...docs, { n: 3, name: 'Matrix.xlsx', kind: 'text', fileId: 'file_3', pages: 12 }], platforms });
+    const content = (sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
+    expect(content.map((block) => block.title)).toEqual(['Document 2: Annex B.docx', 'Document 3: Matrix.xlsx', 'Document 1: Acme RFP.pdf', undefined]);
+    expect(String(content[0]?.context)).not.toContain('Columns');
+    expect(String(content[1]?.context)).toContain('"Row N:" line is row N of that sheet');
   });
 
   it('refuses a request with no documents or no platforms to choose from', async () => {
@@ -262,6 +293,43 @@ describe('the extraction step', () => {
 
     const content = (sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
     expect(String(content[2]?.text)).toContain('pages 1 to 20 inclusive');
+  });
+
+  it('carries the documents up to the one it reads, so a spreadsheet call does not pay for the PDF', async () => {
+    const titles = async (manyDocs: unknown[], doc: number): Promise<unknown[]> => {
+      calls = [];
+      replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }) }];
+      await post('extract', { docs: manyDocs, range: { doc, from: 1, to: 2 } });
+      return ((sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? []).filter((block) => block.type === 'document').map((block) => block.title);
+    };
+    expect(await titles(docs, 2)).toEqual(['Document 2: Annex B.docx']);
+    /* the PDF is the full prefix, the same one the fit call cached */
+    expect(await titles(docs, 1)).toEqual(['Document 2: Annex B.docx', 'Document 1: Acme RFP.pdf']);
+
+    /* five documents: the API keeps four markers, so the first boundary has none and a call about
+       the first document runs on to the second, where the fit call left an entry */
+    const five = [1, 2, 3, 4, 5].map((n) => ({ n, name: `Annex ${n}.docx`, kind: 'text', fileId: `file_${n}`, pages: 2 }));
+    expect(await titles(five, 1)).toEqual(['Document 1: Annex 1.docx', 'Document 2: Annex 2.docx']);
+    expect(await titles(five, 3)).toEqual(['Document 1: Annex 1.docx', 'Document 2: Annex 2.docx', 'Document 3: Annex 3.docx']);
+    replies = [{ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx' } }) }];
+    calls = [];
+    await post('fit', { docs: five, platforms });
+    const marks = ((sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? []).map((block) => Boolean(block.cache_control));
+    expect(marks).toEqual([false, true, true, true, true, false]);
+  });
+
+  it("asks for the tender's own reference, and to leave out what the tender says it will not have", async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [{ text: 'Bulk enrolment', quote: 'bulk enrolment', page: 3, section: 'Functional', ref: 'FR-004', priority: 'must', outOfScope: false }] } }) }];
+    const body = (await (await post('extract', { docs, range: { doc: 2, from: 1, to: 3 } })).json()) as { found: { ref?: string }[] };
+    expect(body.found[0]?.ref).toBe('FR-004');
+
+    const sent = sentMessage();
+    const item = (sent.tools as { input_schema: { properties: { requirements?: { items: { required: string[] } } } } }[])[1]!.input_schema.properties.requirements!.items;
+    expect(item.required).toContain('ref');
+    const instruction = String(((sent.messages as { content: { text?: string }[] }[])[0]?.content ?? []).at(-1)?.text);
+    /* MoSCoW sheets mark Won't haves; listing them as requirements prices work the client ruled out */
+    expect(instruction).toContain("Won't have (W): it is not a requirement");
+    expect(instruction).toContain('the top level is must');
   });
 
   it('says a refusal is a refusal, and still reports the tokens it cost', async () => {
@@ -305,6 +373,14 @@ describe('the extraction step', () => {
     response = await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
     expect(response.status).toBe(410);
     expect(((await response.json()) as { error: string }).error).toContain('no longer at Anthropic');
+
+    /* a key that cannot use the model also answers 404; blaming the files would send someone to upload them again */
+    replies = [apiError(404, 'not_found_error', 'model: claude-opus-5-5')];
+    response = await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
+    const missing = (await response.json()) as { code: string; error: string };
+    expect(missing.code).toBe('not_configured');
+    expect(missing.error).toContain('cannot use the model claude-opus-5-5');
+    expect(missing.error).not.toContain('no longer at Anthropic');
 
     replies = [apiError(400, 'invalid_request_error', 'prompt is too long: 1200000 tokens')];
     response = await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
@@ -378,6 +454,97 @@ describe('the match step', () => {
   it('refuses more requirements than one call should carry', async () => {
     const reqs = Array.from({ length: 61 }, (_, i) => ({ id: `R-${i}`, text: 'x', section: '', priority: 'must' }));
     expect((await post('match', { catalog, reqs })).status).toBe(400);
+  });
+});
+
+describe('keeping the tender cached while a person decides', () => {
+  const warmReply = (): Reply => ({
+    json: {
+      id: 'msg_w',
+      type: 'message',
+      role: 'assistant',
+      model: DEFAULT_MODEL,
+      content: [],
+      stop_reason: 'max_tokens',
+      stop_sequence: null,
+      usage: { input_tokens: 12, output_tokens: 0, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 0 }
+    }
+  });
+
+  it('re-reads exactly what the fit call cached, and asks for no answer', async () => {
+    process.env.EDLY_AI_EFFORT = 'medium';
+    replies = [{ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx' } }) }, warmReply()];
+    await post('fit', { docs, platforms });
+    const response = await post('warm', { docs });
+    const body = (await response.json()) as { ok: boolean; tokens: { cacheRead: number; output: number } };
+    expect(response.status).toBe(200);
+    expect(body.tokens).toMatchObject({ cacheRead: 90_000, output: 0 });
+
+    const [fit, warm] = calls.filter((one) => one.url.includes('/v1/messages')).map((one) => one.body as Record<string, unknown>);
+    /* no output is billed; the API refuses max_tokens 0 on a stream, so this one is not streamed */
+    expect(warm?.max_tokens).toBe(0);
+    expect(warm?.stream).toBeFalsy();
+    /* anything in the cached prompt that differed would write a second entry nothing ever reads */
+    for (const key of ['model', 'system', 'tools', 'thinking', 'output_config']) expect(warm?.[key]).toEqual(fit?.[key]);
+    const documents = (body: Record<string, unknown> | undefined): unknown[] => ((body?.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? []).filter((block) => block.type === 'document');
+    expect(documents(warm)).toEqual(documents(fit));
+  });
+
+  it('says why a keep-warm failed, and refuses one with no documents without calling', async () => {
+    replies = [apiError(429, 'rate_limit_error', 'slow down')];
+    const failed = await post('warm', { docs });
+    expect(failed.status).toBe(429);
+    expect(((await failed.json()) as { code: string }).code).toBe('rate_limited');
+    calls = [];
+    expect((await post('warm', { docs: [] })).status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('what extraction leaves out', () => {
+  it('asks for no legal boilerplate or bid paperwork, but keeps delivery clauses and costly non-software work', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }) }];
+    await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
+    const instruction = String(((sentMessage().messages as { content: { text?: string }[] }[])[0]?.content ?? []).at(-1)?.text);
+    /* insurance and liability clauses flooded the review list and cost output tokens, for nothing to estimate */
+    expect(instruction).toContain('Do not report legal and commercial terms (insurance, liability');
+    expect(instruction).toContain('service levels, support hours, data protection');
+    expect(instruction).toContain('outOfScope is true for obligations that are not software delivery but cost the supplier money');
+    expect(instruction).not.toMatch(/outOfScope is true[^\n]*insurance/);
+  });
+
+  it('lets the fit call leave out sections of standard legal terms', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx' } }) }];
+    await post('fit', { docs, platforms });
+    const instruction = String(((sentMessage().messages as { content: { text?: string }[] }[])[0]?.content ?? []).at(-1)?.text);
+    expect(instruction).toContain('declarations and signature pages, and standard legal and commercial terms');
+  });
+});
+
+describe('the effort setting', () => {
+  const fitReply = (): Reply => ({ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx' } }) });
+  const extractReply = (): Reply => ({ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }) });
+  const matchReply = (): Reply => ({ sse: stream('tool_use', { name: 'report_matches', input: { matches: [] } }) });
+  const run = async (): Promise<unknown[]> => {
+    replies = [fitReply(), extractReply(), matchReply()];
+    await post('fit', { docs, platforms });
+    await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
+    await post('match', { catalog, reqs: [{ id: 'R-01', text: 'Single sign-on', section: '', priority: 'must' }] });
+    return calls.filter((one) => one.url.includes('/v1/messages')).map((one) => (one.body as { output_config?: unknown }).output_config);
+  };
+
+  it('sends medium when it is not set, because the API default differs from one model to the next', async () => {
+    expect(await run()).toEqual([{ effort: 'medium' }, { effort: 'medium' }, { effort: 'medium' }]);
+  });
+
+  it('sends the same effort on every call, because a different one would pay for the whole tender again', async () => {
+    process.env.EDLY_AI_EFFORT = ' Low ';
+    expect(await run()).toEqual([{ effort: 'low' }, { effort: 'low' }, { effort: 'low' }]);
+  });
+
+  it('ignores an effort the API does not know, rather than failing every call', async () => {
+    process.env.EDLY_AI_EFFORT = 'turbo';
+    expect(await run()).toEqual([{ effort: 'medium' }, { effort: 'medium' }, { effort: 'medium' }]);
   });
 });
 

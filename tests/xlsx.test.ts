@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fingerprint, readWorkbook, rowsToObjects, unzip, writeWorkbook, type CellStyle, type StyledSheet } from '../src/lib/xlsx';
+import { fingerprint, readWorkbook, rowsToObjects, unzip, writeWorkbook, zipStored, type CellStyle, type StyledSheet } from '../src/lib/xlsx';
 
 /**
  * The spreadsheet reader and writer, which are written here rather than installed.
@@ -217,6 +217,26 @@ describe('styled sheets', () => {
     const name = `${'R'.repeat(29)}&D department`;
     const back = await readWorkbook(writeWorkbook({ [name]: [['x']] }));
     expect(Object.keys(back)).toEqual([name.slice(0, 31)]);
+  });
+});
+
+describe('hidden sheets', () => {
+  /* Excel marks a hidden sheet on its <sheet> tag, after the name and id, in either of two strengths */
+  const withHidden = async (): Promise<Uint8Array> => {
+    const files = await unzip(writeWorkbook({ Matrix: [['R-1']], Lists: [['Y']], Lookups: [['Z']] }));
+    const xml = new TextDecoder()
+      .decode(files['xl/workbook.xml'])
+      .replace(/(<sheet [^>]*name="Lists"[^>]*?)(\/?>)/, '$1 state="hidden"$2')
+      .replace(/(<sheet [^>]*name="Lookups"[^>]*?)(\/?>)/, '$1 state="veryHidden"$2');
+    return zipStored(Object.entries(files).map(([name, data]) => ({ name, data: name === 'xl/workbook.xml' ? xml : data })));
+  };
+
+  it('are read by default, because the catalog import reads every sheet', async () => {
+    expect(Object.keys(await readWorkbook(await withHidden()))).toEqual(['Matrix', 'Lists', 'Lookups']);
+  });
+
+  it('are left out when asked, however strongly they are hidden', async () => {
+    expect(Object.keys(await readWorkbook(await withHidden(), { skipHidden: true }))).toEqual(['Matrix']);
   });
 });
 
