@@ -168,6 +168,24 @@ function GroupCard({
                   {row.detail}
                   {row.to || row.skip ? <span style={{ color: color.brandInk, fontWeight: 600 }}> · {row.lands}</span> : null}
                 </div>
+                {row.notes ? (
+                  <div
+                    title={row.notes}
+                    style={{
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                      whiteSpace: 'pre-line',
+                      fontSize: 11,
+                      color: color.body,
+                      lineHeight: 1.45,
+                      marginTop: 2
+                    }}
+                  >
+                    {row.notes}
+                  </div>
+                ) : null}
               </div>
               <Select
                 value={row.to ?? ''}

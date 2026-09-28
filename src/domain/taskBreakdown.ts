@@ -28,7 +28,6 @@ export type SheetColumnId =
   | 'deploy'
   | 'window'
   | 'notes'
-  | 'internal'
   | 'role'
   | 'rate'
   | 'build'
@@ -62,8 +61,7 @@ export const SHEET_COLUMNS: readonly SheetColumn[] = [
   { id: 'account', label: 'Client-held Account', sub: 'Stripe, Zoom and the like, held by the client', core: false, on: false },
   { id: 'deploy', label: 'Deployment Time', sub: 'Standard time to deploy it', core: false, on: false },
   { id: 'window', label: 'Delivery Window', sub: 'Weeks in the delivery plan', core: false, on: false },
-  { id: 'notes', label: 'Notes/Assumptions', sub: 'Your notes per line, plus caveats', core: true, on: true },
-  { id: 'internal', label: 'Internal Notes', sub: 'Catalog and desk notes. For Edly, check before sending', core: false, on: false },
+  { id: 'notes', label: 'Notes/Assumptions', sub: 'Each line’s notes and assumptions, plus caveats', core: true, on: true },
   { id: 'role', label: 'Role', sub: 'Who does it, from the rate card', core: false, on: false },
   { id: 'rate', label: 'Rate', sub: 'Hourly rate of that role', core: false, on: false },
   { id: 'build', label: 'Engineered Hours', sub: 'Hours already spent building it', core: false, on: false },
@@ -95,19 +93,26 @@ export const SHEET_SECTIONS: readonly SheetSection[] = [
 export interface SheetPrefs {
   columns: Record<SheetColumnId, boolean>;
   sections: Record<SheetSectionId, boolean>;
+  /**
+   * Print each solution's own Notes / Assumptions, from the catalog or the desk, on a line this deal
+   * has not written its own for. Off, a line says only what sales wrote for it and the caveats.
+   */
+  catalogNotes: boolean;
 }
 
 export const DEFAULT_SHEET: SheetPrefs = {
   columns: Object.fromEntries(SHEET_COLUMNS.map((column) => [column.id, column.on])) as Record<SheetColumnId, boolean>,
-  sections: Object.fromEntries(SHEET_SECTIONS.map((section) => [section.id, section.on])) as Record<SheetSectionId, boolean>
+  sections: Object.fromEntries(SHEET_SECTIONS.map((section) => [section.id, section.on])) as Record<SheetSectionId, boolean>,
+  catalogNotes: true
 };
 
 /**
  * Stored choices, whatever shape they arrive in.
  *
  * A column added after someone saved their choices is absent from what they saved, and gets its
- * default rather than reading as unticked. Component is always on: a sheet without it lists
- * numbers against nothing.
+ * default rather than reading as unticked, and a column since removed (Internal Notes, whose
+ * text is now the line's one Notes/Assumptions) is dropped. Component is always on: a sheet
+ * without it lists numbers against nothing.
  */
 export function readSheetPrefs(raw: unknown): SheetPrefs {
   const record = (value: unknown): Record<string, unknown> =>
@@ -125,7 +130,8 @@ export function readSheetPrefs(raw: unknown): SheetPrefs {
     sections: Object.fromEntries(SHEET_SECTIONS.map((section) => [section.id, pick(sections, section.id, section.on)])) as Record<
       SheetSectionId,
       boolean
-    >
+    >,
+    catalogNotes: pick(stored, 'catalogNotes', DEFAULT_SHEET.catalogNotes)
   };
 }
 
@@ -142,8 +148,9 @@ export interface SheetContext {
  * Why a ticked option would not appear, keyed by column or section. An option missing here
  * appears when ticked. The panel shows the reason beside the box, so nothing vanishes silently.
  */
-export function sheetBlockers(prefs: SheetPrefs, context: SheetContext): Partial<Record<SheetColumnId | SheetSectionId, string>> {
-  const blocked: Partial<Record<SheetColumnId | SheetSectionId, string>> = {};
+export function sheetBlockers(prefs: SheetPrefs, context: SheetContext): Partial<Record<SheetColumnId | SheetSectionId | 'catalogNotes', string>> {
+  const blocked: Partial<Record<SheetColumnId | SheetSectionId | 'catalogNotes', string>> = {};
+  if (!prefs.columns.notes) blocked.catalogNotes = 'Needs the Notes/Assumptions column';
   if (context.blendBuffer) blocked.buffer = 'Buffers are blended into Hours (Display settings)';
   if (!prefs.columns.hours && !prefs.columns.estimate) blocked.totals = 'Needs the Hours or Estimate column';
   if (!prefs.columns.estimate) blocked.roles = 'Needs the Estimate column';
@@ -186,10 +193,13 @@ export interface BreakdownLine {
   component: string;
   description: string;
   status: LineStatus;
-  /** What the client should know about it, sales' own words first. */
+  /** What the client should know about it: its Notes/Assumptions first, then the caveats. */
   notes: string[];
-  /** Catalog notes and the desk's pricing note. Written for Edly, not for the client. */
-  internal: string[];
+  /**
+   * The solution's own Notes / Assumptions, from the catalog or the desk, whatever this deal's sheet
+   * prints in its place. Blank when nobody wrote any.
+   */
+  catalogNote: string;
   /** Null when nobody has priced it, which is not the same as zero. */
   hours: number | null;
   /** The line's share of the risk buffer when buffers are listed apart; 0 when they are blended. */
@@ -249,6 +259,24 @@ export interface Breakdown {
   totals: BreakdownTotals;
 }
 
+/**
+ * What a line's Notes/Assumptions says before the caveats: this deal's own text when sales wrote
+ * some, else the solution's own when the sheet carries those. The deal's text replaces the
+ * catalog's rather than sitting above it, so an assumption that is wrong for this client can be
+ * corrected, and an empty entry leaves the line blank on purpose. The Excel sheet and the printed
+ * quote both read it from here, so the client is told the same thing in both.
+ */
+export function lineNote(
+  written: Readonly<Record<string, string>> | undefined,
+  key: string,
+  catalogNote: string | null | undefined,
+  catalogNotes = true
+): string {
+  const own = written?.[key];
+  if (own !== undefined) return own.trim();
+  return catalogNotes ? (catalogNote ?? '').trim() : '';
+}
+
 export interface BreakdownInput {
   estimate: EstimateResult;
   /** The open estimation's custom requests. */
@@ -261,6 +289,8 @@ export interface BreakdownInput {
   blendBuffer: boolean;
   /** Say in the notes which account a line needs. Off when the account has a column of its own. */
   accountNote?: boolean;
+  /** Print a line's catalog Notes / Assumptions when this deal has written none of its own. On by default. */
+  catalogNotes?: boolean;
 }
 
 const CUSTOM_AREA = 'Custom development';
@@ -273,6 +303,7 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 export function taskBreakdown(input: BreakdownInput): Breakdown {
   const { estimate, requests, plan, snap, bundles, blendBuffer } = input;
   const accountNote = input.accountNote ?? true;
+  const catalogNotes = input.catalogNotes ?? true;
   const buf = snap.buf ?? {};
   const lineRole = snap.lineRole ?? {};
   const written = snap.sheet?.notes ?? {};
@@ -321,7 +352,8 @@ export function taskBreakdown(input: BreakdownInput): Breakdown {
     const bill = billing(item.id);
     const status: LineStatus =
       item.status === 'In Development' ? 'development' : item.status === 'Estimation' ? 'custom' : item.status === 'Sample' ? 'benchmark' : 'prebuilt';
-    const notes = [written[item.id]?.trim() ?? ''];
+    const catalogNote = (item.notes ?? '').trim();
+    const notes = [lineNote(written, item.id, catalogNote, catalogNotes)];
     if (status === 'development') notes.push('Still in development, so its delivery date is to be confirmed.');
     if (item.first === null) notes.push('Not yet estimated, so not included in the totals.');
     if (accountNote && item.account) notes.push(`Needs a client-held ${item.account} account. Vendor fees are payable by the client.`);
@@ -332,7 +364,7 @@ export function taskBreakdown(input: BreakdownInput): Breakdown {
       description: item.desc ?? '',
       status,
       notes: notes.filter(Boolean),
-      internal: item.notes ? [item.notes] : [],
+      catalogNote,
       ...split(item.first, lineBuf, bill.rate),
       ...bill,
       window: windowOf(item.id),
@@ -347,7 +379,8 @@ export function taskBreakdown(input: BreakdownInput): Breakdown {
   const requestLine = (request: EstimateRequest): Omit<BreakdownLine, 'item'> => {
     const priced = Number(request.est) > 0;
     const bill = billing(request.id);
-    const notes = [written[request.id]?.trim() ?? ''];
+    const catalogNote = (request.catNotes ?? '').trim();
+    const notes = [lineNote(written, request.id, catalogNote, catalogNotes)];
     if (!priced) notes.push('Being estimated by Edly, so not yet included in the totals.');
     if (accountNote && request.catAccount) notes.push(`Needs a client-held ${request.catAccount} account. Vendor fees are payable by the client.`);
     /* A tender-drafted request carries the tender's priority, quote and catalog cover after its
@@ -361,7 +394,7 @@ export function taskBreakdown(input: BreakdownInput): Breakdown {
       description: details.trim(),
       status: priced ? 'custom' : 'pending',
       notes: notes.filter(Boolean),
-      internal: request.estNote ? [request.estNote] : [],
+      catalogNote,
       ...split(priced ? Number(request.est) : null, 0, bill.rate),
       ...bill,
       window: windowOf(request.id),

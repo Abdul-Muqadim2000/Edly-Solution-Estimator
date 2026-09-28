@@ -64,7 +64,6 @@ function Row({
     display.savings && item.repeat !== null ? ['Repeat redeploy', `${hours(item.repeat)} h`] : null,
     item.account ? ['Client-held account', item.account] : null,
     item.integrations ? ['Integrations', item.integrations] : null,
-    item.notes ? ['Notes & limits', item.notes] : null,
     display.notes && item.ref && !refUrl ? ['Reference', item.ref] : null
   ].filter((entry): entry is [string, string] => entry !== null);
 
@@ -179,6 +178,14 @@ function Row({
                 <span style={{ color: color.inkSoft, minWidth: 0 }}>{value}</span>
               </div>
             ))}
+            {/* Written for the client, so it stays while presenting. Full width, and line breaks kept,
+                because it is the longest detail and an older note joined two into one. */}
+            {item.notes ? (
+              <div style={{ display: 'flex', gap: 12, fontSize: 12.5, lineHeight: 1.55, gridColumn: '1 / -1' }}>
+                <span style={{ flex: '0 0 132px', color: color.ghostCool }}>Notes / Assumptions</span>
+                <span style={{ color: color.inkSoft, minWidth: 0, whiteSpace: 'pre-line' }}>{item.notes}</span>
+              </div>
+            ) : null}
             {refUrl ? (
               <div style={{ display: 'flex', gap: 12, fontSize: 12.5, lineHeight: 1.55, gridColumn: '1 / -1' }}>
                 <span style={{ flex: '0 0 132px', color: color.ghostCool }}>Reference</span>

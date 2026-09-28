@@ -140,14 +140,13 @@ function sample(): PersistedState {
         catBundle: 'B05',
         estBy: 'admin',
         estAt: '2026-09-12',
-        estNote: 'Assumes the Proctorio contract is already in place',
         catForm: 'Custom development',
         catDeploy: '3–4 days',
         catInteg: 'Proctorio',
         catCategory: 'Assessment',
         catSub: 'Custom',
         catAccount: 'Proctorio',
-        catLimits: 'One exam window per course',
+        catNotes: 'One exam window per course.\nAssumes the Proctorio contract is already in place.',
         tender: 'TND-1',
         tenderReq: 'R-01'
       },
@@ -201,8 +200,7 @@ function sample(): PersistedState {
         category: 'Assessment',
         subCategory: 'Custom',
         account: 'Proctorio',
-        limits: 'One exam window per course',
-        note: 'Vendor contract assumed',
+        notes: 'One exam window per course.\nAssumes the Proctorio contract is already in place.',
         from: 'RQ-01',
         estAt: '2026-09-12',
         direct: false
@@ -221,8 +219,7 @@ function sample(): PersistedState {
         category: 'Infrastructure',
         subCategory: '',
         account: '',
-        limits: 'Single-region only',
-        note: '',
+        notes: 'Single-region only',
         from: '',
         estAt: '2026-09-20',
         direct: true
@@ -244,7 +241,11 @@ function sample(): PersistedState {
       'edly-open-estimation-v2': 'EST-1',
       'edly-workspace-v2': {
         display: { savings: true, notes: true, money: false, controls: true, blendBuffer: false },
-        sheet: { columns: { ...DEFAULT_SHEET.columns, solutionId: true, notes: false }, sections: { ...DEFAULT_SHEET.sections, cover: false } }
+        sheet: {
+          columns: { ...DEFAULT_SHEET.columns, solutionId: true, notes: false },
+          sections: { ...DEFAULT_SHEET.sections, cover: false },
+          catalogNotes: false
+        }
       },
       'edly-loaded-catalogs-v2': { openedx: catalog, moodle: catalog }
     },
@@ -359,7 +360,6 @@ describe('spreadsheet round-trip', () => {
     const back = await roundTrip(sample());
     expect(back.requests[0]?.est).toBe(48);
     expect(back.requests[0]?.repeatEst).toBe(12);
-    expect(back.requests[0]?.catLimits).toBe('One exam window per course');
     expect(back.requests[0]?.catAccount).toBe('Proctorio');
     expect(back.requests[1]?.manual).toBe(true);
   });
@@ -401,8 +401,76 @@ describe('spreadsheet round-trip', () => {
       '3 days', 'Assessment', '', 'Proctorio', '', '', 'RQ-01', '2026-09-12', ''];
     const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.solutions]: [columns, row] })));
 
-    expect(back.solutions[0]).toMatchObject({ id: 'CS-01', name: 'Proctored exam integration', first: 48, account: 'Proctorio', from: 'RQ-01', integrations: '' });
+    expect(back.solutions[0]).toMatchObject({ id: 'CS-01', name: 'Proctored exam integration', first: 48, account: 'Proctorio', from: 'RQ-01', integrations: '', notes: '' });
     expect(back.solutions[0]?.estName).toBeUndefined();
+  });
+
+  it('keeps one Notes / Assumptions on a desk solution and its request, line breaks and all', async () => {
+    /* the one entry the client's task breakdown prints, so a lost line break merges two sentences */
+    const back = await roundTrip(sample());
+    expect(back.solutions[0]?.notes).toBe('One exam window per course.\nAssumes the Proctorio contract is already in place.');
+    expect(back.requests[0]?.catNotes).toBe('One exam window per course.\nAssumes the Proctorio contract is already in place.');
+    expect(back.solutions[1]?.notes).toBe('Single-region only');
+  });
+
+  it('reads a request the desk wrote no notes for back with no entry, not an empty one', async () => {
+    const back = await roundTrip(sample());
+    expect(back.requests[1]).not.toHaveProperty('catNotes');
+    expect(back.requests[2]).not.toHaveProperty('catNotes');
+  });
+
+  it('writes the note where an older build reads it, and no limits column any more', () => {
+    /* A tab still running the build before this one reads `note` and nothing else, so the whole
+       entry has to be there; a `limits` column left behind would be joined in a second time. */
+    const sheets = stateToSheets(sample());
+    const solutions = sheets[SHEETS.solutions] ?? [];
+    const header = (solutions[0] ?? []).map(String);
+    expect(header).not.toContain('limits');
+    expect(solutions[1]?.[header.indexOf('note')]).toBe('One exam window per course.\nAssumes the Proctorio contract is already in place.');
+
+    const requests = sheets[SHEETS.requests] ?? [];
+    const requestHeader = (requests[0] ?? []).map(String);
+    expect(requests[1]?.[requestHeader.indexOf('note')]).toBe('One exam window per course.\nAssumes the Proctorio contract is already in place.');
+    expect(String(requests[1]?.[requestHeader.indexOf('extraJson')])).not.toContain('catLimits');
+  });
+
+  it('joins the limits and note an older build kept apart into one entry, limits first', async () => {
+    const solutionColumns = [...COLUMNS.solutions.slice(0, COLUMNS.solutions.indexOf('note')), 'limits', ...COLUMNS.solutions.slice(COLUMNS.solutions.indexOf('note'))];
+    const solutionRow = (id: string, limits: string, note: string): (string | number)[] =>
+      solutionColumns.map((column) => ({ id, plat: 'openedx', name: `Solution ${id}`, firstHours: 8, limits, note } as Record<string, string | number>)[column] ?? '');
+    const requestRow = COLUMNS.requests.map(
+      (column) =>
+        ({
+          id: 'RQ-01',
+          plat: 'openedx',
+          title: 'Proctored exam integration',
+          estimateHours: 48,
+          note: 'Assumes the Proctorio contract is in place.',
+          extraJson: JSON.stringify({ manual: false, catLimits: 'One exam window per course.' })
+        } as Record<string, string | number>)[column] ?? ''
+    );
+    const back = sheetsToState(
+      await readWorkbook(
+        writeWorkbook({
+          [SHEETS.solutions]: [
+            solutionColumns,
+            solutionRow('CS-01', 'Single region only.', 'Assumes AWS.'),
+            solutionRow('CS-02', 'Single region only.', ''),
+            solutionRow('CS-03', '', 'Assumes AWS.'),
+            /* the desk often typed the same sentence into both boxes */
+            solutionRow('CS-04', 'Assumes AWS.', 'Assumes AWS.')
+          ],
+          [SHEETS.requests]: [[...COLUMNS.requests], requestRow]
+        })
+      )
+    );
+
+    expect(back.solutions.map((solution) => solution.notes)).toEqual(['Single region only.\nAssumes AWS.', 'Single region only.', 'Assumes AWS.', 'Assumes AWS.']);
+    expect(back.requests[0]?.catNotes).toBe('One exam window per course.\nAssumes the Proctorio contract is in place.');
+    /* and once joined, a second trip leaves it as it is */
+    const again = await roundTrip(back);
+    expect(again.solutions[0]?.notes).toBe('Single region only.\nAssumes AWS.');
+    expect(again.requests[0]?.catNotes).toBe('One exam window per course.\nAssumes the Proctorio contract is in place.');
   });
 
   it('keeps custom bundle categories', async () => {
@@ -444,7 +512,7 @@ describe('spreadsheet round-trip', () => {
     const back = sheetsToState(
       await readWorkbook(
         writeWorkbook({
-          [SHEETS.solutions]: [solutionColumns, ['CS-01', 'openedx', 'B05', 'Proctoring', '', 48, 12, '', '', '', '', '', '', '', '', 'RQ-01', '', '2026-09-12', '']],
+          [SHEETS.solutions]: [solutionColumns, ['CS-01', 'openedx', 'B05', 'Proctoring', '', 48, 12, '', '', '', '', '', '', '', 'RQ-01', '', '2026-09-12', '']],
           [SHEETS.bundles]: [bundleColumns, ['CB-01', 'openedx', 'Compliance', '', '', '', '2026-09-12']]
         })
       )
@@ -489,6 +557,8 @@ describe('spreadsheet round-trip', () => {
     expect(prefs.columns.solutionId).toBe(true);
     expect(prefs.columns.notes).toBe(false);
     expect(prefs.sections.cover).toBe(false);
+    /* leaving the catalog's notes off a client's sheet is a choice, and a reload must not undo it */
+    expect(prefs.catalogNotes).toBe(false);
     expect(prefs).toEqual(workspace.sheet);
   });
 
@@ -563,8 +633,8 @@ describe('the sync key', () => {
     /* typed into a textarea, so it ends in a newline the reader will trim */
     if (pending) pending.details = 'Still pending, see the thread\n';
     const priced = state.requests[0];
-    /* the desk left the note blank: '' here, and no cell at all in the sheet */
-    if (priced) priced.estNote = '';
+    /* the desk left the notes blank: '' here, and no cell at all in the sheet */
+    if (priced) priced.catNotes = '';
     const custom = state.solutions[0];
     /* set the way `submitEstimate` sets them for a desk-priced request */
     if (custom) Object.assign(custom, { integrations: 'Proctorio', estName: 'Acme Corporate Academy' });

@@ -14,7 +14,7 @@ import { approveAll, EMPTY_REVIEW, setGroup, setRow, type ImportReview } from '.
 
 const row = (n: number, over: Partial<EstimateRow> = {}): EstimateRow => ({
   row: n + 1, sourceId: `NU-${n}`, name: `Estimate ${n}`, desc: '', first: 10, repeat: null, client: 'Nordic University', bundleId: '', area: '',
-  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', limits: '', note: '', estBy: '', estAt: '', ...over
+  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', notes: '', estBy: '', estAt: '', ...over
 });
 
 const catalogBundles = [
@@ -177,6 +177,30 @@ describe('the estimates review', () => {
     expect(b09?.rows[0]?.detail).toMatch(/updates CS-05/);
   });
 
+  it("shows each row's Notes / Assumptions for the person approving it, blank where there are none", () => {
+    const noted = planEstimateImport({
+      rows: [row(1, { bundleId: 'B15', notes: 'Assumes the client already runs on AWS.' }), row(2, { bundleId: 'B15' })],
+      file: 'nordic.xlsx', platform: 'openedx', catalogBundles, solutions: [], bundles: [], today: '2026-09-27', review: EMPTY_REVIEW
+    });
+    expect(noted.review.groups[0]?.rows.map((one) => one.notes)).toEqual(['Assumes the client already runs on AWS.', '']);
+  });
+
+  it('keeps the notes an estimate already has when a second import of the file has none for it', () => {
+    /* the desk reworded it in the app; a file with no notes column must not wipe that */
+    const first = plan(approved(ALL)).solutions.map((one) => (one.name === 'Estimate 1' ? { ...one, notes: 'Single region only.' } : one));
+    const again = plan(approved(ALL), { solutions: first });
+    const kept = again.solutions.find((one) => one.name === 'Estimate 1');
+    expect(kept?.notes).toBe('Single region only.');
+    expect(again.review.groups[0]?.rows[0]?.notes).toBe('Single region only.');
+
+    /* and a row that does bring notes replaces them, as the file wins for every other field */
+    const replaced = planEstimateImport({
+      rows: [row(1, { bundleId: 'B15', notes: 'Two regions.' })],
+      file: 'nordic.xlsx', platform: 'openedx', catalogBundles, solutions: first, bundles: [], today: '2026-09-27', review: approved([toBundle('B15')])
+    });
+    expect(replaced.solutions.find((one) => one.name === 'Estimate 1')?.notes).toBe('Two regions.');
+  });
+
   it('approves everything as proposed when there is no review at all, as older callers expect', () => {
     const legacy = plan(undefined);
     expect(legacy.review.pending).toBe(0);
@@ -209,6 +233,12 @@ const bplan = (review: ImportReview) => planBundleImport({ current, incoming, re
 const BUNDLE_GROUPS = [toIncoming('B01'), toIncoming('B03'), toIncoming('B16')];
 
 describe('the bundles review', () => {
+  it("shows each solution's Notes / Assumptions in its row", () => {
+    const noted = book(bundle('B16', 'Mobile Apps', [item('EDU-30', 5, { notes: 'Published under the client’s store accounts.' }), item('EDU-31')]));
+    const { review } = planBundleImport({ current, incoming: noted, review: EMPTY_REVIEW });
+    expect(review.groups[0]?.rows.map((one) => one.notes)).toEqual(['Published under the client’s store accounts.', '']);
+  });
+
   it('tells an update, a new bundle and a clash of IDs apart', () => {
     const { review } = bplan(EMPTY_REVIEW);
     expect(review.groups.map((group) => [group.label, group.kind, group.renameable])).toEqual([

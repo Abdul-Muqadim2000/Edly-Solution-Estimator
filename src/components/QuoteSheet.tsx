@@ -3,6 +3,7 @@ import { openEstimationRecord, openRequests } from '@/state/reducer';
 import { isLiveCatalog, findPlatform } from '@/data/practices';
 import { color, font } from '@/theme';
 import { hours, hours1, longDate, money, rateLabel } from '@/lib/format';
+import { lineNote } from '@/domain/taskBreakdown';
 
 /**
  * The printed quote.
@@ -13,6 +14,12 @@ import { hours, hours1, longDate, money, rateLabel } from '@/lib/format';
  */
 
 const mono = { fontFamily: font.mono } as const;
+
+/** A line's Notes/Assumptions under its name, as the Excel sheet words it for this client. */
+function LineNote({ text }: { text: string }): JSX.Element | null {
+  if (!text) return null;
+  return <div style={{ fontSize: 11, color: color.muted, lineHeight: 1.5, marginTop: 1, whiteSpace: 'pre-line' }}>{text}</div>;
+}
 
 function TotalLine({ label, value, top = 4 }: { label: string; value: string; top?: number }): JSX.Element {
   return (
@@ -33,7 +40,9 @@ export function QuoteSheet(): JSX.Element | null {
   if (!estimation) return null;
 
   const platformName = findPlatform(state.platform)?.platform.name ?? 'Open edX';
-  const title = isLiveCatalog(state.platform) ? 'Open edX Solution Bundle — Estimate' : `${platformName} Solution Bundle — Estimate`;
+  const title = isLiveCatalog(state.platform) ? 'Open edX Solution Bundle: Estimate' : `${platformName} Solution Bundle: Estimate`;
+  const noteOf = (key: string, catalogNote: string | null | undefined): string =>
+    lineNote(state.draft.sheet?.notes, key, catalogNote, state.sheet.catalogNotes);
 
   const basis =
     'Estimated engineering hours' +
@@ -42,8 +51,8 @@ export function QuoteSheet(): JSX.Element | null {
     (display.blendBuffer || !estimate.bufH ? '' : ` · +${hours(estimate.bufH)} h buffer`);
 
   const caveats = [
-    estimate.inDev > 0 ? `${estimate.inDev} in development — sell with a delivery-date caveat` : null,
-    estimate.noEst > 0 ? `${estimate.noEst} without recorded estimates — totals understate` : null
+    estimate.inDev > 0 ? `${estimate.inDev} in development: sell with a delivery-date caveat` : null,
+    estimate.noEst > 0 ? `${estimate.noEst} without recorded estimates, so the totals understate` : null
   ].filter(Boolean);
 
   return (
@@ -82,7 +91,10 @@ export function QuoteSheet(): JSX.Element | null {
                   item.first === null && buffer === 0 ? '—' : hours(((item.first ?? 0) + (display.blendBuffer ? buffer : 0)) * factor);
                 return (
                   <div key={item.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, padding: '4px 0 0 24px', color: color.inkSoft }}>
-                    <span style={{ flex: 1 }}>{item.name}</span>
+                    <span style={{ flex: 1 }}>
+                      {item.name}
+                      <LineNote text={noteOf(item.id, item.notes)} />
+                    </span>
                     <span style={{ ...mono, fontSize: 12 }}>{shown}</span>
                   </div>
                 );
@@ -95,19 +107,20 @@ export function QuoteSheet(): JSX.Element | null {
           <div style={{ marginTop: 20 }}>
             <div style={{ fontFamily: font.display, fontWeight: 600, fontSize: 14 }}>
               Custom development
-              {estimate.pend ? ` — ${estimate.pend} item${estimate.pend === 1 ? '' : 's'} still being estimated` : ''}
+              {estimate.pend ? `: ${estimate.pend} item${estimate.pend === 1 ? '' : 's'} still being estimated` : ''}
             </div>
             {requests.map((request) => (
               <div key={request.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, padding: '4px 0 0 24px', color: color.inkSoft }}>
                 <span style={{ flex: 1 }}>
                   {request.title} ({[request.area, request.urgency].filter(Boolean).join(' · ') || 'custom'})
+                  <LineNote text={noteOf(request.id, request.catNotes)} />
                 </span>
                 <span style={{ ...mono, fontSize: 12 }}>{Number(request.est) > 0 ? hours(Number(request.est)) : 'TBD'}</span>
               </div>
             ))}
             <p style={{ fontSize: 11, color: color.muted, margin: '6px 0 0 24px', lineHeight: 1.5 }}>
               {estimate.pend
-                ? `Items with hours are already included in the total below. The ${estimate.pend} marked TBD are not — Edly’s solutions team returns those separately.`
+                ? `Items with hours are already included in the total below. The ${estimate.pend} marked TBD are not: Edly’s solutions team returns those separately.`
                 : 'Estimated by Edly’s solutions team and included in the total below.'}
             </p>
           </div>
@@ -161,7 +174,7 @@ export function QuoteSheet(): JSX.Element | null {
           </div>
           {display.savings && estimate.savedPct !== null ? (
             <div style={{ fontSize: 12, color: color.brandInk, fontWeight: 600, marginTop: 8 }}>
-              Reusing {hours(estimate.build)} h of engineered work — {estimate.savedPct}% effort saved vs building new
+              Reusing {hours(estimate.build)} h of engineered work: {estimate.savedPct}% effort saved vs building new
             </div>
           ) : null}
         </div>
@@ -178,9 +191,9 @@ export function QuoteSheet(): JSX.Element | null {
         ) : null}
 
         <p style={{ fontSize: 10.5, color: color.faint, marginTop: 18, lineHeight: 1.65 }}>
-          Engineering hours only — add PM, QA and support overhead per delivery standards unless applied above. Third-party vendor
+          Engineering hours only. Add PM, QA and support overhead per delivery standards unless applied above. Third-party vendor
           fees are payable by the client and are not included. Prepared with the Edly Bundle Builder · edly.io · Open edX® is a
-          registered trademark of edX Inc. This estimate covers pre-built solutions only — Edly also designs and builds fully
+          registered trademark of edX Inc. This estimate covers pre-built solutions only; Edly also designs and builds fully
           custom Open edX solutions: edly.io/contact-us.
         </p>
       </div>

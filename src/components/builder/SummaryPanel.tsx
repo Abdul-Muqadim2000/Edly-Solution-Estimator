@@ -424,8 +424,29 @@ export function SummaryPanel({
             {requests.map((request) => {
               const estimated = Number(request.est) > 0;
               return (
-                <div key={request.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: color.onDark, lineHeight: 1.4 }}>{request.title}</span>
+                <div key={request.id} style={{ display: 'flex', alignItems: request.catNotes ? 'flex-start' : 'center', gap: 8, padding: '5px 0' }}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: color.onDark, lineHeight: 1.4 }}>
+                    {request.title}
+                    {/* the desk's Notes / Assumptions: sales would otherwise meet them first in the client's sheet */}
+                    {request.catNotes ? (
+                      <span
+                        title={request.catNotes}
+                        style={{
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                          whiteSpace: 'pre-line',
+                          fontSize: 11.5,
+                          lineHeight: 1.45,
+                          color: color.onDarkMuted,
+                          marginTop: 2
+                        }}
+                      >
+                        {request.catNotes}
+                      </span>
+                    ) : null}
+                  </span>
                   <span
                     style={{
                       fontSize: 10,

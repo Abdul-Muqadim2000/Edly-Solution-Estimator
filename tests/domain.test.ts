@@ -268,7 +268,7 @@ describe('catalog composition', () => {
         {
           id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Custom thing', desc: 'Does a thing',
           first: 20, repeat: 6, form: 'Custom development', deploy: '', integrations: '', category: 'Custom',
-          subCategory: '', account: '', limits: '', note: '', from: 'RQ-1', estAt: '2026-09-01'
+          subCategory: '', account: '', notes: '', from: 'RQ-1', estAt: '2026-09-01'
         }
       ],
       ownBundles: []
@@ -285,7 +285,7 @@ describe('catalog composition', () => {
         {
           id: 'CS-09', plat: 'openedx', bundleId: 'GONE', name: 'Orphan', desc: '',
           first: 10, repeat: 3, form: '', deploy: '', integrations: '', category: '', subCategory: '',
-          account: '', limits: '', note: '', from: '', estAt: ''
+          account: '', notes: '', from: '', estAt: ''
         }
       ],
       ownBundles: []
@@ -301,7 +301,7 @@ describe('catalog composition', () => {
         {
           id: 'CS-02', plat: 'moodle', bundleId: 'B01', name: 'Moodle thing', desc: '',
           first: 10, repeat: 3, form: '', deploy: '', integrations: '', category: '', subCategory: '',
-          account: '', limits: '', note: '', from: '', estAt: ''
+          account: '', notes: '', from: '', estAt: ''
         }
       ],
       ownBundles: []
@@ -313,11 +313,21 @@ describe('catalog composition', () => {
     const converted = toSolution({
       id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Thing', desc: '',
       first: 10, repeat: 3, form: '', deploy: '', integrations: '', category: '', subCategory: '',
-      account: '', limits: 'Single region', note: 'Assumes X', from: 'RQ-1', estAt: '2026-09-01'
+      account: '', notes: 'Single region only.\nAssumes the client runs on AWS.', from: 'RQ-1', estAt: '2026-09-01'
     });
     expect(converted.status).toBe('Estimation');
     expect(converted.build).toBeNull();
-    expect(converted.notes).toBe('Single region · Estimator note: Assumes X');
+  });
+
+  it("carries a desk addition's Notes / Assumptions to the catalog as written, and none as none", () => {
+    const base = {
+      id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Thing', desc: '',
+      first: 10, repeat: 3, form: '', deploy: '', integrations: '', category: '', subCategory: '',
+      account: '', from: 'RQ-1', estAt: '2026-09-01'
+    };
+    /* no "Estimator note:" prefix any more: the text reaches the client's sheet, so it is theirs */
+    expect(toSolution({ ...base, notes: 'Single region only.\nAssumes the client runs on AWS.' }).notes).toBe('Single region only.\nAssumes the client runs on AWS.');
+    expect(toSolution({ ...base, notes: '  ' }).notes).toBeNull();
   });
 
   it('guesses a bundle from the category, falling back to CX', () => {
@@ -379,7 +389,7 @@ describe('reading a catalog', () => {
 const added = (id: string, over: Partial<AddedSolution> = {}): AddedSolution => ({
   id, plat: 'openedx', bundleId: 'B01', name: `Estimate ${id}`, desc: '',
   first: 20, repeat: 6, form: '', deploy: '', integrations: '', category: '', subCategory: '',
-  account: '', limits: '', note: '', from: '', estAt: '2026-03-01', ...over
+  account: '', notes: '', from: '', estAt: '2026-03-01', ...over
 });
 
 const bundle = (id: string, name: string, items: Solution[]): Bundle => ({
