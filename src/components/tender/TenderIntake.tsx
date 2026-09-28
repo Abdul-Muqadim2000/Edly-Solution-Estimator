@@ -3,7 +3,22 @@ import type { TenderDocument, TenderSection, TenderTokens } from '@/types';
 import { PRACTICES, findPlatform } from '@/data/practices';
 import { useApp } from '@/state/AppProvider';
 import { tenderDiscard, tenderFit, tenderProbe, tenderUpload, tenderWarm, TenderApiError, type AiProbe } from '@/api/client';
-import { addTokens, documentLength, KEEP_WARM_MAX, nextKeepWarm, NO_TOKENS, platformDigest, readingSummary, sectionPages, skippedSections, tokenSummary, type FitResult } from '@/domain/tender';
+import {
+  addTokens,
+  DEFAULT_AI_LIMIT,
+  documentLength,
+  KEEP_WARM_MAX,
+  limitQuestion,
+  nextKeepWarm,
+  NO_TOKENS,
+  platformDigest,
+  readingSummary,
+  sectionPages,
+  skippedSections,
+  spendSummary,
+  tokenSummary,
+  type FitResult
+} from '@/domain/tender';
 import { andList } from '@/lib/format';
 import { checkTenderFiles, MAX_FILES, prepareTenderFile } from '@/lib/tenderFiles';
 import { color, font, radius } from '@/theme';
@@ -149,6 +164,9 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
   /* the fit's outline, with the person's choice of what to read */
   const [outline, setOutline] = useState<TenderSection[]>([]);
   const [tokens, setTokens] = useState<TenderTokens>(NO_TOKENS);
+  /* dollars agreed beyond the server's limit before the tender exists, handed to it on creation */
+  const [aiApproved, setAiApproved] = useState(0);
+  const [askMore, setAskMore] = useState(false);
   /* when the last request that read the documents started, and how many keep-warms have gone out */
   const [lastReadAt, setLastReadAt] = useState(0);
   const [warmSent, setWarmSent] = useState(0);
@@ -184,8 +202,13 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
      longer than that to choose. Keep it warm while they do (see `nextKeepWarm`), so the first
      extraction reads it rather than paying for all of it again. A failed keep-warm stops them: the
      worst that follows is one fresh write, not a loop of failing requests. */
+  const aiLimit = probe?.limit && probe.limit > 0 ? probe.limit : DEFAULT_AI_LIMIT;
+  const allowance = aiLimit + aiApproved;
+  const overLimit = tokens.usd >= allowance;
+
   useEffect(() => {
-    if (phase !== 'fit' || docs.length === 0) return;
+    /* a keep-warm is spending too, so it stops at the limit like everything else */
+    if (phase !== 'fit' || docs.length === 0 || overLimit) return;
     const at = nextKeepWarm(lastReadAt, warmSent);
     if (at === null) return;
     let live = true;
@@ -206,7 +229,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
       live = false;
       window.clearTimeout(timer);
     };
-  }, [phase, docs, lastReadAt, warmSent]);
+  }, [phase, docs, lastReadAt, warmSent, overLimit]);
 
   /* Navigating away mid-way still deletes the uploads. `closed` is reset on mount because
      StrictMode runs this cleanup once straight after the first mount in development. */
@@ -251,12 +274,18 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
     setError(next.length > 0 ? checkTenderFiles(next) ?? '' : '');
   };
 
-  const read = async (): Promise<void> => {
+  /* `approved` is passed by Continue, which has only just set it, so this call cannot see it in state yet */
+  const read = async (approved = aiApproved): Promise<void> => {
     const problem = checkTenderFiles(files);
     if (problem) {
       setError(problem);
       return;
     }
+    if (tokens.usd >= aiLimit + approved) {
+      setAskMore(true);
+      return;
+    }
+    setAskMore(false);
     setError('');
     setPhase('working');
     setStartedAt(Date.now());
@@ -333,7 +362,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
     dispatch({
       type: 'createTender',
       id,
-      input: { plat: platform, name: name.trim(), client: client.trim(), due, summary: fit.header.summary, docs, fit: fit.fit, outline, tokens }
+      input: { plat: platform, name: name.trim(), client: client.trim(), due, summary: fit.header.summary, docs, fit: fit.fit, outline, tokens, aiLimit, aiApproved }
     });
     handedOver.current = true;
     router.navigate({ screen: 'tender', platform, tender: id });
@@ -435,6 +464,30 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
 
             {error ? <Banner tone="bad">{error}</Banner> : null}
 
+            {askMore && overLimit ? (
+              <Banner tone="warn">
+                <div role="status" style={{ fontWeight: 600 }}>
+                  {limitQuestion(tokens.usd, allowance, aiLimit, 'reading it again is another call')}
+                </div>
+                <Row gap={10} style={{ marginTop: 8 }}>
+                  <Button
+                    size="sm"
+                    tone="primary"
+                    onClick={() => {
+                      const approved = Math.max(allowance, tokens.usd);
+                      setAiApproved(approved);
+                      void read(approved);
+                    }}
+                  >
+                    Continue
+                  </Button>
+                  <Button size="sm" onClick={() => setAskMore(false)}>
+                    Not now
+                  </Button>
+                </Row>
+              </Banner>
+            ) : null}
+
             <Row gap={10}>
               <Button tone="primary" onClick={() => void read()} disabled={files.length === 0 || notConfigured}>
                 {docs.length === files.length && docs.length > 0 ? 'Try reading it again' : 'Read the tender'}
@@ -528,7 +581,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
               </Button>
               <Spacer />
               <Mono size={10.5} tone={color.faint}>
-                {tokenSummary(tokens)}
+                {tokenSummary(tokens)}. {spendSummary(tokens.usd, allowance)}
               </Mono>
             </Row>
           </>

@@ -1,6 +1,6 @@
 import { json, universal } from '../server/handler.js';
 import { whole } from '../src/lib/narrow.js';
-import { AiError, aiConfigured, aiModel, toAiError } from '../server/ai/anthropic.js';
+import { AiError, aiConfigured, aiModel, tenderLimitUsd, toAiError } from '../server/ai/anthropic.js';
 import {
   discardDocuments,
   extractRange,
@@ -15,7 +15,7 @@ import {
 } from '../server/ai/tender.js';
 
 /**
- * GET  /api/tender?probe=1                           whether the AI is set up here, and the model
+ * GET  /api/tender?probe=1                           whether the AI is set up here, the model, and a tender's limit in dollars
  * POST /api/tender?op=upload&name=…&kind=pdf|text    raw file bytes in, a Files API id out
  * POST /api/tender?op=fit       { docs, platforms }  platform fit, deal details, outline, page counts
  * POST /api/tender?op=warm      { docs }             keeps the tender's cache alive, nothing answered
@@ -52,7 +52,7 @@ export async function handle(request: Request): Promise<Response> {
   const url = new URL(request.url, 'http://localhost');
 
   if (request.method === 'GET') {
-    if (url.searchParams.get('probe')) return json({ ok: true, configured: aiConfigured(), model: aiModel() });
+    if (url.searchParams.get('probe')) return json({ ok: true, configured: aiConfigured(), model: aiModel(), limit: tenderLimitUsd() });
     return json({ ok: false, error: 'Nothing to get here. See the comment at the top of api/tender.ts.' }, 404);
   }
   if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);

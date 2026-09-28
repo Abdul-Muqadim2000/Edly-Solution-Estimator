@@ -229,7 +229,8 @@ export function MatchStep({
       </div>
 
       {runner.matchError ? <Banner tone="bad">{runner.matchError}</Banner> : null}
-      {unmatched > 0 && !runner.matching ? (
+      {/* at the limit the question above says what is waiting; a second button here would only ask again */}
+      {unmatched > 0 && !runner.matching && !runner.held ? (
         <Banner tone="warn">
           <Row gap={10}>
             <span>{plural(unmatched, 'approved requirement')} not matched yet.</span>

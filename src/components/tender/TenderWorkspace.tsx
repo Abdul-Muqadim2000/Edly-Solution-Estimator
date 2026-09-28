@@ -3,7 +3,7 @@ import type { TenderStage } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openTenderRecord } from '@/state/reducer';
 import { useTenderRunner } from '@/state/useTenderRunner';
-import { documentLength, heldDocs, stageOpen, tenderCounts, tokenSummary } from '@/domain/tender';
+import { aiAllowance, aiSpent, aiStep, documentLength, heldDocs, limitQuestion, spendSummary, stageOpen, tenderCounts, tokenSummary } from '@/domain/tender';
 import { findPlatform } from '@/data/practices';
 import { tenderDiscard } from '@/api/client';
 import { plural } from '@/lib/format';
@@ -73,7 +73,11 @@ export function TenderWorkspace(): JSX.Element {
   };
 
   const steps: { stage: TenderStage; label: string; meta: string }[] = [
-    { stage: 'requirements', label: 'Requirements', meta: counts.pendingRanges > 0 ? 'Reading the tender…' : `${counts.approved} approved, ${counts.proposed} to review` },
+    {
+      stage: 'requirements',
+      label: 'Requirements',
+      meta: counts.pendingRanges > 0 ? (runner.held ? 'Paused at the AI limit' : 'Reading the tender…') : `${counts.approved} approved, ${counts.proposed} to review`
+    },
     { stage: 'match', label: 'Match to the catalog', meta: counts.matched > 0 ? `${counts.reviewed} of ${counts.approved} accepted` : 'After requirements' },
     { stage: 'apply', label: 'Estimation and desk', meta: tender.sentAt ? `Sent ${tender.sentAt}` : tender.estId ? 'Estimation created' : 'Last step' }
   ];
@@ -141,7 +145,7 @@ export function TenderWorkspace(): JSX.Element {
             </Row>
             <Row gap={12} style={{ marginTop: 4 }}>
               <Mono size={10.5} tone={color.ghost}>
-                {tokenSummary(tender.tokens)}
+                {tokenSummary(tender.tokens)}. {spendSummary(aiSpent(tender), aiAllowance(tender))}
               </Mono>
               <Spacer />
               <TextButton
@@ -158,6 +162,22 @@ export function TenderWorkspace(): JSX.Element {
                 {confirmDelete ? 'Click again to delete the tender' : 'Delete tender'}
               </TextButton>
             </Row>
+
+            {runner.held ? (
+              <div style={{ marginTop: 16 }}>
+                <Banner tone="warn">
+                  <div role="status" style={{ fontWeight: 600 }}>
+                    {limitQuestion(aiSpent(tender), aiAllowance(tender), aiStep(tender), runner.held)}
+                  </div>
+                  <Row gap={10} style={{ marginTop: 8 }}>
+                    <Button size="sm" tone="primary" onClick={runner.goOn}>
+                      Continue
+                    </Button>
+                    <span>Or leave it here: what has been read stays, and you can add the rest by hand.</span>
+                  </Row>
+                </Banner>
+              </div>
+            ) : null}
 
             <nav aria-label="Tender steps" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, margin: '20px 0 18px' }}>
               {steps.map((step, index) => (

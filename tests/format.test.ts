@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { andList, CURRENCIES, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
+import { andList, CURRENCIES, dollars, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
 import { quoteText } from '../src/lib/quoteExport';
 import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { schedule } from '../src/domain/planner';
@@ -52,6 +52,17 @@ describe('money', () => {
 
   it('handles a negative amount without losing the sign', () => {
     expect(money(-500)).toBe('$-500');
+  });
+});
+
+describe('what the AI cost', () => {
+  it('shows dollars to the cent, where money() would round most calls to nothing', () => {
+    expect(money(0.36)).toBe('$0');
+    expect(dollars(0.356)).toBe('$0.36');
+    expect(dollars(4)).toBe('$4.00');
+    expect(dollars(1234.5)).toBe('$1,234.50');
+    /* a total an older build never kept must not print as $NaN */
+    expect(dollars(Number.NaN)).toBe('$0.00');
   });
 });
 

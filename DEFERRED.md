@@ -109,6 +109,27 @@ grow without limit. This part is listed in CLAUDE.md.
 **When unblocked:** an append-only `audit` table carrying the user id from entry 4. The sheet can
 stay as a readable view of it.
 
+### 11. An AI spending cap that holds for every caller
+
+**Blocked by:** entries 3 and 4. The per-tender limit is a check the browser makes before each
+call, and `/api/tender` is open, so anything that calls the endpoint directly skips it. The server
+cannot check the limit itself either: it keeps no per-tender record (entry 1), and the tender's
+total and its `aiApproved` arrive through `/api/state`, which anyone can overwrite. A cap across
+all tenders, per day or per month, needs a counter every function instance shares.
+
+**Now:** built on 2026-09-29 at the user's request. Each tender may spend `EDLY_AI_TENDER_LIMIT_USD`
+($4 by default) before the screen stops and asks whether to go on; each yes allows another step,
+and nothing else changes. The dollars are an estimate from Anthropic's published rates, and the
+calls running when the limit is crossed finish, so a tender goes past it by a few calls ($0.44 on
+the stand-in's test tender, whose extraction calls cost about $0.13 each). The cap that holds today
+is a monthly spend limit on the Anthropic Console workspace that owns the key (entry 4): set it
+whatever the app does.
+
+**When unblocked:** the server keeps each tender's spend and allowance itself, refuses an `extract`
+or `match` call for a tender past its allowance, and records who agreed to go on (entry 5). A
+shared counter adds a cap across tenders. Keep the browser's question: it is where a person
+decides, and the server's check is what makes the decision stick.
+
 ---
 
 ## Waiting on credentials
@@ -170,6 +191,10 @@ cache rely on:
   it. Built on 2026-09-28 against the stand-in only; if the API refuses it, each keep-warm fails
   quietly and the first extraction writes the tender again, which is dearer than the hour-long
   cache it replaced whenever the person takes over about three minutes.
+- The tender's "AI cost" line against the Anthropic Console's usage for the same calls. The app
+  prices from each reply's usage at the rates in `src/domain/aiPrice.ts` (read on 2026-09-29); if
+  the two disagree by more than a few cents, the rates or the reading of `usage.iterations` after a
+  refusal fallback is wrong, and the spending limit is off by the same amount.
 
 ### 9. Tenders over 4 MB
 

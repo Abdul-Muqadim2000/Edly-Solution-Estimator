@@ -17,6 +17,12 @@ export function money(usd: number, cur: CurrencyCode = 'USD'): string {
   return fx.symbol + Math.round(usd * fx.factor).toLocaleString('en-US');
 }
 
+/** US dollars to the cent, for what the AI has cost. `money` rounds to whole units, which would show $0 for most calls. */
+export function dollars(usd: number): string {
+  const value = Number.isFinite(usd) ? usd : 0;
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 /** An hourly rate entered in USD, shown in the chosen currency. */
 export function rateLabel(rate: number, cur: CurrencyCode = 'USD'): string {
   return money(rate, cur) + '/h';

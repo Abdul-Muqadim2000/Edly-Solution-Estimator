@@ -30,12 +30,13 @@ beforeEach(() => {
   calls = [];
   replies = [];
   route = null;
-  for (const key of ['ANTHROPIC_API_KEY', 'EDLY_AI_MODEL', 'EDLY_AI_RETRIES', 'EDLY_AI_DEADLINE_MS', 'EDLY_AI_EFFORT']) saved[key] = process.env[key];
+  for (const key of ['ANTHROPIC_API_KEY', 'EDLY_AI_MODEL', 'EDLY_AI_RETRIES', 'EDLY_AI_DEADLINE_MS', 'EDLY_AI_EFFORT', 'EDLY_AI_TENDER_LIMIT_USD']) saved[key] = process.env[key];
   process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
   /* a retry would replay the next stubbed reply and hide the failure under test */
   process.env.EDLY_AI_RETRIES = '0';
   delete process.env.EDLY_AI_MODEL;
   delete process.env.EDLY_AI_EFFORT;
+  delete process.env.EDLY_AI_TENDER_LIMIT_USD;
 
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     /* before a multipart upload the SDK fetches `data:,` to check FormData works; that is not a call to Anthropic */
@@ -76,8 +77,17 @@ afterEach(() => {
   }
 });
 
-/** A streamed Messages reply: one tool call, or none, then the stop reason. */
-function stream(stop: string, tool?: { name: string; input: unknown }): string {
+/**
+ * A streamed Messages reply: one tool call, or none, then the stop reason. `model` is the one that
+ * answered. `start` joins the usage the reply opens with, where the cache-write breakdown comes;
+ * `usage` joins the final one, where `iterations` comes after a fallback. The SDK keeps only some
+ * counters from the final usage, so a field in the wrong one is silently lost, as it would be live.
+ */
+function stream(
+  stop: string,
+  tool?: { name: string; input: unknown },
+  reply: { model?: string; start?: Record<string, unknown>; usage?: Record<string, unknown> } = {}
+): string {
   const events: [string, unknown][] = [
     [
       'message_start',
@@ -87,11 +97,11 @@ function stream(stop: string, tool?: { name: string; input: unknown }): string {
           id: 'msg_1',
           type: 'message',
           role: 'assistant',
-          model: DEFAULT_MODEL,
+          model: reply.model ?? DEFAULT_MODEL,
           content: [],
           stop_reason: null,
           stop_sequence: null,
-          usage: { input_tokens: 1200, output_tokens: 1, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 0 }
+          usage: { input_tokens: 1200, output_tokens: 1, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 0, ...reply.start }
         }
       }
     ]
@@ -101,7 +111,7 @@ function stream(stop: string, tool?: { name: string; input: unknown }): string {
     events.push(['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(tool.input) } }]);
     events.push(['content_block_stop', { type: 'content_block_stop', index: 0 }]);
   }
-  events.push(['message_delta', { type: 'message_delta', delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 640 } }]);
+  events.push(['message_delta', { type: 'message_delta', delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 640, ...reply.usage } }]);
   events.push(['message_stop', { type: 'message_stop' }]);
   return events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('');
 }
@@ -143,6 +153,67 @@ describe('the probe', () => {
     const bare = (await (await handle(new Request('http://localhost/api/tender?probe=1'))).json()) as { configured: boolean; model: string };
     /* Opus 5.5: cheaper per token than Opus 5, and cheaper still to read from cache */
     expect(bare).toMatchObject({ configured: false, model: 'claude-opus-5-5' });
+  });
+});
+
+describe('what a tender may spend', () => {
+  const limit = async (): Promise<unknown> => ((await (await handle(new Request('http://localhost/api/tender?probe=1'))).json()) as { limit: unknown }).limit;
+
+  it('tells the browser the limit, $4 unless the server sets another', async () => {
+    expect(await limit()).toBe(4);
+    process.env.EDLY_AI_TENDER_LIMIT_USD = '12.5';
+    expect(await limit()).toBe(12.5);
+    /* a typo or a zero must not leave every tender unable to spend anything */
+    for (const value of ['', 'four', '0', '-3']) {
+      process.env.EDLY_AI_TENDER_LIMIT_USD = value;
+      expect(await limit()).toBe(4);
+    }
+  });
+});
+
+describe('what each call cost', () => {
+  const extract = async (): Promise<{ status: number; tokens: { input: number; output: number; cacheRead: number; usd: number } }> => {
+    const response = await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
+    const body = (await response.json()) as { tokens: { input: number; output: number; cacheRead: number; usd: number } };
+    return { status: response.status, tokens: body.tokens };
+  };
+
+  it('prices a call at the published rates of the model that answered it', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }) }];
+    /* Opus 5.5: 1,200 in at $4, 90,000 from cache at $0.20, 640 out at $20, per million */
+    expect((await extract()).tokens.usd).toBeCloseTo(0.0048 + 0.018 + 0.0128, 10);
+
+    /* asked of Opus 5.5 and answered by Opus 5, as a request the refusal fallback routed is: the
+       answer is billed at Opus 5's rates, nearly twice as much */
+    replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }, { model: 'claude-opus-5' }) }];
+    expect((await extract()).tokens.usd).toBeCloseTo(0.006 + 0.045 + 0.016, 10);
+  });
+
+  it('counts both attempts when the refusal fallback ran, each at its own model', async () => {
+    /* the top-level usage covers only the attempt that answered; the declined one is billed too */
+    const attempts = [
+      { type: 'message', model: 'claude-opus-5-5', input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation: null },
+      { type: 'fallback_message', model: 'claude-opus-5', input_tokens: 1200, output_tokens: 640, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 0, cache_creation: null }
+    ];
+    replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }, { model: 'claude-opus-5', usage: { iterations: attempts } }) }];
+    const { status, tokens } = await extract();
+    expect(status).toBe(200);
+    expect(tokens).toMatchObject({ input: 2200, output: 840, cacheRead: 90_000 });
+    expect(tokens.usd).toBeCloseTo((1000 * 4 + 200 * 20) / 1e6 + (1200 * 5 + 640 * 25 + 90_000 * 0.5) / 1e6, 10);
+  });
+
+  it('prices an hour-long cache write at the hour rate', async () => {
+    const usage = { cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_5m_input_tokens: 60_000, ephemeral_1h_input_tokens: 40_000 } };
+    replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }, { start: usage }) }];
+    const base = 0.0048 + 0.018 + 0.0128;
+    expect((await extract()).tokens.usd).toBeCloseTo(base + (60_000 * 5 + 40_000 * 8) / 1e6, 10);
+  });
+
+  it('reports what a failed call cost, so the limit counts it', async () => {
+    replies = [{ sse: stream('refusal') }];
+    const { status, tokens } = await extract();
+    expect(status).toBe(422);
+    expect(tokens.usd).toBeCloseTo(0.0048 + 0.018 + 0.0128, 10);
   });
 });
 
@@ -476,9 +547,11 @@ describe('keeping the tender cached while a person decides', () => {
     replies = [{ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx' } }) }, warmReply()];
     await post('fit', { docs, platforms });
     const response = await post('warm', { docs });
-    const body = (await response.json()) as { ok: boolean; tokens: { cacheRead: number; output: number } };
+    const body = (await response.json()) as { ok: boolean; tokens: { cacheRead: number; output: number; usd: number } };
     expect(response.status).toBe(200);
     expect(body.tokens).toMatchObject({ cacheRead: 90_000, output: 0 });
+    /* a fiftieth of a dollar on Opus 5.5, which is why keeping the cache warm is worth it */
+    expect(body.tokens.usd).toBeCloseTo(12 * 4e-6 + 90_000 * 0.2e-6, 10);
 
     const [fit, warm] = calls.filter((one) => one.url.includes('/v1/messages')).map((one) => one.body as Record<string, unknown>);
     /* no output is billed; the API refuses max_tokens 0 on a stream, so this one is not streamed */

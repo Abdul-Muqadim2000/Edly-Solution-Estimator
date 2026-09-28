@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   addExtracted,
   addTokens,
+  aiAllowance,
+  aiSpent,
+  aiStep,
+  approvedToGoOn,
+  canSpend,
   catalogHours,
   catalogLines,
   deskDrafts,
@@ -22,7 +27,10 @@ import {
   STALE_CLAIM_MS,
   highestId,
   serialId,
+  heldByLimit,
   heldDocs,
+  limitQuestion,
+  rangesReading,
   readFit,
   readMatches,
   readingPlan,
@@ -35,6 +43,7 @@ import {
   SOMETHING_NEW,
   sortRequirements,
   sourceLabel,
+  spendSummary,
   splitRange,
   stageOpen,
   tenderCounts,
@@ -44,6 +53,7 @@ import {
   type DeskDraft,
   type ExtractedRequirement
 } from '../src/domain/tender';
+import { MODEL_PRICES, priceOf, usdOf } from '../src/domain/aiPrice';
 import { PRACTICES } from '../src/data/practices';
 import type { Catalog, EstimateRequest, RequirementMatch, Solution, Tender, TenderDocument, TenderRange, TenderRequirement, TenderSection } from '../src/types';
 
@@ -176,6 +186,8 @@ const tender = (over: Partial<Tender> = {}): Tender => ({
   estId: '',
   sentAt: '',
   tokens: NO_TOKENS,
+  aiLimit: 4,
+  aiApproved: 0,
   ...over
 });
 
@@ -724,10 +736,118 @@ describe('counting a tender', () => {
 
   it('adds up tokens, and says so in words', () => {
     expect(tokenSummary(NO_TOKENS)).toBe('No AI calls yet');
-    const total = addTokens(addTokens(NO_TOKENS, { input: 1000, cacheWrite: 90_000, output: 400 }), { cacheRead: 90_000, output: 600 });
-    expect(total).toEqual({ input: 1000, output: 1000, cacheRead: 90_000, cacheWrite: 90_000 });
+    const total = addTokens(addTokens(NO_TOKENS, { input: 1000, cacheWrite: 90_000, output: 400, usd: 0.5 }), { cacheRead: 90_000, output: 600, usd: 0.25 });
+    expect(total).toEqual({ input: 1000, output: 1000, cacheRead: 90_000, cacheWrite: 90_000, usd: 0.75 });
     expect(tokenSummary(total)).toBe('AI read 181,000 tokens (90,000 from cache) and wrote 1,000');
     expect(addTokens(total, null)).toEqual(total);
+  });
+});
+
+/* ------------------------------------------------------------ what it costs */
+
+describe('what the AI costs', () => {
+  const call = { input: 1200, output: 640, cacheRead: 90_000, cacheWrite: 0 };
+
+  it("prices a call at its model's published rates, reading from cache included", () => {
+    /* Opus 5.5: 1,200 in at $4, 90,000 from cache at $0.20, 640 out at $20, per million */
+    expect(usdOf(call, 'claude-opus-5-5')).toBeCloseTo(0.0048 + 0.018 + 0.0128, 10);
+    /* the same call on Opus 5 costs nearly twice as much, which is why the model that answered
+       a fallback has to be the one it is priced at */
+    expect(usdOf(call, 'claude-opus-5')).toBeCloseTo(0.006 + 0.045 + 0.016, 10);
+  });
+
+  it('prices a five-minute cache write at 1.25 times input and an hour-long one at twice', () => {
+    const writes = { input: 0, output: 0, cacheRead: 0, cacheWrite: 1_000_000, cacheWrite1h: 250_000 };
+    expect(usdOf(writes, 'claude-opus-5-5')).toBeCloseTo(750_000 * 5e-6 + 250_000 * 8e-6, 10);
+    /* more hour-long writes than writes is a malformed reply, not a reason to charge extra */
+    expect(usdOf({ ...writes, cacheWrite1h: 9_000_000 }, 'claude-opus-5-5')).toBeCloseTo(8, 10);
+  });
+
+  it('reads a dated model id as its model, and prices one it does not know at the dearest rates', () => {
+    expect(priceOf('claude-opus-5-5-20260915')).toBe(MODEL_PRICES['claude-opus-5-5']);
+    expect(priceOf(' Claude-Opus-5 ')).toBe(MODEL_PRICES['claude-opus-5']);
+    /* a new model must not be priced as a cheaper cousin: a limit that errs has to stop early */
+    const unknown = priceOf('claude-opus-5-7');
+    expect(unknown).toEqual({ input: 10, write5m: 12.5, write1h: 20, read: 1, output: 50 });
+    expect(priceOf(null)).toEqual(unknown);
+    expect(priceOf('')).toEqual(unknown);
+  });
+});
+
+describe('the AI spending limit', () => {
+  const spent = (usd: number, over: Partial<Tender> = {}): Tender => tender({ tokens: { ...NO_TOKENS, usd }, ...over });
+
+  it('lets a call start below the limit and none at it', () => {
+    expect(canSpend(spent(3.99))).toBe(true);
+    expect(canSpend(spent(4))).toBe(false);
+    expect(canSpend(spent(4, { aiLimit: 10 }))).toBe(true);
+    expect(aiAllowance(spent(0, { aiApproved: 4.3 }))).toBeCloseTo(8.3);
+  });
+
+  it('gives a full step of room from where the spending stands when a person goes on', () => {
+    /* the calls that were finishing took it to $4.30: going on allows up to $8.30, not $8 */
+    const past = spent(4.3);
+    const once = { ...past, aiApproved: approvedToGoOn(past) };
+    expect(aiAllowance(once)).toBeCloseTo(8.3);
+    expect(canSpend(once)).toBe(true);
+    /* and the second time, from $8.50 */
+    const again = { ...once, tokens: { ...once.tokens, usd: 8.5 } };
+    expect(aiAllowance({ ...again, aiApproved: approvedToGoOn(again) })).toBeCloseTo(12.5);
+  });
+
+  it('reads a tender kept by an older build as having the default limit, and never as NaN', () => {
+    /* browser storage from before the limit: no dollars, no limit, no approval */
+    const old = { ...tender(), tokens: { input: 5, output: 5, cacheRead: 0, cacheWrite: 0 } } as unknown as Tender;
+    delete (old as Partial<Tender>).aiLimit;
+    delete (old as Partial<Tender>).aiApproved;
+    expect(aiSpent(old)).toBe(0);
+    expect(aiStep(old)).toBe(4);
+    expect(aiAllowance(old)).toBe(4);
+    expect(canSpend(old)).toBe(true);
+    expect(addTokens(old.tokens, { usd: 0.5 }).usd).toBe(0.5);
+    expect(aiStep(spent(0, { aiLimit: 0 }))).toBe(4);
+  });
+
+  it('says what is waiting at the limit, and nothing below it', () => {
+    const ranges: TenderRange[] = [
+      { key: 'a', doc: 1, from: 1, to: 20, status: 'done' },
+      { key: 'b', doc: 1, from: 21, to: 40, status: 'pending' },
+      { key: 'c', doc: 1, from: 41, to: 60, status: 'running', startedAt: 1, by: 'gone' },
+      { key: 'd', doc: 1, from: 61, to: 80, status: 'running', startedAt: 1, by: 'me' },
+      { key: 'e', doc: 1, from: 81, to: 90, status: 'failed' }
+    ];
+    const reqs = [req('R-01'), req('R-02'), req('R-03', { match: match() }), req('R-04', { status: 'proposed' })];
+    const atLimit = spent(4.1, { ranges, reqs });
+    /* d is being read here and finishes; b and c wait. A failed part waits for its own Retry. */
+    expect(heldByLimit(atLimit, new Set(['d']), false)).toBe('2 parts of the tender are not read yet');
+    expect(heldByLimit(atLimit, new Set(['d']), true)).toBe('2 parts of the tender are not read yet, and 2 requirements are not matched yet');
+    expect(heldByLimit(spent(4.1, { ranges: ranges.slice(0, 2), reqs: reqs.slice(1) }), new Set(), true)).toBe(
+      '1 part of the tender is not read yet, and 1 requirement is not matched yet'
+    );
+    expect(heldByLimit(spent(1, { ranges, reqs }), new Set(), true)).toBe('');
+    /* at the limit with nothing waiting, there is nothing to ask */
+    expect(heldByLimit(spent(4.1, { ranges: ranges.slice(0, 1), reqs }), new Set(), false)).toBe('');
+  });
+
+  it('asks in plain words, with the figures to the cent', () => {
+    expect(limitQuestion(4.07, 4, 4, '6 parts of the tender are not read yet')).toBe(
+      'This tender has used $4.07 of AI against its limit of $4.00, so the AI has stopped. 6 parts of the tender are not read yet. Continue for up to another $4.00?'
+    );
+    expect(limitQuestion(4.07, 4, 4, '')).toBe('This tender has used $4.07 of AI against its limit of $4.00, so the AI has stopped. Continue for up to another $4.00?');
+    expect(spendSummary(2.314, 4)).toBe('AI cost $2.31 of the $4.00 allowed');
+  });
+
+  it('counts as being read only what is in flight here or claimed live by another tab', () => {
+    const now = 10 * STALE_CLAIM_MS;
+    const ranges: TenderRange[] = [
+      { key: 'here', doc: 1, from: 1, to: 20, status: 'running', startedAt: now - 1000, by: 'me' },
+      { key: 'there', doc: 1, from: 21, to: 40, status: 'running', startedAt: now - 1000, by: 'other' },
+      { key: 'stale', doc: 1, from: 41, to: 60, status: 'running', startedAt: now - STALE_CLAIM_MS - 1, by: 'other' },
+      /* claimed by this tab and never started, as a Retry at the limit used to leave it */
+      { key: 'idle', doc: 1, from: 61, to: 80, status: 'running', startedAt: now - 1000, by: 'me' },
+      { key: 'queued', doc: 1, from: 81, to: 90, status: 'pending' }
+    ];
+    expect(rangesReading(ranges, new Set(['here']), now, 'me').map((range) => range.key)).toEqual(['here', 'there']);
   });
 });
 
@@ -833,7 +953,7 @@ describe('drafting desk requests', () => {
 describe('a new tender', () => {
   it('starts at the requirements step with its ranges planned and a slug unique on its platform', () => {
     const made = newTender(
-      { plat: 'openedx', name: 'Acme Academy tender', client: 'Acme', due: '', summary: '', docs: [doc(1, { pages: 30 })], fit: null, outline: [], tokens: NO_TOKENS },
+      { plat: 'openedx', name: 'Acme Academy tender', client: 'Acme', due: '', summary: '', docs: [doc(1, { pages: 30 })], fit: null, outline: [], tokens: NO_TOKENS, aiLimit: 4, aiApproved: 0 },
       'TND-2',
       [{ plat: 'openedx', slug: 'acme-academy-tender' }, { plat: 'moodle', slug: 'acme-academy-tender-2' }],
       '2026-09-26'
@@ -842,10 +962,18 @@ describe('a new tender', () => {
     expect(made.slug).toBe('acme-academy-tender-2');
     expect(made.ranges.map((range) => range.key)).toEqual(['1:1-20', '1:21-30']);
     expect(made.reqs).toEqual([]);
+    expect(made).toMatchObject({ aiLimit: 4, aiApproved: 0 });
+  });
+
+  it('keeps the limit the server gave and what a person agreed to before it was made', () => {
+    const base = { plat: 'openedx', name: 'Acme', client: '', due: '', summary: '', docs: [], fit: null, outline: [], tokens: NO_TOKENS };
+    expect(newTender({ ...base, aiLimit: 10, aiApproved: 4.3 }, 'TND-4', [], '2026-09-29')).toMatchObject({ aiLimit: 10, aiApproved: 4.3 });
+    /* a server with no figure, or a nonsense one, gets the default rather than a tender that can never spend */
+    expect(newTender({ ...base, aiLimit: 0, aiApproved: -2 }, 'TND-5', [], '2026-09-29')).toMatchObject({ aiLimit: 4, aiApproved: 0 });
   });
 
   it('names an untitled tender rather than leaving it blank', () => {
-    const made = newTender({ plat: 'openedx', name: '', client: '', due: '', summary: '', docs: [], fit: null, outline: [], tokens: NO_TOKENS }, 'TND-3', [], '2026-09-26');
+    const made = newTender({ plat: 'openedx', name: '', client: '', due: '', summary: '', docs: [], fit: null, outline: [], tokens: NO_TOKENS, aiLimit: 4, aiApproved: 0 }, 'TND-3', [], '2026-09-26');
     expect(made.name).toBe('Untitled tender');
     expect(made.slug).toBe('tnd-3');
   });

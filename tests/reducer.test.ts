@@ -990,7 +990,9 @@ describe('tenders', () => {
     docs: [doc],
     fit: null,
     outline: [],
-    tokens: NO_TOKENS
+    tokens: NO_TOKENS,
+    aiLimit: 4,
+    aiApproved: 0
   };
   const found = (text: string, page = 2): ExtractedRequirement => ({ doc: 1, page, section: 'Scope', text, quote: `"${text}"`, priority: 'must', outOfScope: false });
   const aMatch = (over: Partial<RequirementMatch> = {}): RequirementMatch => ({
@@ -1056,6 +1058,49 @@ describe('tenders', () => {
     const narrow = run(workspace(), { type: 'createTender', id: 'TND-1', input: { ...input, docs: [{ ...doc, pages: 1 }] } }, { type: 'splitRange', id: 'TND-1', key: '1:1-1' });
     expect(tender(narrow).ranges[0]).toMatchObject({ status: 'failed' });
     expect(tender(narrow).ranges[0]?.error).toContain('by hand');
+  });
+
+  describe('at the AI limit', () => {
+    const claim = { at: 5, by: 'tab-a' };
+    /* $4.20 spent against the $4 the tender was created with */
+    const atLimit = (): AppState =>
+      run(withTender(), { type: 'rangeFailed', id: 'TND-1', key: '1:21-30', error: 'Rate limited', tokens: { input: 10, usd: 4.2 } });
+
+    it('carries the limit the tender was created with', () => {
+      const state = run(workspace(), { type: 'createTender', id: 'TND-1', input: { ...input, aiLimit: 10, aiApproved: 2 } });
+      expect(tender(state)).toMatchObject({ aiLimit: 10, aiApproved: 2 });
+    });
+
+    it('adds up what each call cost', () => {
+      const state = run(withTender(), { type: 'addTenderTokens', id: 'TND-1', tokens: { usd: 0.25 } }, { type: 'addTenderTokens', id: 'TND-1', tokens: { usd: 0.5 } });
+      expect(tender(state).tokens.usd).toBeCloseTo(0.75);
+    });
+
+    it('queues a retried part without claiming it, so no tab shows it as being read', () => {
+      const retried = run(atLimit(), { type: 'retryRange', id: 'TND-1', key: '1:21-30', claim });
+      expect(tender(retried).ranges[1]).toEqual({ key: '1:21-30', doc: 1, from: 21, to: 30, status: 'pending' });
+      /* below the limit the tab that asked still takes it in the same step */
+      const below = run(withTender(), { type: 'rangeFailed', id: 'TND-1', key: '1:21-30', error: 'x' }, { type: 'retryRange', id: 'TND-1', key: '1:21-30', claim });
+      expect(tender(below).ranges[1]).toMatchObject({ status: 'running', by: 'tab-a' });
+    });
+
+    it('splits a part one call could not finish into two unclaimed halves', () => {
+      const split = run(atLimit(), { type: 'splitRange', id: 'TND-1', key: '1:21-30', claim });
+      expect(tender(split).ranges.slice(1).map((range) => [range.key, range.status, range.by])).toEqual([
+        ['1:21-25', 'pending', undefined],
+        ['1:26-30', 'pending', undefined]
+      ]);
+    });
+
+    it('allows one more step when a person says go on, and not two on a double click', () => {
+      const once = run(atLimit(), { type: 'allowMoreAi', id: 'TND-1' });
+      /* a full $4 of room from the $4.20 already spent */
+      expect(tender(once).aiApproved).toBeCloseTo(4.2);
+      expect(run(once, { type: 'allowMoreAi', id: 'TND-1' })).toBe(once);
+      /* and nothing to agree to while there is room */
+      const room = withTender();
+      expect(run(room, { type: 'allowMoreAi', id: 'TND-1' })).toBe(room);
+    });
   });
 
   it('leaves out what the fit step skipped, and reads it when a person asks', () => {
