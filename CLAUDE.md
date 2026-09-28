@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 822 tests across twenty-one files.
+`bun run test` runs 845 tests across twenty-one files.
 
 | File | Covers |
 |---|---|
@@ -166,7 +166,7 @@ reference.
 | `tests/team.test.ts` | the team composition: role and seniority from the rate card, people and weeks from the plan |
 | `tests/mail.test.ts` | the desk emails and the clipboard fallback |
 | `tests/format.test.ts` | money, hours, dates, the plain-text quote |
-| `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, desk drafts |
+| `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, desk drafts, what calls cost and the spending limit |
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
 | `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load |
@@ -179,7 +179,7 @@ reference.
 |---|---|
 | Statements | 97.4% |
 | Lines | 98.5% |
-| Functions | 98.6% |
+| Functions | 98.7% |
 | Branches | 87.4% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
@@ -462,6 +462,16 @@ The spreadsheets hold real deal names, client names and pricing.
   five minutes, not an hour, and `keepWarm` bridges the wait on the fit screen: it must send
   exactly what the fit call cached (model, thinking, effort, tools, system, documents), or it writes
   an entry nothing reads. `tests/tenderApi.test.ts` compares the two requests.
+- **A tender's AI spending is checked before each call starts, never during one.** `canSpend` in
+  `src/domain/tender.ts` gates the runner, the intake's fit call and the keep-warm; the calls already
+  running finish, because a call stopped part way is billed all the same, so a tender goes a few
+  calls past its limit. At the limit a Retry or a split queues the part unclaimed (a claim nothing
+  acts on shows as being read in every tab), and `allowMoreAi` is refused while there is room, so
+  a double click agrees to one step. The dollars come from `src/domain/aiPrice.ts`, priced on the
+  server at the rate of the model that ran each attempt: after a refusal fallback `usage.iterations`
+  holds both attempts and both are billed. Update that table when Anthropic's prices change or a
+  model is added; a model it does not know is priced at the dearest rates on purpose, so the limit
+  errs early.
 - **Legal boilerplate is not extracted.** Insurance, liability, payment, IP and the like, and bid
   paperwork, are left out by the extraction prompt; `outOfScope` is for work that is not software
   but costs money (hardware, staff on site, vetting). Settled on 2026-09-28 when the user asked for
@@ -499,6 +509,9 @@ The spreadsheets hold real deal names, client names and pricing.
   `ANTHROPIC_API_KEY` is set on a public deployment (DEFERRED.md 4).
 - **The tender AI has not been run against the real API yet** (DEFERRED.md 8), and PDFs are
   limited to 4 MB until uploads are staged (DEFERRED.md 9).
+- **The per-tender AI limit is a check in the browser, not a cap.** A caller going straight to
+  `/api/tender` skips it (DEFERRED.md 11). The cap that holds is a monthly spend limit on the
+  Anthropic Console workspace that owns the key.
 - **Concurrency is last-write-wins** across the whole workbook.
 - **Only Open edX has a client-proven catalog.** The other 19 platforms ship benchmark hours and
   are labelled *Sample* in the UI. Do not present them as delivery records.

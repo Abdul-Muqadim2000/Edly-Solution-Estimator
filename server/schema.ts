@@ -11,6 +11,8 @@ import type {
 } from '../src/types.js';
 import type { CellValue, SheetTable, WriteSheets, Workbook } from '../src/lib/xlsx.js';
 import { joinNotes, withSlugs } from '../src/lib/format.js';
+import { usdOf } from '../src/domain/aiPrice.js';
+import { aiSpent, aiStep, DEFAULT_AI_LIMIT } from '../src/domain/tender.js';
 
 /**
  * The bridge between app state and spreadsheet rows.
@@ -55,10 +57,12 @@ export const COLUMNS = {
   bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn', 'importedFrom'],
   settings: ['key', 'valueJson'],
   /* The counts between `updated` and `sentOn` are written for whoever scans the sheet and never
-     read back: the requirements in `detailJson` are the record, and the counts follow from them. */
+     read back: the requirements in `detailJson` are the record, and the counts follow from them.
+     `aiSpent` is the same: the dollars in `detailJson` are the record. `detailJson` stays last,
+     because a tender's continuation rows put their part in the last column. */
   tenders: [
     'id', 'plat', 'name', 'slug', 'client', 'due', 'stage', 'created', 'updated', 'requirements', 'approved',
-    'catalog', 'partial', 'custom', 'outOfScope', 'estimationId', 'sentOn', 'detailJson'
+    'catalog', 'partial', 'custom', 'outOfScope', 'estimationId', 'sentOn', 'aiSpent', 'aiLimit', 'aiApproved', 'detailJson'
   ]
 } as const;
 
@@ -184,7 +188,8 @@ export function stateToSheets(state: PersistedState): WriteSheets {
     }
     tenders.push([
       str(t.id), str(t.plat || 'openedx'), str(t.name), str(t.slug), str(t.client), str(t.due), str(t.stage), str(t.at), str(t.up),
-      counts.total, counts.approved, counts.catalog, counts.partial, counts.custom, counts.out, str(t.estId), str(t.sentAt), part(0)
+      counts.total, counts.approved, counts.catalog, counts.partial, counts.custom, counts.out, str(t.estId), str(t.sentAt),
+      Math.round(aiSpent(t) * 100) / 100, aiStep(t), Math.max(0, Number(t.aiApproved) || 0), part(0)
     ]);
     for (let i = 1; i < parts; i++) {
       tenders.push([`${str(t.id)}##${i + 1}/${parts}`, ...new Array<string>(COLUMNS.tenders.length - 2).fill(''), part(i)]);
@@ -366,7 +371,7 @@ interface TenderDetail {
   outline?: Tender['outline'];
   ranges?: Tender['ranges'];
   reqs?: Tender['reqs'];
-  tokens?: Tender['tokens'];
+  tokens?: Partial<Tender['tokens']>;
 }
 
 /**
@@ -400,6 +405,9 @@ function readTenders(table: SheetTable | undefined): Tender[] {
     }
     if (!detail) continue;
 
+    const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...(detail.tokens ?? {}) };
+    const limit = num(row.aiLimit);
+    const approved = num(row.aiApproved);
     tenders.push({
       id: row.id,
       plat: row.plat || 'openedx',
@@ -418,7 +426,11 @@ function readTenders(table: SheetTable | undefined): Tender[] {
       reqs: Array.isArray(detail.reqs) ? detail.reqs : [],
       estId: row.estimationId ?? '',
       sentAt: row.sentOn ?? '',
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...(detail.tokens ?? {}) }
+      /* a tender saved before its cost was kept is priced from its tokens at Opus 5.5, the default
+         model since 2026-09-28, so that its limit means something when it is opened again */
+      tokens: { ...tokens, usd: typeof tokens.usd === 'number' ? tokens.usd : usdOf(tokens, 'claude-opus-5-5') },
+      aiLimit: limit !== null && limit > 0 ? limit : DEFAULT_AI_LIMIT,
+      aiApproved: approved !== null && approved > 0 ? approved : 0
     });
   }
   return withSlugs(tenders);

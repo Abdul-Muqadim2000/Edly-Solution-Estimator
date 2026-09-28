@@ -18,7 +18,7 @@ import type {
   TenderTokens
 } from '@/types';
 /* relative, not '@/': the server imports this module, and the function bundler does not read tsconfig paths */
-import { plural, uniqueSlug } from '../lib/format.js';
+import { dollars, plural, uniqueSlug } from '../lib/format.js';
 import { list, record, text as str, whole as int } from '../lib/narrow.js';
 
 /**
@@ -728,16 +728,91 @@ export function stageOpen(tender: Pick<Tender, 'reqs' | 'ranges'>, stage: Tender
   return counts.reviewed > 0;
 }
 
+/* a tender kept in the browser by a build from before the dollar figure has none, and one NaN
+   would spread through every total after it */
+const amount = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
 export function addTokens(total: TenderTokens, more: Partial<TenderTokens> | null | undefined): TenderTokens {
   return {
     input: total.input + (more?.input ?? 0),
     output: total.output + (more?.output ?? 0),
     cacheRead: total.cacheRead + (more?.cacheRead ?? 0),
-    cacheWrite: total.cacheWrite + (more?.cacheWrite ?? 0)
+    cacheWrite: total.cacheWrite + (more?.cacheWrite ?? 0),
+    usd: amount(total.usd) + amount(more?.usd)
   };
 }
 
-export const NO_TOKENS: TenderTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+export const NO_TOKENS: TenderTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, usd: 0 };
+
+/* ------------------------------------------------------------ spending limit */
+
+/**
+ * Dollars the AI may spend on a tender before a person is asked whether to go on, when the server
+ * sets no other figure. Chosen on 2026-09-28; the test tenders came to about $2.50 on Opus 5.5.
+ */
+export const DEFAULT_AI_LIMIT = 4;
+
+type Spending = Pick<Tender, 'tokens' | 'aiLimit' | 'aiApproved'>;
+
+/** What the AI has cost this tender so far, in dollars. */
+export const aiSpent = (tender: Pick<Tender, 'tokens'>): number => amount(tender.tokens.usd);
+
+/** The limit a tender started with. A tender from before limits existed has the default. */
+export const aiStep = (tender: Pick<Tender, 'aiLimit'>): number => (amount(tender.aiLimit) > 0 ? tender.aiLimit : DEFAULT_AI_LIMIT);
+
+/** What the AI may spend on this tender in all, counting every time a person said go on. */
+export const aiAllowance = (tender: Spending): number => aiStep(tender) + Math.max(0, amount(tender.aiApproved));
+
+/**
+ * Whether another AI call may start. Checked before each call, never during one: a call stopped
+ * part way is billed all the same, so the calls already running when the limit is crossed finish.
+ */
+export const canSpend = (tender: Spending): boolean => aiSpent(tender) < aiAllowance(tender);
+
+/**
+ * `aiApproved` once a person agrees to go on: a full step of room from where the spending stands.
+ * The calls that were finishing when the limit was crossed usually took it past the limit, and
+ * counting the step from the old limit would leave less than the person agreed to.
+ */
+export function approvedToGoOn(tender: Spending): number {
+  return Math.max(aiAllowance(tender), aiSpent(tender));
+}
+
+/**
+ * What is waiting for a person to agree to spend more, in words, or '' when nothing is. Parts being
+ * read here right now are not waiting; `matchingHeld` says matching was asked for and stopped.
+ */
+export function heldByLimit(tender: Spending & Pick<Tender, 'ranges' | 'reqs'>, inFlight: ReadonlySet<string>, matchingHeld: boolean): string {
+  if (canSpend(tender)) return '';
+  const held: string[] = [];
+  const unread = tender.ranges.filter((range) => (range.status === 'pending' || range.status === 'running') && !inFlight.has(range.key)).length;
+  if (unread > 0) held.push(`${plural(unread, 'part')} of the tender ${unread === 1 ? 'is' : 'are'} not read yet`);
+  const unmatched = matchingHeld ? needsMatching(tender).length : 0;
+  if (unmatched > 0) held.push(`${plural(unmatched, 'requirement')} ${unmatched === 1 ? 'is' : 'are'} not matched yet`);
+  return held.join(', and ');
+}
+
+/** What the AI has cost so far against what it may spend, for the line under a tender's name. */
+export function spendSummary(spent: number, allowance: number): string {
+  return `AI cost ${dollars(spent)} of the ${dollars(allowance)} allowed`;
+}
+
+/**
+ * The question a person is asked when a tender reaches its limit. `step` is what going on allows
+ * from here (`approvedToGoOn` gives a full step), `held` what is waiting, from `heldByLimit`.
+ */
+export function limitQuestion(spent: number, allowance: number, step: number, held: string): string {
+  const waiting = held ? ` ${held.charAt(0).toUpperCase()}${held.slice(1)}.` : '';
+  return `This tender has used ${dollars(spent)} of AI against its limit of ${dollars(allowance)}, so the AI has stopped.${waiting} Continue for up to another ${dollars(step)}?`;
+}
+
+/**
+ * Ranges being read: in flight in this tab, or claimed by another tab whose claim is still live.
+ * A claim nothing will act on, such as one left when the limit stopped a Retry, is not reading.
+ */
+export function rangesReading(ranges: readonly TenderRange[], inFlight: ReadonlySet<string>, now: number, tab: string): TenderRange[] {
+  return ranges.filter((range) => inFlight.has(range.key) || heldElsewhere(range, tab, now));
+}
 
 /* ------------------------------------------------------------------ apply */
 
@@ -893,6 +968,9 @@ export interface NewTenderInput {
   fit: PlatformFit | null;
   outline: TenderSection[];
   tokens: TenderTokens;
+  /** What the server allows a tender, from the probe, and what a person agreed to beyond it before the tender was made. */
+  aiLimit: number;
+  aiApproved: number;
 }
 
 /** A tender as the fit step leaves it: platform chosen, ranges planned, nothing extracted yet. */
@@ -919,7 +997,9 @@ export function newTender(input: NewTenderInput, id: string, existing: readonly 
     reqs: [],
     estId: '',
     sentAt: '',
-    tokens: input.tokens
+    tokens: input.tokens,
+    aiLimit: input.aiLimit > 0 ? input.aiLimit : DEFAULT_AI_LIMIT,
+    aiApproved: Math.max(0, input.aiApproved)
   };
 }
 

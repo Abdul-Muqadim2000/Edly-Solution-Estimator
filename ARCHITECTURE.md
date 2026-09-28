@@ -188,6 +188,12 @@ person approving every step. Four decisions shape it, and each is expensive to u
   a `max_tokens: 0` request every four minutes, a twentieth of the tender each on Opus 5.5); extraction then runs one call per page range over that cached copy, so no
   single call outlives a Vercel function and a failed range retries on its own. Matching needs the
   catalog, not the tender, so it sends the catalog (cached) and the requirements in batches.
+- **Each tender has a spending limit, and a person decides to go past it.** The server prices
+  every call from its usage at the published rate of the model that ran each attempt
+  (`src/domain/aiPrice.ts`), and the tender keeps the running total. Before any call starts, the
+  runner, the intake and the keep-warm check `canSpend`; at the limit nothing new starts and the
+  screen asks whether to continue for another step (`EDLY_AI_TENDER_LIMIT_USD`, $4 by default).
+  Calls already running finish, because stopping one part way is billed all the same.
   Documents go converted text first and PDFs last, with a cache marker at each document's end, so a
   call about a spreadsheet carries the documents up to it and not the PDF after it.
 - **Only the pages worth reading are read.** Nothing tells a page is irrelevant without reading

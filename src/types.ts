@@ -483,6 +483,11 @@ export interface TenderTokens {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  /**
+   * What those tokens cost in US dollars, priced by the server at the published rate of the model
+   * that ran each attempt (`domain/aiPrice.ts`). An estimate: the Anthropic Console holds the bill.
+   */
+  usd: number;
 }
 
 export interface Tender {
@@ -509,6 +514,13 @@ export interface Tender {
   /** When the desk requests went out, ISO yyyy-mm-dd. */
   sentAt: string;
   tokens: TenderTokens;
+  /**
+   * Dollars the AI may spend on this tender before a person is asked whether to go on. Taken from
+   * the server's `EDLY_AI_TENDER_LIMIT_USD` when the tender is created, and never changed after.
+   */
+  aiLimit: number;
+  /** Dollars a person agreed to spend beyond `aiLimit`, each time the tender reached what it was allowed. */
+  aiApproved: number;
 }
 
 /* --------------------------------------------------------------- persistence */

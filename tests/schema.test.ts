@@ -294,7 +294,9 @@ function tender(count = 120): Tender {
     reqs,
     estId: '',
     sentAt: '',
-    tokens: { input: 1200, output: 900, cacheRead: 80_000, cacheWrite: 90_000 }
+    tokens: { input: 1200, output: 900, cacheRead: 80_000, cacheWrite: 90_000, usd: 0.51 },
+    aiLimit: 4,
+    aiApproved: 0
   };
 }
 
@@ -782,6 +784,45 @@ describe('tenders', () => {
     expect(cell('approved')).toBe(approved.length);
     expect(cell('catalog')).toBe(approved.filter((req) => req.match?.kind === 'catalog').length);
     expect(cell('custom')).toBe(approved.filter((req) => req.match?.kind === 'custom').length);
+  });
+
+  it('keeps what a tender has cost and what it may spend, and shows both to whoever scans the sheet', async () => {
+    const spent: Tender = { ...tender(2), tokens: { ...tender(2).tokens, usd: 4.6137 }, aiLimit: 4, aiApproved: 4.3 };
+    const back = await roundTrip({ ...sample(), tenders: [spent] });
+    /* a lost approval asks the person again on reload; a lost total lets the tender spend again from zero */
+    expect(back.tenders[0]).toEqual(spent);
+
+    const rows = stateToSheets({ ...sample(), tenders: [spent] })[SHEETS.tenders] ?? [];
+    const header = rows[0] ?? [];
+    const cell = (name: string): unknown => rows[1]?.[header.indexOf(name)];
+    expect(cell('aiSpent')).toBe(4.61);
+    expect(cell('aiLimit')).toBe(4);
+    expect(cell('aiApproved')).toBe(4.3);
+    /* the continuation rows put their part in the last column, so detailJson has to stay last */
+    expect(header[header.length - 1]).toBe('detailJson');
+  });
+
+  it('prices a tender saved before its cost was kept, and gives it the default limit', async () => {
+    /* exactly what the previous build wrote: no aiSpent, aiLimit or aiApproved column, no usd in the detail */
+    const sheets = stateToSheets({ ...sample(), tenders: [tender(2)] });
+    const rows = sheets[SHEETS.tenders] ?? [];
+    const header = (rows[0] ?? []).map(String);
+    const dropped = ['aiSpent', 'aiLimit', 'aiApproved'].map((name) => header.indexOf(name));
+    const detail = header.indexOf('detailJson');
+    sheets[SHEETS.tenders] = rows.map((row, index) => {
+      const cells = row.map((value, column) => {
+        if (index === 0 || column !== detail) return value;
+        const parsed = JSON.parse(String(value)) as { tokens: Record<string, number> };
+        delete parsed.tokens.usd;
+        return JSON.stringify(parsed);
+      });
+      return cells.filter((_, column) => !dropped.includes(column));
+    });
+
+    const back = sheetsToState(await readWorkbook(writeWorkbook(sheets)));
+    expect(back.tenders[0]).toMatchObject({ aiLimit: 4, aiApproved: 0 });
+    /* 1,200 in at $4, 900 out at $20, 80,000 from cache at $0.20 and 90,000 written at $5, per million */
+    expect(back.tenders[0]?.tokens.usd).toBeCloseTo(0.0048 + 0.018 + 0.016 + 0.45, 10);
   });
 
   it('keeps the tender a desk request was drafted from, and adds nothing to one typed by hand', async () => {

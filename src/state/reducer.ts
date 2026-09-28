@@ -27,6 +27,8 @@ import { cachedTotals, calcEstimate, DEFAULT_ROLES, type CachedTotals } from '@/
 import {
   addExtracted,
   addTokens,
+  approvedToGoOn,
+  canSpend,
   newTender,
   sectionRanges,
   sortRequirements,
@@ -295,6 +297,8 @@ export type Action =
   | { type: 'setMatches'; id: string; matches: Record<string, RequirementMatch>; texts?: Record<string, string>; tokens?: Partial<TenderTokens> }
   | { type: 'claimRanges'; id: string; keys: string[]; claim: Claim }
   | { type: 'addTenderTokens'; id: string; tokens: Partial<TenderTokens> }
+  /** A person saw the tender reach its AI limit and agreed to spend another step on it. */
+  | { type: 'allowMoreAi'; id: string }
   | { type: 'editMatch'; id: string; reqId: string; patch: Partial<RequirementMatch> }
   | { type: 'approveMatches'; id: string; reqIds: string[]; approved: boolean }
   | { type: 'clearMatches'; id: string; reqIds: string[] }
@@ -952,12 +956,15 @@ export function reducer(state: AppState, action: Action): AppState {
         };
       });
 
+    /* At the limit a Retry or a split queues the part without claiming it: no call will start, and
+       a claim would show the part as being read, here and in every other tab, until it went stale. */
     case 'retryRange':
       return withTender(state, action.id, (tender) => {
         if (!tender.ranges.some((range) => range.key === action.key && range.status === 'failed')) return tender;
+        const claim = canSpend(tender) ? action.claim : undefined;
         return {
           ...tender,
-          ranges: tender.ranges.map((range) => (range.key === action.key ? withClaim({ key: range.key, doc: range.doc, from: range.from, to: range.to, status: 'pending' }, action.claim) : range))
+          ranges: tender.ranges.map((range) => (range.key === action.key ? withClaim({ key: range.key, doc: range.doc, from: range.from, to: range.to, status: 'pending' }, claim) : range))
         };
       });
 
@@ -970,7 +977,8 @@ export function reducer(state: AppState, action: Action): AppState {
         if (!range) return tender;
         const halves = splitRange(range);
         const ranges = [...tender.ranges];
-        if (halves) ranges.splice(index, 1, ...halves.map((half) => withClaim(half, action.claim)));
+        const claim = canSpend(tender) ? action.claim : undefined;
+        if (halves) ranges.splice(index, 1, ...halves.map((half) => withClaim(half, claim)));
         else ranges[index] = { ...range, status: 'failed', error: 'Too much on one page to read in one go. Add these requirements by hand.' };
         return { ...tender, ranges };
       });
@@ -1089,6 +1097,10 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'addTenderTokens':
       return withTender(state, action.id, (tender) => ({ ...tender, tokens: addTokens(tender.tokens, action.tokens) }));
+
+    /* refused while there is still room, so a double click agrees to one step, not two */
+    case 'allowMoreAi':
+      return withTender(state, action.id, (tender) => (canSpend(tender) ? tender : { ...tender, aiApproved: approvedToGoOn(tender) }));
 
     case 'editMatch':
       return withTender(state, action.id, (tender) =>

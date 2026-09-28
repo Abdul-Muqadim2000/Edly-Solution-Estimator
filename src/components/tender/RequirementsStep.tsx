@@ -233,14 +233,14 @@ export function RequirementsStep({
   const failed = tender.ranges.filter((range) => range.status === 'failed');
   const skipped = skippedSections(tender);
   /* running in any tab, not just this one: a claim is shared through storage */
-  const active = tender.ranges.filter((range) => range.status === 'running' || runner.running.has(range.key));
+  const active = runner.reading;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {reading || failed.length > 0 ? (
         <div style={{ background: color.surface, border: `1px solid ${color.brandEdgeSoft}`, borderRadius: radius.lg, padding: '14px 18px' }}>
           <Row gap={10}>
-            <span style={{ fontFamily: font.display, fontSize: 14.5, fontWeight: 600 }}>{reading ? 'Reading the tender' : 'Some parts could not be read'}</span>
+            <span style={{ fontFamily: font.display, fontSize: 14.5, fontWeight: 600 }}>{reading ? (runner.held && active.length === 0 ? 'Paused at the AI limit' : 'Reading the tender') : 'Some parts could not be read'}</span>
             <span style={{ fontSize: 12, color: color.muted }}>
               {done} of {tender.ranges.length} parts done, {plural(counts.total, 'requirement')} so far
             </span>

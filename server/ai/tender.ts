@@ -112,7 +112,7 @@ async function callTool(tool: ToolName, content: Anthropic.Beta.BetaContentBlock
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), callDeadlineMs());
   /* what has streamed so far, read if the call fails part way */
-  let partial: (() => Parameters<typeof tokensOf>[0]) | undefined;
+  let partial: (() => Anthropic.Beta.BetaMessage | undefined) | undefined;
   let tokens: TenderTokens | undefined;
   const effort = aiEffort();
   try {
@@ -131,9 +131,10 @@ async function callTool(tool: ToolName, content: Anthropic.Beta.BetaContentBlock
       /* the signal also stops the SDK retrying, so the deadline bounds every attempt together */
       { signal: deadline.signal }
     );
-    partial = () => stream.currentMessage?.usage;
+    partial = () => stream.currentMessage;
     const message = await stream.finalMessage();
-    tokens = tokensOf(message.usage);
+    /* the model that answered, which after a refusal fallback is not the one asked for */
+    tokens = tokensOf(message.usage, message.model || aiModel());
 
     if (message.stop_reason === 'refusal') throw new AiError('refused', 'The AI declined to read this part of the tender.', 422);
     if (message.stop_reason === 'max_tokens') {
@@ -147,7 +148,7 @@ async function callTool(tool: ToolName, content: Anthropic.Beta.BetaContentBlock
     /* A failed call is still billed, and the tender's token count should say so. A call stopped
        mid-answer has no final usage, but the part already streamed reports what it read. */
     const streamed = partial?.();
-    const spent = tokens ?? (streamed ? tokensOf(streamed) : undefined);
+    const spent = tokens ?? (streamed ? tokensOf(streamed.usage, streamed.model || aiModel()) : undefined);
     if (spent) failure.tokens = spent;
     throw failure;
   } finally {
@@ -234,7 +235,7 @@ export async function keepWarm(docs: readonly DocRef[]): Promise<{ tokens: Tende
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default'
     });
-    return { tokens: tokensOf(message.usage) };
+    return { tokens: tokensOf(message.usage, message.model || aiModel()) };
   } catch (error) {
     throw toAiError(error);
   }
@@ -271,7 +272,7 @@ export async function matchRequirements(
   reqs: readonly MatchInput[]
 ): Promise<{ matches: Record<string, RequirementMatch>; tokens: TenderTokens }> {
   if (catalog.length === 0) throw new AiError('bad_request', 'This platform has no catalog to match against yet.', 400);
-  if (reqs.length === 0) return { matches: {}, tokens: tokensOf(null) };
+  if (reqs.length === 0) return { matches: {}, tokens: tokensOf(null, aiModel()) };
   const { input, tokens } = await callTool('report_matches', [
     /* the catalog is the same for every batch, so it is cached; the requirements come after it */
     { type: 'text', text: catalogText(catalog), cache_control: { type: 'ephemeral' } },

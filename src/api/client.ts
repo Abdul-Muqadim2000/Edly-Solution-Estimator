@@ -115,6 +115,8 @@ export interface AiProbe {
   ok: boolean;
   configured: boolean;
   model: string;
+  /** Dollars a tender may spend on AI before a person is asked; missing from a server older than the limit. */
+  limit?: number;
 }
 
 export async function tenderProbe(): Promise<AiProbe> {

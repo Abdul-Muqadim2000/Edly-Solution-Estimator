@@ -406,7 +406,9 @@ describe('tender links', () => {
     reqs: [],
     estId: '',
     sentAt: '',
-    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, usd: 0 },
+    aiLimit: 4,
+    aiApproved: 0
   });
   const withTenders = (over: Partial<AppState> = {}): AppState =>
     workspace({ tenders: [tender('TND-1', 'openedx', 'acme-lms-tender'), tender('TND-2', 'moodle', 'acme-lms-tender')], ...over });

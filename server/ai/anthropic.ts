@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { AiErrorCode } from '../../src/domain/tender.js';
+import { usdOf } from '../../src/domain/aiPrice.js';
+import { DEFAULT_AI_LIMIT, type AiErrorCode } from '../../src/domain/tender.js';
 import type { TenderTokens } from '../../src/types.js';
 
 /**
@@ -91,14 +92,56 @@ export function anthropic(): Anthropic {
   });
 }
 
-/** Tokens from a reply, in the shape the tender keeps its running total in. */
-export function tokensOf(usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null } | null | undefined): TenderTokens {
-  return {
-    input: usage?.input_tokens ?? 0,
-    output: usage?.output_tokens ?? 0,
-    cacheRead: usage?.cache_read_input_tokens ?? 0,
-    cacheWrite: usage?.cache_creation_input_tokens ?? 0
-  };
+/**
+ * Dollars the AI may spend on one tender before a person is asked whether to go on, from
+ * `EDLY_AI_TENDER_LIMIT_USD`, $4 when it is unset or not a positive number. The browser learns it
+ * from the probe and keeps it on each tender it creates.
+ */
+export function tenderLimitUsd(): number {
+  const configured = Number.parseFloat(process.env.EDLY_AI_TENDER_LIMIT_USD ?? '');
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_AI_LIMIT;
+}
+
+/** One attempt's usage, as the API reports it at the top level and in `usage.iterations`. */
+interface AttemptUsage {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_creation?: { ephemeral_1h_input_tokens?: number | null } | null;
+}
+
+interface ReplyUsage extends AttemptUsage {
+  iterations?: readonly (AttemptUsage & { type: string; model?: string | null })[] | null;
+}
+
+/**
+ * Tokens from a reply, in the shape the tender keeps its running total in, with what they cost.
+ *
+ * When the refusal fallback ran, the top-level usage covers only the attempt that answered, and
+ * `usage.iterations` lists every attempt, the declined one too, each with the model that ran it.
+ * A declined attempt can be billed, so every attempt is counted, at its own model's rate. `model`
+ * prices the top-level usage, and an attempt that does not name its model.
+ */
+export function tokensOf(usage: ReplyUsage | null | undefined, model: string): TenderTokens {
+  const attempts = (usage?.iterations ?? []).filter((entry) => entry.type === 'message' || entry.type === 'fallback_message');
+  const priced: [AttemptUsage, string][] = attempts.length > 0 ? attempts.map((entry) => [entry, entry.model || model]) : usage ? [[usage, model]] : [];
+  const total: TenderTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, usd: 0 };
+  for (const [one, at] of priced) {
+    const billed = {
+      input: one.input_tokens ?? 0,
+      output: one.output_tokens ?? 0,
+      cacheRead: one.cache_read_input_tokens ?? 0,
+      cacheWrite: one.cache_creation_input_tokens ?? 0,
+      cacheWrite1h: one.cache_creation?.ephemeral_1h_input_tokens ?? 0
+    };
+    total.input += billed.input;
+    total.output += billed.output;
+    total.cacheRead += billed.cacheRead;
+    total.cacheWrite += billed.cacheWrite;
+    total.usd += usdOf(billed, at);
+  }
+  return total;
 }
 
 /**

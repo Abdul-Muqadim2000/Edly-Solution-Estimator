@@ -78,7 +78,9 @@ const tender = (id: string): Tender => ({
   reqs: [{ id: 'R-01', doc: 1, page: 3, section: 'Identity', text: 'Single sign-on through Azure AD', quote: 'The platform shall support SSO', priority: 'must', outOfScope: false, status: 'approved' }],
   estId: '',
   sentAt: '',
-  tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, usd: 0 },
+  aiLimit: 4,
+  aiApproved: 0
 });
 
 describe('GET /api/state', () => {
