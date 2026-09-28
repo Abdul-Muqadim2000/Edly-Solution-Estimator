@@ -10,7 +10,12 @@ import type { TenderTokens } from '../../src/types.js';
  * logs document contents or model output.
  */
 
-export const DEFAULT_MODEL = 'claude-opus-5';
+/**
+ * Opus 5.5: cheaper than Opus 5 per token ($4 / $20 against $5 / $25 per million) and far cheaper
+ * to re-read from cache ($0.20 against $0.50), which is most of what extraction does. Chosen on
+ * 2026-09-28. `EDLY_AI_MODEL=claude-opus-5` goes back, for a key that cannot use it yet.
+ */
+export const DEFAULT_MODEL = 'claude-opus-5-5';
 
 /** Uploaded tenders are deleted at Anthropic after this long even if nobody removes them. */
 export const FILE_TTL_SECONDS = 72 * 3600;
@@ -32,6 +37,24 @@ export function callDeadlineMs(): number {
 
 export function aiModel(): string {
   return process.env.EDLY_AI_MODEL?.trim() || DEFAULT_MODEL;
+}
+
+export type AiEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+const EFFORTS: readonly AiEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * How hard the model thinks, from `EDLY_AI_EFFORT`, `medium` when it is unset or not a level.
+ * Thinking is billed as output, the dearest tokens, so this is the first lever on cost once the
+ * real run has shown which level still reads tenders well (DEFERRED.md 8).
+ *
+ * Always sent, never left to the API: the API's default differs by model (`medium` on Opus 5.5,
+ * `high` on Opus 5), so leaving it out would let a change of model change the thinking unseen.
+ * One setting for every call, never per operation: effort is part of the cached prompt, so a fit
+ * call and an extraction call at different levels would each pay for the whole tender.
+ */
+export function aiEffort(): AiEffort {
+  const value = process.env.EDLY_AI_EFFORT?.trim().toLowerCase() as AiEffort | undefined;
+  return value && EFFORTS.includes(value) ? value : 'medium';
 }
 
 export function aiConfigured(): boolean {
@@ -105,6 +128,11 @@ export function toAiError(error: unknown): AiError {
       return new AiError('too_large', 'That is more than the AI can read in one go. Split the tender into smaller files.', 413);
     }
     return new AiError('bad_request', `Anthropic refused the request: ${error.message}`, 400);
+  }
+  /* a model the key cannot use answers "not found" too; blaming the tender files would send
+     someone to upload them again, which cannot help */
+  if (error instanceof Anthropic.NotFoundError && /\bmodel\b/i.test(error.message)) {
+    return new AiError('not_configured', `This API key cannot use the model ${aiModel()}. Set EDLY_AI_MODEL to one it can, such as claude-opus-5.`, 503);
   }
   if (error instanceof Anthropic.NotFoundError) {
     return new AiError('bad_request', 'A tender file is no longer at Anthropic (it may have expired). Upload the tender again.', 410);

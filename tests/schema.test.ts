@@ -726,6 +726,22 @@ describe('tenders', () => {
     expect(back.tenders[0]).toEqual(original.tenders[0]);
   });
 
+  it("keeps what the reading plan and the tender's references depend on", async () => {
+    /* a lost skip reads the pricing forms again on reload; a lost span sends 400 sheet rows to one call */
+    const base = tender(2);
+    const planned: Tender = {
+      ...base,
+      docs: [...base.docs, { n: 2, name: 'Matrix.xlsx', kind: 'text', bytes: 40_000, pages: 12, span: 3, fileId: 'file_def', expiresAt: '2026-09-23T10:00:00Z' }],
+      outline: [...base.outline, { doc: 1, title: 'Pricing forms', from: 40, to: 48, skip: true }],
+      reqs: base.reqs.map((req, index) => (index === 0 ? { ...req, ref: 'FR-012' } : req))
+    };
+    const back = await roundTrip({ ...sample(), tenders: [planned] });
+    expect(back.tenders[0]?.docs[1]?.span).toBe(3);
+    expect(back.tenders[0]?.outline[1]?.skip).toBe(true);
+    expect(back.tenders[0]?.reqs[0]?.ref).toBe('FR-012');
+    expect(back.tenders[0]).toEqual(planned);
+  });
+
   it('splits a tender whose requirements run past one cell, and rejoins it exactly', async () => {
     const rows = stateToSheets(sample())[SHEETS.tenders] ?? [];
     /* 120 requirements serialise far past what Excel keeps in one cell */

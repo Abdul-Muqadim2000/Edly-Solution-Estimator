@@ -140,6 +140,11 @@ export function tenderFit(docs: DocRef[], platforms: PlatformDigest[]): Promise<
   return tenderCall('fit', jsonInit({ docs, platforms }));
 }
 
+/** Keeps the tender's cache alive while a person decides; see `nextKeepWarm`. */
+export function tenderWarm(docs: DocRef[]): Promise<{ tokens: TenderTokens }> {
+  return tenderCall('warm', jsonInit({ docs }));
+}
+
 export function tenderExtract(docs: DocRef[], range: { doc: number; from: number; to: number }): Promise<{ found: ExtractedRequirement[]; tokens: TenderTokens }> {
   return tenderCall('extract', jsonInit({ docs, range }));
 }

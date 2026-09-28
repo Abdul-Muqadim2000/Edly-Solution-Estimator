@@ -184,9 +184,22 @@ person approving every step. Four decisions shape it, and each is expensive to u
   drops any id the catalog does not have, and hours are looked up by id when shown. Unmatched work
   goes to the desk with no hours, as a hand-typed request does.
 - **One cached copy of the tender, read in slices.** The fit call reads the whole tender once and
-  caches it for an hour; extraction then runs one call per page range over that cached copy, so no
+  caches it for five minutes, kept warm while the person reads the recommendation (`nextKeepWarm`,
+  a `max_tokens: 0` request every four minutes, a twentieth of the tender each on Opus 5.5); extraction then runs one call per page range over that cached copy, so no
   single call outlives a Vercel function and a failed range retries on its own. Matching needs the
   catalog, not the tender, so it sends the catalog (cached) and the requirements in batches.
+  Documents go converted text first and PDFs last, with a cache marker at each document's end, so a
+  call about a spreadsheet carries the documents up to it and not the PDF after it.
+- **Only the pages worth reading are read.** Nothing tells a page is irrelevant without reading
+  it, so the fit call reads every page once. It also marks the sections that hold nothing to
+  deliver (cover, bid instructions, scoring, blank forms, standard legal terms) as `skip`, the person sees and can change
+  that before continuing, and the ranges cover the rest, less a page of margin at each edge
+  (`planRanges`). A skipped section can still be read later from the requirements step. A
+  spreadsheet is read in rows rather than pages: each sheet starts its own part, every row keeps its
+  row number, and its ranges are three parts of 20 rows, because a row is nearly always a
+  requirement and a 20-part range of rows cannot be answered inside the time limit. Legal and
+  commercial terms and bid paperwork are not extracted at all; out of scope means work that is not
+  software but costs money to meet (hardware, staff on site, vetting).
 - **The browser drives the steps.** `/api/tender` keeps no state; the tender lives in the reducer
   and the `Tenders` sheet like everything else, so a half-reviewed tender survives a reload. A tab
   claims a range (`running`, with a time) before reading it, so a second tab on the same tender
@@ -194,7 +207,7 @@ person approving every step. Four decisions shape it, and each is expensive to u
   A match that comes back after a person changed the requirement is dropped, not applied.
 
 ```
-upload ─► Files API id ─► fit (platform, header, outline) ─► person picks platform
+upload ─► Files API id ─► fit (platform, header, outline, sections to skip) ─► person picks platform and what is read
       ─► extract, one call per range ─► person reviews requirements
       ─► match, batches of 40 ─► person accepts matches
       ─► person creates the estimation ─► person sends the desk requests ─► files deleted

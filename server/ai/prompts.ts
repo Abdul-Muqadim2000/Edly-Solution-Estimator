@@ -1,13 +1,14 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import type { CatalogLine, DocRef, MatchInput, PlatformDigest } from '../../src/domain/tender.js';
+import { isSpreadsheet, type CatalogLine, type DocRef, type MatchInput, type PlatformDigest } from '../../src/domain/tender.js';
 
 /**
  * What the model is told, in one place.
  *
  * Every call sends the same system prompt and the same three tools in the same order, and puts
- * the tender documents first in the message. That makes the documents one cached prefix shared
- * by the fit call and every extraction call after it: the tender is paid for in full once, and
- * each later range reads it from cache. Change any of the three per call and that saving is gone.
+ * the tender documents first in the message, always in `readingOrder`. That makes the documents a
+ * cached prefix shared by the fit call and every extraction call after it: the tender is paid for
+ * in full once, and each later range reads it from cache, up to the document it is about. Change
+ * any of the three per call, or the effort or thinking settings, and that saving is gone.
  */
 
 type Tool = Anthropic.Beta.BetaTool;
@@ -62,8 +63,14 @@ export const TOOLS: Tool[] = [
       },
       outline: {
         type: 'array',
-        description: 'The main sections of each document, at most 30 per document.',
-        items: object({ doc: { type: 'integer' }, title: { type: 'string' }, from: { type: 'integer' }, to: { type: 'integer' } })
+        description: 'The main sections of each document in order, at most 30 per document.',
+        items: object({
+          doc: { type: 'integer' },
+          title: { type: 'string' },
+          from: { type: 'integer', description: 'First physical page, the first page of the file being 1, not the number printed on it. For converted text, the [[Part N]] number.' },
+          to: { type: 'integer', description: 'Last physical page, counted the same way.' },
+          skip: { type: 'boolean', description: 'True only when nothing in the section is work for the supplier to build, host, support or provide.' }
+        })
       }
     }) as Tool['input_schema']
   },
@@ -79,8 +86,12 @@ export const TOOLS: Tool[] = [
           quote: { type: 'string', description: 'The shortest verbatim passage that states it, at most 40 words.' },
           page: { type: 'integer', description: 'Physical page in the file, the first page being 1. For converted text, the [[Part N]] number.' },
           section: { type: 'string', description: 'The heading the requirement sits under.' },
+          ref: {
+            type: 'string',
+            description: "The tender's own reference for it, as printed: a requirement ID or clause number (FR-012, 4.2.3). For a spreadsheet row with no ID, the sheet and row (Functional, row 14). Empty if there is none."
+          },
           priority: { type: 'string', enum: ['must', 'should'] },
-          outOfScope: { type: 'boolean', description: 'True for obligations that are not software delivery.' }
+          outOfScope: { type: 'boolean', description: 'True for obligations that are not software delivery but cost money to meet, such as hardware or staff on site.' }
         })
       }
     }) as Tool['input_schema']
@@ -109,20 +120,55 @@ export const TOOLS: Tool[] = [
 
 export type ToolName = 'report_fit' | 'report_requirements' | 'report_matches';
 
-/** The tender documents, first in every message that reads them. The last one carries the cache marker. */
-export function documentBlocks(docs: readonly DocRef[]): Block[] {
-  return docs.map((doc, index): Block => ({
+const TEXT_CONTEXT = 'Converted to text from the original file. Lines reading [[Part N]] mark parts, which stand in for pages.';
+/* matches the layout `workbookToParts` in src/lib/tenderFiles.ts writes */
+const SHEET_CONTEXT =
+  'Converted to text from a spreadsheet. Lines reading [[Part N]] mark parts, which stand in for pages. Each sheet starts with a line "## Sheet: name", a "Columns" line names the cells of the rows under it, and each "Row N:" line is row N of that sheet with its cells separated by " | ".';
+
+/** The API keeps at most four cache markers per request. */
+const MAX_MARKERS = 4;
+
+/**
+ * The order the documents go in, the same in every call: converted text first, PDFs last.
+ *
+ * A PDF page is read as text and as an image, several times what a page of text costs, and a call
+ * about one document carries only the documents up to it (`documentBlocks`). With the PDFs last, a
+ * call about the requirements spreadsheet does not also carry the 50-page PDF.
+ */
+export function readingOrder(docs: readonly DocRef[]): DocRef[] {
+  return [...docs.filter((doc) => doc.kind === 'text'), ...docs.filter((doc) => doc.kind !== 'text')];
+}
+
+/**
+ * The tender documents, first in every message that reads them, in `readingOrder`.
+ *
+ * The fit call carries them all, with a cache marker at the end of each (of the last four, the
+ * API's limit), so the one full read of the tender leaves an entry at every document boundary. A
+ * call about one document (`readFor`) carries the documents up to it, or up to the next boundary
+ * with a marker, and reads that entry. If the API ever misses an inner entry, the call writes the
+ * text before it again, which costs cents; the PDFs, the dear part, are always the full prefix.
+ */
+export function documentBlocks(docs: readonly DocRef[], readFor?: number): Block[] {
+  const order = readingOrder(docs);
+  const firstMarked = Math.max(0, order.length - MAX_MARKERS);
+  const wanted = readFor === undefined ? -1 : order.findIndex((doc) => doc.n === readFor);
+  const end = wanted < 0 ? order.length - 1 : Math.max(wanted, firstMarked);
+  return order.slice(0, end + 1).map((doc, index): Block => ({
     type: 'document',
     source: { type: 'file', file_id: doc.fileId },
     title: `Document ${doc.n}: ${doc.name}`,
-    ...(doc.kind === 'text'
-      ? { context: 'Converted to text from the original file. Lines reading [[Part N]] mark parts, which stand in for pages.' }
-      : {}),
-    /* an hour, not five minutes: a person reads the platform recommendation between the fit
-       call and the first extraction, and a miss there would re-bill the whole tender per range */
-    ...(index === docs.length - 1 ? { cache_control: { type: 'ephemeral' as const, ttl: '1h' as const } } : {})
+    ...(doc.kind === 'text' ? { context: isSpreadsheet(doc.name) ? SHEET_CONTEXT : TEXT_CONTEXT } : {}),
+    /* five minutes, not an hour. The first write of the whole tender is most of what a tender costs,
+       and an hour's entry is written at twice the input price against 1.25 times for five minutes.
+       The gap an hour covered, a person reading the platform recommendation before extraction
+       starts, is bridged by `keepWarm` instead, and extraction calls follow each other closely
+       enough to keep the entry alive by themselves. */
+    ...(index >= firstMarked ? { cache_control: { type: 'ephemeral' as const } } : {})
   }));
 }
+
+/** The placeholder a keep-warm request ends with. It is read but never answered. */
+export const KEEP_WARM_TEXT = 'Keeping the tender documents cached until the next request.';
 
 const cell = (value: string): string => value.replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
 
@@ -150,7 +196,10 @@ export function fitInstruction(platforms: readonly PlatformDigest[], docs: reado
     registry,
     '',
     'Recommend the single platform whose catalog would cover most of the tender. Name up to three alternatives worth considering, and list in elsewhere any substantial part of the tender that belongs on a different platform.',
-    'For documents, give each document number with its total page count (or its number of [[Part N]] markers). For outline, give the main sections with their first and last page.'
+    'For documents, give each document number with its total page count (or its number of [[Part N]] markers). For outline, give the main sections with their first and last page, counting physical pages in the file (the first page is 1) rather than the numbers printed on them. In a converted spreadsheet, each sheet is a section.',
+    '',
+    'Requirements are read later, section by section, and a section with skip true is not read at all, so set skip only where nothing is work for the supplier to build, host, support or provide: a cover, contents or glossary, instructions for preparing and submitting the bid, the evaluation and scoring method, blank pricing or response forms, declarations and signature pages, and standard legal and commercial terms. When in doubt, leave skip false.',
+    'Contract terms often hold delivery obligations such as service levels, support hours, data protection, hosting, security or exit and data return. Give any such part a section of its own with skip false, even inside terms that are otherwise skipped.'
   ].join('\n');
 }
 
@@ -164,8 +213,12 @@ export function extractInstruction(doc: DocRef, from: number, to: number): strin
     '',
     'A requirement is something the supplier must deliver, build, configure, integrate, migrate, host, support, train or comply with. Include functional features, integrations, data migration, reporting, accessibility, security, privacy, hosting, support and training obligations.',
     'Split a sentence that lists separate deliverables into separate requirements. Do not report background, evaluation criteria or instructions to bidders unless they impose a delivery obligation.',
-    'priority is must for mandatory wording (shall, must, required, mandatory) and should for desirable wording (should, may, preferred, optional).',
-    'outOfScope is true for obligations that are not software delivery: hardware, office space, insurance, contract and legal terms, pricing forms, bid paperwork.',
+    'In a table or spreadsheet, each row usually states one requirement. Read the row with its column names, and restate the requirement cell, not the whole row.',
+    'priority is must for mandatory wording (shall, must, required, mandatory, essential) and should for desirable wording (should, may, could, preferred, desirable, optional).',
+    "Where the tender uses its own scale, such as MoSCoW letters (M, S, C, W) or numbered levels, go by its legend: the top level is must and the levels below it are should. Leave out anything the tender marks as not wanted this time, such as a Won't have (W): it is not a requirement.",
+    "ref is the tender's own reference, copied exactly, so the bid team can find the requirement in the original.",
+    'Do not report legal and commercial terms (insurance, liability, indemnity, payment, intellectual property, warranties, termination, governing law, disputes, audit, subcontracting) or bid paperwork (forms, declarations, how to respond). The bid team accepts those as a whole; they are not work to estimate. Contract clauses that set delivery obligations, such as service levels, support hours, data protection, hosting, security or exit and data return, are requirements: report them.',
+    'outOfScope is true for obligations that are not software delivery but cost the supplier money to meet: hardware, staff on site, travel, office space, staff vetting.',
     'If the range states no requirements, return an empty list.'
   ].join('\n');
 }

@@ -162,13 +162,17 @@ export function readFit(input: unknown, platformIds: readonly string[], docs: re
 
   const outline = list(raw.outline)
     .map(record)
-    .map((entry) => ({ doc: int(entry.doc), title: str(entry.title, 160), from: int(entry.from), to: int(entry.to) }))
+    /* only an explicit true skips: a section the model was unsure about is read */
+    .map((entry): TenderSection => ({ doc: int(entry.doc), title: str(entry.title, 160), from: int(entry.from), to: int(entry.to), ...(entry.skip === true ? { skip: true } : {}) }))
     .filter((section) => section.title && section.from >= 1 && docs.some((doc) => doc.n === section.doc))
     .map((section) => {
       const last = pages[section.doc] || Number.POSITIVE_INFINITY;
       const from = Math.min(section.from, last);
       return { ...section, from, to: Math.min(Math.max(section.to, from), last) };
     })
+    /* document order, the way a person reads the list: the model answers in the order the
+       documents were sent, which puts converted text before the PDFs (see `readingOrder`) */
+    .sort((a, b) => a.doc - b.doc || a.from - b.from)
     .slice(0, 200);
 
   const deadline = str(raw.deadline, 10);
@@ -205,6 +209,7 @@ export function readRequirements(input: unknown, range: Pick<TenderRange, 'doc'>
     const text = str(entry.text, 800);
     if (!text) continue;
     const page = int(entry.page);
+    const ref = str(entry.ref, 80);
     found.push({
       doc: range.doc,
       /* a page outside the document is a misreading, not a location */
@@ -213,7 +218,8 @@ export function readRequirements(input: unknown, range: Pick<TenderRange, 'doc'>
       text,
       quote: str(entry.quote, 600),
       priority: entry.priority === 'should' ? 'should' : 'must',
-      outOfScope: entry.outOfScope === true
+      outOfScope: entry.outOfScope === true,
+      ...(ref ? { ref } : {})
     });
   }
   return found;
@@ -272,33 +278,153 @@ export function readMatches(
 export const RANGE_PAGES = 20;
 
 /**
- * The extraction calls a tender needs: each document cut into ranges of at most `span` pages.
- *
- * A range ends just before a section starts when one starts in its last third, so a section is
- * usually read whole by one call rather than split across two.
+ * Pages kept read at each edge of a skipped stretch. The outline's page numbers come from the
+ * model, and one out at a boundary would drop the first or last page of a requirements section.
+ * A missed requirement underprices a bid; an extra page read costs almost nothing, because every
+ * call already carries the whole tender from the cache.
  */
-export function planRanges(docs: readonly Pick<TenderDocument, 'n' | 'pages'>[], outline: readonly TenderSection[], span = RANGE_PAGES): TenderRange[] {
+const SKIP_MARGIN = 1;
+/** Skipped pages between two read stretches that are read anyway when that saves a call. */
+const MERGE_GAP = 2;
+
+export interface PageRun {
+  from: number;
+  to: number;
+}
+
+/** A converted spreadsheet, by the name the person chose. Its sections are its sheets. */
+export const isSpreadsheet = (name: string): boolean => /\.(xlsx|csv)$/i.test(name);
+
+/** What `readRuns` needs to know about a document. */
+type PlannedDoc = Pick<TenderDocument, 'n' | 'pages'> & Partial<Pick<TenderDocument, 'name' | 'span'>>;
+
+/**
+ * The stretches of one document the extraction reads: every page except those that only skipped
+ * sections cover. A page no section claims is read, and so is the page either side of a skipped
+ * stretch (`SKIP_MARGIN`). Empty for a document whose length nobody counted.
+ *
+ * A spreadsheet has no margin: every sheet starts a part of its own, so a sheet's first and last
+ * parts are exact, and a margin would read the instructions and pricing sheets it just left out.
+ */
+export function readRuns(doc: PlannedDoc, outline: readonly TenderSection[]): PageRun[] {
+  if (doc.pages <= 0) return [];
+  const sections = outline.filter((section) => section.doc === doc.n);
+  const read: boolean[] = [false];
+  for (let page = 1; page <= doc.pages; page++) {
+    const covering = sections.filter((section) => section.from <= page && page <= section.to);
+    read[page] = covering.length === 0 || covering.some((section) => !section.skip);
+  }
+  const margin = isSpreadsheet(doc.name ?? '') ? 0 : SKIP_MARGIN;
+  const runs: PageRun[] = [];
+  for (let page = 1; page <= doc.pages; page++) {
+    let near = read[page] === true;
+    for (let step = 1; step <= margin && !near; step++) near = read[page - step] === true || read[page + step] === true;
+    if (!near) continue;
+    const last = runs[runs.length - 1];
+    if (last && last.to === page - 1) last.to = page;
+    else runs.push({ from: page, to: page });
+  }
+  return runs;
+}
+
+/** Pages the extraction will read, across a tender's documents, and how many there are. */
+export function readingPlan(docs: readonly PlannedDoc[], outline: readonly TenderSection[]): { read: number; total: number } {
+  let read = 0;
+  let total = 0;
+  for (const doc of docs) {
+    total += doc.pages;
+    read += doc.pages <= 0 ? 0 : readRuns(doc, outline).reduce((sum, run) => sum + run.to - run.from + 1, 0);
+  }
+  return { read, total };
+}
+
+/**
+ * How much of one document the extraction reads, as a person counts it: "reads 33 of 45 pages",
+ * or for a spreadsheet "reads 2 of 4 sheets", since its parts mean nothing in Excel.
+ */
+export function readingSummary(doc: PlannedDoc & Pick<TenderDocument, 'kind'>, outline: readonly TenderSection[]): string {
+  if (doc.pages <= 0) return 'reads all of it';
+  const sheets = outline.filter((section) => section.doc === doc.n);
+  if (isSpreadsheet(doc.name ?? '') && sheets.length > 0) return `reads ${sheets.filter((sheet) => !sheet.skip).length} of ${plural(sheets.length, 'sheet')}`;
+  return `reads ${readingPlan([doc], outline).read} of ${documentLength(doc)}`;
+}
+
+/**
+ * Two stretches become one when the pages between them are few and reading them saves a call.
+ * Merging never adds a call, so the gap pages are read only when they pay for themselves.
+ */
+function mergeRuns(runs: readonly PageRun[], span: number): PageRun[] {
+  const calls = (run: PageRun): number => Math.ceil((run.to - run.from + 1) / span);
+  const merged: PageRun[] = [];
+  for (const run of runs) {
+    const last = merged[merged.length - 1];
+    if (last && run.from - last.to - 1 <= MERGE_GAP && calls({ from: last.from, to: run.to }) < calls(last) + calls(run)) last.to = run.to;
+    else merged.push({ ...run });
+  }
+  return merged;
+}
+
+/** One stretch cut into ranges of at most `span` pages, ending before a section that starts in a range's last third. */
+function cutRun(doc: number, run: PageRun, starts: readonly number[], span: number): TenderRange[] {
+  const ranges: TenderRange[] = [];
+  let from = run.from;
+  /* bounded, like the planner's packing loop: a bad page count must not spin forever */
+  for (let guard = 0; from <= run.to && guard < 5000; guard++) {
+    let to = Math.min(run.to, from + span - 1);
+    if (to < run.to) {
+      const floor = from + Math.floor((span * 2) / 3);
+      const cut = starts.filter((start) => start > floor && start <= to).sort((a, b) => b - a)[0];
+      if (cut !== undefined) to = cut - 1;
+    }
+    ranges.push({ key: `${doc}:${from}-${to}`, doc, from, to, status: 'pending' });
+    from = to + 1;
+  }
+  return ranges;
+}
+
+/** A document's own range size where it has one (a converted spreadsheet), else the tender's. */
+const spanOf = (doc: Pick<TenderDocument, 'span'>, span: number): number => (doc.span && doc.span > 0 ? doc.span : span);
+
+/**
+ * The extraction calls a tender needs: the pages worth reading in each document, cut into ranges
+ * of at most `span` pages (or the document's own `span`).
+ *
+ * Sections the AI marked `skip` are left out, less a page of margin at each edge. A range ends just
+ * before a section starts when one starts in its last third, so a section is usually read whole by
+ * one call rather than split across two.
+ */
+export function planRanges(docs: readonly PlannedDoc[], outline: readonly TenderSection[], span = RANGE_PAGES): TenderRange[] {
   const ranges: TenderRange[] = [];
   for (const doc of docs) {
     if (doc.pages <= 0) {
       ranges.push({ key: `${doc.n}:1-end`, doc: doc.n, from: 1, to: 0, status: 'pending' });
       continue;
     }
+    const size = spanOf(doc, span);
     const starts = outline.filter((section) => section.doc === doc.n).map((section) => section.from);
-    let from = 1;
-    /* bounded, like the planner's packing loop: a bad page count must not spin forever */
-    for (let guard = 0; from <= doc.pages && guard < 5000; guard++) {
-      let to = Math.min(doc.pages, from + span - 1);
-      if (to < doc.pages) {
-        const floor = from + Math.floor((span * 2) / 3);
-        const cut = starts.filter((start) => start > floor && start <= to).sort((a, b) => b - a)[0];
-        if (cut !== undefined) to = cut - 1;
-      }
-      ranges.push({ key: `${doc.n}:${from}-${to}`, doc: doc.n, from, to, status: 'pending' });
-      from = to + 1;
-    }
+    for (const run of mergeRuns(readRuns(doc, outline), size)) ranges.push(...cutRun(doc.n, run, starts, size));
   }
   return ranges;
+}
+
+/**
+ * The ranges that read a skipped section after all, when a person asks for it: the section's
+ * pages that no existing range already covers, a failed one included (that one has Retry).
+ */
+export function sectionRanges(tender: Pick<Tender, 'docs' | 'ranges' | 'outline'>, section: TenderSection, span = RANGE_PAGES): TenderRange[] {
+  const doc = tender.docs.find((one) => one.n === section.doc);
+  if (!doc || doc.pages <= 0) return [];
+  const covered = (page: number): boolean => tender.ranges.some((range) => range.doc === doc.n && range.from <= page && (range.to === 0 || page <= range.to));
+  const runs: PageRun[] = [];
+  for (let page = Math.max(1, section.from); page <= Math.min(section.to, doc.pages); page++) {
+    if (covered(page)) continue;
+    const last = runs[runs.length - 1];
+    if (last && last.to === page - 1) last.to = page;
+    else runs.push({ from: page, to: page });
+  }
+  const size = spanOf(doc, span);
+  const starts = tender.outline.filter((one) => one.doc === doc.n).map((one) => one.from);
+  return runs.flatMap((run) => cutRun(doc.n, run, starts, size));
 }
 
 const pendingRange = (doc: number, from: number, to: number): TenderRange => ({
@@ -352,6 +478,24 @@ export function rangesToRun(ranges: readonly TenderRange[], inFlight: ReadonlySe
 export function nextStaleAt(ranges: readonly TenderRange[], now: number, tab: string): number | null {
   const times = ranges.filter((range) => heldElsewhere(range, tab, now)).map((range) => (range.startedAt ?? now) + STALE_CLAIM_MS);
   return times.length > 0 ? Math.min(...times) : null;
+}
+
+/**
+ * How the tender's cache is kept alive between the fit call and extraction.
+ *
+ * The documents are cached for five minutes, timed from the start of the last request that read
+ * them. While a person is still deciding on the fit screen, a keep-warm request every four minutes
+ * reads them again, a twentieth of the tender each time on Opus 5.5, instead of the next call writing it all again
+ * at 1.25 times. The hour-long cache this replaces cost 0.75 of the tender more up front, so the
+ * keep-alives stop after six (about 25 minutes), past which a new write is the cheaper bet.
+ */
+export const KEEP_WARM_EVERY_MS = 4 * 60_000;
+export const KEEP_WARM_MAX = 6;
+
+/** When to send the next keep-warm, given when the last read of the documents started, or null to stop. */
+export function nextKeepWarm(lastReadAt: number, sent: number): number | null {
+  if (lastReadAt <= 0 || sent >= KEEP_WARM_MAX) return null;
+  return lastReadAt + KEEP_WARM_EVERY_MS;
 }
 
 /** A claim, as the reducer stamps it on a range. */
@@ -414,12 +558,34 @@ export function addExtracted(existing: readonly TenderRequirement[], incoming: r
   return { reqs: sortRequirements(reqs), added };
 }
 
-/** Where a requirement came from, as a person reads it: "RFP.pdf, p. 14". */
-export function sourceLabel(req: Pick<TenderRequirement, 'doc' | 'page'>, docs: readonly Pick<TenderDocument, 'n' | 'name' | 'kind'>[]): string {
+/**
+ * Where a requirement came from, as a person reads it: "RFP.pdf, p. 14, 4.2.3". In converted text a
+ * part number means nothing to anyone holding the original, so the tender's own reference (a row's
+ * ID, a clause number) stands in for it when there is one.
+ */
+export function sourceLabel(req: Pick<TenderRequirement, 'doc' | 'page' | 'ref'>, docs: readonly Pick<TenderDocument, 'n' | 'name' | 'kind'>[]): string {
   const doc = docs.find((one) => one.n === req.doc);
-  const where = req.page > 0 ? (doc?.kind === 'text' ? `part ${req.page}` : `p. ${req.page}`) : '';
+  const ref = req.ref?.trim() ?? '';
+  const where = req.page > 0 && !(doc?.kind === 'text' && ref) ? (doc?.kind === 'text' ? `part ${req.page}` : `p. ${req.page}`) : '';
   const name = doc?.name ?? (req.doc > 0 ? `document ${req.doc}` : '');
-  return [name, where].filter(Boolean).join(', ') || 'added by hand';
+  return [name, where, ref].filter(Boolean).join(', ') || 'added by hand';
+}
+
+/** Sections left out of the reading, with their place in the outline so a person can have one read. */
+export function skippedSections(tender: Pick<Tender, 'outline'>): { index: number; section: TenderSection }[] {
+  return tender.outline.flatMap((section, index) => (section.skip ? [{ index, section }] : []));
+}
+
+/**
+ * A section's pages as a person reads them: "p. 4", "pp. 5 to 9", or "parts 3 to 5" in converted
+ * text. A spreadsheet's sections are its sheets, and its part numbers mean nothing in Excel.
+ */
+export function sectionPages(section: Pick<TenderSection, 'doc' | 'from' | 'to'>, docs: readonly Pick<TenderDocument, 'n' | 'kind' | 'name'>[]): string {
+  const doc = docs.find((one) => one.n === section.doc);
+  if (doc && isSpreadsheet(doc.name)) return 'sheet';
+  const text = doc?.kind === 'text';
+  if (section.from === section.to) return `${text ? 'part' : 'p.'} ${section.from}`;
+  return `${text ? 'parts' : 'pp.'} ${section.from} to ${section.to}`;
 }
 
 /** A range as a person reads it: "RFP.pdf, pages 1 to 20". */
@@ -759,7 +925,7 @@ export function newTender(input: NewTenderInput, id: string, existing: readonly 
 
 const thousands = (value: number): string => value.toLocaleString('en-US');
 
-/** What the AI has read and written for a tender. Cached reads are billed at a tenth of the rest. */
+/** What the AI has read and written for a tender. Cached reads are billed at a twentieth of the rest on Opus 5.5. */
 export function tokenSummary(tokens: TenderTokens): string {
   const read = tokens.input + tokens.cacheRead + tokens.cacheWrite;
   if (read === 0 && tokens.output === 0) return 'No AI calls yet';

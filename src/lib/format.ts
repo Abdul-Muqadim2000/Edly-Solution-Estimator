@@ -42,6 +42,12 @@ export function plural(n: number, word: string): string {
  * desk's note or an "Assumptions" column. Blank parts are dropped, and a part repeated word for
  * word is kept once: the desk often typed the same sentence into both of the old boxes.
  */
+/** Items as a person lists them: "a", "a and b", "a, b and c". */
+export function andList(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
 export function joinNotes(...parts: readonly (string | null | undefined)[]): string {
   const kept: string[] = [];
   for (const part of parts) {

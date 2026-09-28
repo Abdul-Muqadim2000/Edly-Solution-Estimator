@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkTenderFiles,
+  csvToRows,
   docxToText,
   docxXmlToText,
   MAX_UPLOAD_BYTES,
   paginate,
+  PART_CHARS,
+  preparedSheet,
   preparedText,
   prepareTenderFile,
+  SHEET_SPAN,
   tenderFileKind,
-  workbookToText
+  workbookToParts
 } from '../src/lib/tenderFiles';
-import { writeWorkbook, zipStored } from '../src/lib/xlsx';
+import { unzip, writeWorkbook, zipStored } from '../src/lib/xlsx';
 
 /**
  * Tender files are turned into something Claude can read before anything is uploaded.
@@ -31,6 +35,7 @@ describe('which files a tender can use', () => {
     expect(tenderFileKind('annex.docx')).toBe('docx');
     expect(tenderFileKind('pricing.xlsx')).toBe('xlsx');
     expect(tenderFileKind('notes.md')).toBe('text');
+    expect(tenderFileKind('matrix.CSV')).toBe('csv');
     expect(tenderFileKind('old.doc')).toBeNull();
   });
 
@@ -70,9 +75,77 @@ describe('reading a Word document', () => {
 });
 
 describe('reading a spreadsheet', () => {
-  it('writes each sheet as a heading and its non-empty rows', () => {
-    const text = workbookToText({ Requirements: [['ID', 'Requirement', '', ''], ['', '', ''], ['R-1', 'SSO   through  Azure', 'Must']], Empty: [['', '']] });
-    expect(text).toBe('## Requirements\nID | Requirement\nR-1 | SSO through Azure | Must');
+  it('writes each row with its own row number, under a line naming the columns', () => {
+    const parts = workbookToParts({
+      Requirements: [['Nordhaven College: requirements'], [], ['ID', 'Requirement', 'Priority', ''], ['', '', ''], ['R-1', 'SSO   through  Azure', 'M']],
+      Empty: [['', '']]
+    });
+    /* row 5 is where a person finds it in the client's file; an empty sheet is not a part */
+    expect(parts).toEqual(['## Sheet: Requirements\nRow 1: Nordhaven College: requirements\nColumns (row 3): ID | Requirement | Priority\nRow 5: R-1 | SSO through Azure | M']);
+  });
+
+  it('starts every sheet on a part of its own, so the AI can leave a whole sheet out', () => {
+    const parts = workbookToParts({ Instructions: [['Answer every row']], Matrix: [['R-1', 'Reporting']] });
+    expect(parts).toEqual(['## Sheet: Instructions\nRow 1: Answer every row', '## Sheet: Matrix\nRow 1: R-1 | Reporting']);
+  });
+
+  it('repeats the column names at the top of each part that continues a sheet', () => {
+    const rows = [['ID', 'Requirement', 'Priority'], ...Array.from({ length: 5 }, (_, i) => [`R-${i + 1}`, `Requirement ${i + 1}`, 'M'])];
+    const parts = workbookToParts({ Matrix: rows }, 2);
+    expect(parts).toHaveLength(3);
+    expect(parts[1]).toBe('## Sheet: Matrix (continued)\nColumns (row 1): ID | Requirement | Priority\nRow 4: R-3 | Requirement 3 | M\nRow 5: R-4 | Requirement 4 | M');
+    expect(parts[2]).toContain('Row 6: R-5');
+  });
+
+  it('keeps a part near a printed page of text, however few rows fill it', () => {
+    const long = 'x'.repeat(PART_CHARS - 100);
+    const parts = workbookToParts({ Notes: [['A'], [long], [long]] });
+    expect(parts).toHaveLength(2);
+  });
+
+  it('reads a spreadsheet in small ranges, and leaves hidden sheets out', async () => {
+    const book = writeWorkbook({ Matrix: [['ID', 'Requirement', 'Priority'], ['R-1', 'Reporting', 'M']], Lists: [['Y'], ['N']] });
+    const files = await unzip(book);
+    const workbookXml = new TextDecoder().decode(files['xl/workbook.xml']).replace(/(<sheet [^>]*name="Lists")/, '$1 state="hidden"');
+    const hidden = zipStored(Object.entries(files).map(([name, data]) => ({ name, data: name === 'xl/workbook.xml' ? workbookXml : data })));
+    const sheet = await prepareTenderFile('matrix.xlsx', hidden);
+    const text = new TextDecoder().decode(sheet.body);
+    expect(text).toContain('Row 2: R-1 | Reporting | M');
+    /* the dropdown values behind a hidden sheet are the workbook's plumbing, not the tender */
+    expect(text).not.toContain('Lists');
+    expect(sheet.span).toBe(SHEET_SPAN);
+  });
+
+  it('refuses a spreadsheet with nothing in it', () => {
+    expect(() => preparedSheet('blank.xlsx', { Sheet1: [['', '']] })).toThrow('no filled cells');
+  });
+});
+
+describe('reading a CSV file', () => {
+  it('keeps commas, quotes and line breaks that sit inside a quoted cell', () => {
+    expect(csvToRows('ID,Requirement\r\nR-1,"Export grades, nightly"\nR-2,"The ""gold"" tier\nand the rest"\n')).toEqual([
+      ['ID', 'Requirement'],
+      ['R-1', 'Export grades, nightly'],
+      ['R-2', 'The "gold" tier\nand the rest']
+    ]);
+  });
+
+  it('takes a semicolon or a tab as the separator when the first line uses one', () => {
+    /* Excel writes semicolons where the comma is the decimal mark */
+    expect(csvToRows('\uFEFFID;Requirement;Weight\nR-1;Reporting;1,5')).toEqual([
+      ['ID', 'Requirement', 'Weight'],
+      ['R-1', 'Reporting', '1,5']
+    ]);
+    expect(csvToRows('ID\tRequirement\nR-1\tReporting')).toEqual([
+      ['ID', 'Requirement'],
+      ['R-1', 'Reporting']
+    ]);
+  });
+
+  it('reads a CSV as a spreadsheet, not as prose', async () => {
+    const sheet = await prepareTenderFile('Matrix.csv', new TextEncoder().encode('ID,Requirement,Priority\nR-1,Reporting,M\n'));
+    expect(new TextDecoder().decode(sheet.body)).toBe('[[Part 1]]\n## Sheet: Matrix\nColumns (row 1): ID | Requirement | Priority\nRow 2: R-1 | Reporting | M');
+    expect(sheet.span).toBe(SHEET_SPAN);
   });
 });
 

@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 775 tests across twenty-one files.
+`bun run test` runs 812 tests across twenty-one files.
 
 | File | Covers |
 |---|---|
@@ -166,9 +166,9 @@ reference.
 | `tests/team.test.ts` | the team composition: role and seniority from the rate card, people and weeks from the plan |
 | `tests/mail.test.ts` | the desk emails and the clipboard fallback |
 | `tests/format.test.ts` | money, hours, dates, the plain-text quote |
-| `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges, desk drafts |
+| `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, desk drafts |
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
-| `tests/tenderFiles.test.ts` | turning PDF, Word, Excel and text tenders into uploads |
+| `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
 | `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load |
 
 ### Coverage
@@ -177,13 +177,13 @@ reference.
 
 | | |
 |---|---|
-| Statements | 97.2% |
-| Lines | 98.4% |
-| Functions | 98.4% |
-| Branches | 86.9% |
+| Statements | 97.3% |
+| Lines | 98.5% |
+| Functions | 98.5% |
+| Branches | 87.4% |
 
-The thresholds in `vitest.config.ts` are floors: 96% statements, 86% branches, 98% functions and
-98% lines, each set just under the figures above when the bundles and estimates import landed. A change that
+The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
+98% lines, each set just under the figures above when the tender reading plan landed. A change that
 drops coverage below them fails the run. Raise them when you can. Do not lower them to make a
 change pass.
 
@@ -449,7 +449,29 @@ The spreadsheets hold real deal names, client names and pricing.
   tender is untrusted input and can contain instructions aimed at the model.
 - `server/ai/prompts.ts`: every call sends the same system prompt and tools, with the tender
   documents first, so the fit call and every extraction call share one cached copy of the tender.
-  Changing any of those per call re-bills the whole tender on every range.
+  Changing any of those per call re-bills the whole tender on every range, and so does an effort
+  or thinking setting that differs between calls (`EDLY_AI_EFFORT` is one setting for all of them).
+  The documents go in `readingOrder`, converted text before PDFs, with a cache marker at each
+  document's end, and an extraction call carries only the documents up to the one it reads: keep
+  that order identical in every call, or a spreadsheet range pays for the PDF again. The cache is
+  five minutes, not an hour, and `keepWarm` bridges the wait on the fit screen: it must send
+  exactly what the fit call cached (model, thinking, effort, tools, system, documents), or it writes
+  an entry nothing reads. `tests/tenderApi.test.ts` compares the two requests.
+- **Legal boilerplate is not extracted.** Insurance, liability, payment, IP and the like, and bid
+  paperwork, are left out by the extraction prompt; `outOfScope` is for work that is not software
+  but costs money (hardware, staff on site, vetting). Settled on 2026-09-28 when the user asked for
+  the legal clauses to be dealt with, to spare the review list and the output tokens; a future
+  compliance matrix that needs them would read the tender again.
+- **Skipping is safe only because it errs towards reading.** `readFit` skips a section only on an
+  explicit `true`; `readRuns` reads a page any unskipped section claims, a page no section claims,
+  and a page of margin either side of a skipped stretch (not in spreadsheets, whose sheets start
+  parts of their own). A requirement lost to a skipped page underprices a bid; an extra page read
+  costs almost nothing. Keep all three, and keep the person able to change the plan before and
+  after (the fit screen, and `readSection` on the requirements step).
+- **A spreadsheet is read in rows, not pages.** `workbookToParts` keeps each row's number, repeats
+  the Columns line on every continued part, and starts each sheet on a new part; its document
+  carries `span` (3 parts of 20 rows). A requirements matrix at the usual 20 parts a range ran past
+  the time limit, was billed and thrown away, then split and read again.
 - **Relative imports in `api/`, `server/` and the `src/` files they load end in `.js`.** Vercel runs
   them under Node, which refuses a bare `'./schema'`, and the whole API then answers with
   FUNCTION_INVOCATION_FAILED. Nothing local notices; `tests/deploy.test.ts` does.
@@ -568,6 +590,16 @@ everything else waiting on a server, are in DEFERRED.md.
     from another tab, or from storage at boot counts as already written, so it is never echoed
     back. Keep all three if you touch the persist effect; the two-tab browser drive is what
     caught them.
+15. **Read a clean requirements matrix without the AI.** A sheet whose Columns line names an ID,
+    a requirement and a priority (MoSCoW or must/should) can be turned into requirements in the
+    browser, with no extraction call at all; the AI would still match them. That is most of a
+    matrix-heavy tender's extraction cost and time. Needs a decision on how sure the header
+    match must be before the AI is skipped, and a fallback to the AI when it is not.
+16. **Send each extraction call only its own pages of a PDF.** Every call now carries the whole
+    PDF from cache, at a twentieth of the price on Opus 5.5; splitting the PDF would make each call carry its
+    own pages at full price, and lift the 600-page limit on one request. Needs a PDF library (a
+    new dependency, so ask) or a hand-written page splitter, which real-world PDFs make hard.
+    Measure first: with caching working, it may not be cheaper.
 
 ---
 

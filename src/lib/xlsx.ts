@@ -351,8 +351,11 @@ const columnIndex = (ref: string): number => {
   return n - 1;
 };
 
-/** Read a workbook into `{ sheetName: rows }`, row 0 being the first row. */
-export async function readWorkbook(input: ArrayBuffer | Uint8Array): Promise<Workbook> {
+/**
+ * Read a workbook into `{ sheetName: rows }`, row 0 being the first row. `skipHidden` leaves out
+ * sheets hidden in Excel; the catalog import reads every sheet, so it is off unless asked for.
+ */
+export async function readWorkbook(input: ArrayBuffer | Uint8Array, options: { skipHidden?: boolean } = {}): Promise<Workbook> {
   const files = await unzip(input);
   const text = (key: string): string => (files[key] ? decoder.decode(files[key]) : '');
   const sst = sharedStrings(text('xl/sharedStrings.xml'));
@@ -366,10 +369,11 @@ export async function readWorkbook(input: ArrayBuffer | Uint8Array): Promise<Wor
   }
 
   const out: Workbook = {};
-  const sheetRe = /<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g;
+  const sheetRe = /<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*>/g;
   const workbookXml = text('xl/workbook.xml');
   let sheetMatch: RegExpExecArray | null;
   while ((sheetMatch = sheetRe.exec(workbookXml))) {
+    if (options.skipHidden && /\sstate="(hidden|veryHidden)"/.test(sheetMatch[0])) continue;
     const target = rels[sheetMatch[2]!];
     if (!target) continue;
     const path = `xl/${target.replace(/^\/?xl\//, '')}`;

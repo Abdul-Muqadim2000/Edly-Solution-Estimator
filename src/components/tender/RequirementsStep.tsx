@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import type { RequirementPriority, Tender, TenderDocument, TenderRequirement } from '@/types';
 import type { Action } from '@/state/reducer';
 import { docRefs, type TenderRunner } from '@/state/useTenderRunner';
-import { rangeLabel, sourceLabel, tenderCounts } from '@/domain/tender';
+import { rangeLabel, sectionPages, skippedSections, sourceLabel, tenderCounts } from '@/domain/tender';
 import { plural } from '@/lib/format';
 import { color, font, radius } from '@/theme';
 import { Banner, Button, Empty, Field, Mono, Row, SearchInput, Select, Spacer, TextArea } from '@/components/ui';
@@ -200,7 +200,7 @@ export function RequirementsStep({
       if (filter === 'removed' && req.status !== 'removed') return false;
       if (filter === 'out' && (!req.outOfScope || req.status === 'removed')) return false;
       if (!needle) return true;
-      return `${req.id} ${req.text} ${req.section} ${req.quote}`.toLowerCase().includes(needle);
+      return `${req.id} ${req.ref ?? ''} ${req.text} ${req.section} ${req.quote}`.toLowerCase().includes(needle);
     });
   }, [tender.reqs, filter, query]);
 
@@ -231,6 +231,7 @@ export function RequirementsStep({
   };
 
   const failed = tender.ranges.filter((range) => range.status === 'failed');
+  const skipped = skippedSections(tender);
   /* running in any tab, not just this one: a claim is shared through storage */
   const active = tender.ranges.filter((range) => range.status === 'running' || runner.running.has(range.key));
 
@@ -259,6 +260,32 @@ export function RequirementsStep({
               </Button>
             </Row>
           ))}
+        </div>
+      ) : null}
+
+      {skipped.length > 0 ? (
+        <div style={{ fontSize: 12, color: color.muted, lineHeight: 1.6, border: `1px solid ${color.hairline}`, borderRadius: radius.md, padding: '10px 14px' }}>
+          <span style={{ fontWeight: 600, color: color.body }}>Not read for requirements</span>, because they hold nothing to build, host, support or
+          provide:
+          {/* wrapped rather than a row each, so a long tender's list does not push the requirements down the page */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 22, rowGap: 4, marginTop: 6 }}>
+            {skipped.map(({ index, section }) => (
+              <span key={index} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+                <span style={{ color: color.body, overflowWrap: 'anywhere' }}>
+                  {section.title}{' '}
+                  <Mono size={11} tone={color.faint}>
+                    {tender.docs.length > 1 ? `${tender.docs.find((doc) => doc.n === section.doc)?.name ?? ''}, ` : ''}
+                    {sectionPages(section, tender.docs)}
+                  </Mono>
+                </span>
+                {!filesGone ? (
+                  <TextButton onClick={() => dispatch({ type: 'readSection', id: tender.id, index })} title={`Read ${section.title} for requirements too`}>
+                    Read it too
+                  </TextButton>
+                ) : null}
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
 

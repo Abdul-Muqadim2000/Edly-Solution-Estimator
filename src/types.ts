@@ -364,6 +364,12 @@ export interface TenderDocument {
   bytes: number;
   /** Pages of a PDF, or parts of converted text. 0 when not yet counted. */
   pages: number;
+  /**
+   * Parts one extraction call reads, when fewer than the usual `RANGE_PAGES`. A converted
+   * spreadsheet holds a requirement on almost every row, so a normal range is more than one call
+   * can answer before the function's time limit. Missing on documents and tenders that predate it.
+   */
+  span?: number;
   /** Files API id. Blank once the file has been deleted at Anthropic. */
   fileId: string;
   /** When Anthropic deletes the file regardless, ISO timestamp. */
@@ -376,6 +382,12 @@ export interface TenderSection {
   title: string;
   from: number;
   to: number;
+  /**
+   * Not read for requirements: the AI found nothing here to build, host, support or provide (a
+   * cover, bid instructions, scoring, blank forms, standard legal terms). A person can have it
+   * read after all.
+   */
+  skip?: boolean;
 }
 
 export type Confidence = 'high' | 'medium' | 'low';
@@ -450,8 +462,14 @@ export interface TenderRequirement {
   text: string;
   /** The tender's own wording, so the desk and the bid team can check the paraphrase. */
   quote: string;
+  /**
+   * The tender's own reference for it, as printed: a requirement ID or clause number, or a sheet
+   * and row. It is what the bid team answers against, and in a converted spreadsheet it is the only
+   * location a person can find again. Missing when the tender gives none.
+   */
+  ref?: string;
   priority: RequirementPriority;
-  /** Hardware, insurance, contract terms: obligations that are not software delivery. */
+  /** Hardware, staff on site, vetting: obligations that are not software delivery but cost money to meet. */
   outOfScope: boolean;
   status: RequirementStatus;
   /** Added or reworded by a person. */

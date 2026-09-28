@@ -1047,6 +1047,24 @@ describe('tenders', () => {
     expect(tender(narrow).ranges[0]?.error).toContain('by hand');
   });
 
+  it('leaves out what the fit step skipped, and reads it when a person asks', () => {
+    const outline = [
+      { doc: 1, title: 'Scope', from: 1, to: 24 },
+      { doc: 1, title: 'Pricing forms', from: 25, to: 30, skip: true }
+    ];
+    const created = run(workspace(), { type: 'createTender', id: 'TND-1', input: { ...input, outline } });
+    /* 25 is the margin page; 26 to 30 are not read */
+    expect(tender(created).ranges.map((range) => range.key)).toEqual(['1:1-20', '1:21-25']);
+
+    const asked = run(created, { type: 'readSection', id: 'TND-1', index: 1 });
+    expect(tender(asked).outline[1]).toEqual({ doc: 1, title: 'Pricing forms', from: 25, to: 30 });
+    expect(tender(asked).ranges.slice(2)).toEqual([{ key: '1:26-30', doc: 1, from: 26, to: 30, status: 'pending' }]);
+    /* asking twice, or for a section that is read already, queues nothing: each call is paid for */
+    expect(run(asked, { type: 'readSection', id: 'TND-1', index: 1 })).toBe(asked);
+    expect(run(created, { type: 'readSection', id: 'TND-1', index: 0 })).toBe(created);
+    expect(run(created, { type: 'readSection', id: 'TND-1', index: 7 })).toBe(created);
+  });
+
   it('approves, removes and restores requirements in bulk', () => {
     const approved = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01', 'R-02'], status: 'approved' });
     expect(tender(approved).reqs.filter((req) => req.status === 'approved').map((req) => req.id)).toEqual(['R-01', 'R-02']);

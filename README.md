@@ -255,7 +255,7 @@ It needs one variable on the server:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...     # from console.anthropic.com; never sent to the browser
-EDLY_AI_MODEL=                   # optional, defaults to claude-opus-5
+EDLY_AI_MODEL=                   # optional, defaults to claude-opus-5-5
 ```
 
 Before you set the key on a public deployment, turn on Vercel Authentication (or put an SSO proxy

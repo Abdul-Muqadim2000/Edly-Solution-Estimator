@@ -12,8 +12,8 @@ import {
 } from '../../src/domain/tender.js';
 import type { RequirementMatch, TenderTokens } from '../../src/types.js';
 import { record, text as str, whole as int } from '../../src/lib/narrow.js';
-import { AiError, aiModel, anthropic, callDeadlineMs, FILE_TTL_SECONDS, TENDER_FILE_PREFIX, toAiError, tokensOf } from './anthropic.js';
-import { catalogText, documentBlocks, extractInstruction, fitInstruction, matchInstruction, SYSTEM, TOOLS, type ToolName } from './prompts.js';
+import { AiError, aiEffort, aiModel, anthropic, callDeadlineMs, FILE_TTL_SECONDS, TENDER_FILE_PREFIX, toAiError, tokensOf } from './anthropic.js';
+import { catalogText, documentBlocks, extractInstruction, fitInstruction, KEEP_WARM_TEXT, matchInstruction, SYSTEM, TOOLS, type ToolName } from './prompts.js';
 
 /**
  * The tender operations, each one call to Claude.
@@ -114,12 +114,14 @@ async function callTool(tool: ToolName, content: Anthropic.Beta.BetaContentBlock
   /* what has streamed so far, read if the call fails part way */
   let partial: (() => Parameters<typeof tokensOf>[0]) | undefined;
   let tokens: TenderTokens | undefined;
+  const effort = aiEffort();
   try {
     const stream = client.beta.messages.stream(
       {
         model: aiModel(),
         max_tokens: 64000,
         thinking: { type: 'adaptive' },
+        output_config: { effort },
         system: SYSTEM,
         tools: TOOLS,
         messages: [{ role: 'user', content }],
@@ -209,6 +211,35 @@ export async function discardDocuments(fileIds: readonly string[]): Promise<{ de
   };
 }
 
+/**
+ * Keeps the tender's cache alive while a person decides on the platform, for a twentieth of the
+ * tender's price on Opus 5.5 (a tenth on Opus 5) instead of writing it again at 1.25 times.
+ *
+ * `max_tokens: 0` runs the prompt and stops before answering, so no output is billed. Everything
+ * that is part of the cached prompt matches the real calls exactly (model, thinking, effort, tools,
+ * system, documents and their markers); a different one would write a second entry nothing reads.
+ * Not streamed, because the API refuses `max_tokens: 0` on a stream.
+ */
+export async function keepWarm(docs: readonly DocRef[]): Promise<{ tokens: TenderTokens }> {
+  const client = anthropic();
+  try {
+    const message = await client.beta.messages.create({
+      model: aiModel(),
+      max_tokens: 0,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: aiEffort() },
+      system: SYSTEM,
+      tools: TOOLS,
+      messages: [{ role: 'user', content: [...documentBlocks(docs), { type: 'text', text: KEEP_WARM_TEXT }] }],
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default'
+    });
+    return { tokens: tokensOf(message.usage) };
+  } catch (error) {
+    throw toAiError(error);
+  }
+}
+
 export async function fitTender(docs: readonly DocRef[], platforms: readonly PlatformDigest[]): Promise<{ result: FitResult; tokens: TenderTokens }> {
   if (platforms.length === 0) throw new AiError('bad_request', 'No platforms were sent to choose from.', 400);
   const { input, tokens } = await callTool('report_fit', [...documentBlocks(docs), { type: 'text', text: fitInstruction(platforms, docs) }]);
@@ -229,7 +260,7 @@ export async function extractRange(
   const doc = docs.find((one) => one.n === range.doc);
   if (!doc) throw new AiError('bad_request', `There is no document ${range.doc} in this tender.`, 400);
   const { input, tokens } = await callTool('report_requirements', [
-    ...documentBlocks(docs),
+    ...documentBlocks(docs, doc.n),
     { type: 'text', text: extractInstruction(doc, range.from, range.to) }
   ]);
   return { found: readRequirements(input, range, doc.pages), tokens };
