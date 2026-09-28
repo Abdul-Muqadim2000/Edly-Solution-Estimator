@@ -11,6 +11,7 @@ import {
   guessBundle,
   kindCounts,
   mergeCatalogs,
+  nextBundleId,
   solutionKind,
   subCategories,
   toSolution
@@ -277,6 +278,26 @@ describe('catalog composition', () => {
     expect(composed.bundles[0]?.items[1]?.status).toBe('Estimation');
   });
 
+  it('lists a bundle once when the sheet and the app both use its number, and the sheet keeps it', () => {
+    /* bundles made here continue the sheet's B numbers, so a sheet that later adds the same
+       number would otherwise show the bundle twice, with every estimate filed under it in both */
+    const composed = composeCatalog({
+      base,
+      platform: 'openedx',
+      added: [
+        {
+          id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Offline app', desc: '',
+          first: 20, repeat: 6, form: '', deploy: '', integrations: '', category: '', subCategory: '',
+          account: '', notes: '', from: '', estAt: ''
+        }
+      ],
+      ownBundles: [{ id: 'B01', plat: 'openedx', name: 'Mobile Apps', pitch: '', offerWhen: '', pairsWith: null, at: '' }]
+    });
+    expect(composed.bundles.map((bundle) => bundle.id)).toEqual(['B01']);
+    expect(composed.bundles[0]?.name).toBe('Bundle one');
+    expect(allSolutions(composed).filter((one) => one.id === 'CS-01')).toHaveLength(1);
+  });
+
   it('keeps additions whose bundle is gone, rather than dropping them', () => {
     const composed = composeCatalog({
       base,
@@ -353,6 +374,31 @@ describe('nextId', () => {
     expect(nextId('RQ', [{ id: 'RQ-01' }, { id: 'RQ-07' }], 'id')).toBe('RQ-08');
     expect(nextId('CS', [], 'id')).toBe('CS-01');
     expect(nextId('CB', [{ id: 'other' }], 'id')).toBe('CB-01');
+  });
+});
+
+describe('the next bundle number', () => {
+  it('continues after the highest B number, so a bundle made here follows the sheet\'s own', () => {
+    expect(nextBundleId(['B01', 'B02', 'B15'])).toBe('B16');
+  });
+
+  it('never hands out a gap, so a link to a retired bundle cannot open a different one', () => {
+    expect(nextBundleId(['B01', 'B03'])).toBe('B04');
+  });
+
+  it('is not moved by the CB numbers bundles were given before, or by Unassigned', () => {
+    expect(nextBundleId(['B15', 'CB-01', 'CB-07', 'CX'])).toBe('B16');
+    expect(nextBundleId(['CB-03'])).toBe('B01');
+    expect(nextBundleId([])).toBe('B01');
+  });
+
+  it('reads a lower-case or unpadded number as the same one', () => {
+    expect(nextBundleId(['b7', 'B09'])).toBe('B10');
+  });
+
+  it('keeps two digits, like the sheet, and goes on past B99', () => {
+    expect(nextBundleId(['B07'])).toBe('B08');
+    expect(nextBundleId(['B99'])).toBe('B100');
   });
 });
 

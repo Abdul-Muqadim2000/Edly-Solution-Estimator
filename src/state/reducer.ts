@@ -40,6 +40,7 @@ import {
 } from '@/domain/tender';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
 import { planEstimateImport, type EstimateRow } from '@/domain/estimateImport';
+import { nextBundleId } from '@/domain/catalog';
 import type { ImportReview } from '@/domain/importReview';
 import { nextId, today, uniqueSlug } from '@/lib/format';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
@@ -263,7 +264,7 @@ export type Action =
   | { type: 'addSolution'; input: NewSolutionInput }
   | { type: 'removeSolution'; id: string }
   | { type: 'setSolutionNotes'; id: string; notes: string }
-  | { type: 'addBundle'; name: string; pitch: string; offerWhen: string }
+  | { type: 'addBundle'; name: string; pitch: string; offerWhen: string; catalogBundleIds: readonly string[] }
   | { type: 'removeBundle'; id: string }
   /** `catalogBundles`: the bundles on screen when the person clicked, which rows are filed under.
       `review`: what the person approved, renamed and moved; without one, everything as proposed. */
@@ -775,7 +776,7 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'addBundle': {
       const bundle: AddedBundle = {
-        id: nextId('CB', state.bundles, 'id'),
+        id: nextBundleId([...action.catalogBundleIds, ...state.bundles.map((one) => one.id)]),
         plat: platOf(state),
         name: action.name,
         pitch: action.pitch,

@@ -1,5 +1,5 @@
 import type { AddedBundle, AddedSolution } from '@/types';
-import { CX_BUNDLE_ID, nameKey, UNASSIGNED_NAME } from '@/domain/catalog';
+import { CX_BUNDLE_ID, nameKey, nextBundleId, UNASSIGNED_NAME } from '@/domain/catalog';
 import {
   followGroups,
   LEFT_OUT,
@@ -203,7 +203,7 @@ export function planEstimateImport(input: EstimateImportInput): EstimateImportPl
     const found = createdByName.get(key(name));
     if (found) return found;
     const bundle: AddedBundle = {
-      id: nextId('CB', [...input.bundles, ...createdBundles], 'id'),
+      id: nextBundleId([...input.catalogBundles, ...input.bundles, ...createdBundles].map((one) => one.id)),
       plat: platform,
       name,
       pitch: 'Priced by the estimation desk, not built yet.',

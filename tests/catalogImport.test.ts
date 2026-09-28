@@ -521,7 +521,7 @@ describe('the templates', () => {
     expect(read.issues).toEqual([]);
 
     const plan = planEstimateImport({ rows: read.rows, file: 'examples.xlsx', platform: 'openedx', catalogBundles: [{ id: 'B15', name: 'Platform Engineering & Integrations' }], solutions: [], bundles: [], today: '2026-09-27' });
-    expect(plan.added.map((one) => one.bundleId)).toEqual(['B15', 'CB-01', 'CX']);
+    expect(plan.added.map((one) => one.bundleId)).toEqual(['B15', 'B16', 'CX']);
     expect(plan.newBundles.map((one) => one.name)).toEqual(['Mobile Apps']);
   });
 
@@ -633,7 +633,7 @@ describe('the estimates preview', () => {
 
     expect(plan.added).toHaveLength(4);
     expect(plan.updated).toHaveLength(0);
-    expect(plan.newBundles).toEqual([{ id: 'CB-01', name: 'Mobile Apps', count: 2 }]);
+    expect(plan.newBundles).toEqual([{ id: 'B02', name: 'Mobile Apps', count: 2 }]);
     expect(plan.unassigned).toBe(1);
     /* "and" and "&" are the same bundle, so no second Commerce bundle appears */
     expect(plan.added[3]?.bundleId).toBe('B01');
@@ -651,7 +651,17 @@ describe('the estimates preview', () => {
       'Row 2 (Estimate 1): bundle B99 is not in this catalog, so it is filed by its area, Mobile Apps.',
       'Row 3 (Estimate 2): bundle B98 is not in this catalog, so it is filed under Unassigned.'
     ]);
-    expect(plan.added.map((one) => one.bundleId)).toEqual(['CB-01', 'CX']);
+    /* the B99 the row named is not taken as the new bundle's number: numbers are the app's to hand out */
+    expect(plan.added.map((one) => one.bundleId)).toEqual(['B02', 'CX']);
+  });
+
+  it('numbers new bundles after the catalog and after the bundles already made here', () => {
+    const made = [
+      { id: 'B02', plat: 'openedx', name: 'Proctoring', pitch: '', offerWhen: '', pairsWith: null, at: '' },
+      { id: 'CB-04', plat: 'openedx', name: 'Older', pitch: '', offerWhen: '', pairsWith: null, at: '' }
+    ];
+    const plan = planEstimateImport({ ...input, bundles: made, rows: [row(1, { area: 'Mobile Apps' }), row(2, { area: 'Gamification' })] });
+    expect(plan.newBundles.map((one) => one.id)).toEqual(['B03', 'B04']);
   });
 
   it('dates an estimate the day it is imported when the sheet gives no date', () => {

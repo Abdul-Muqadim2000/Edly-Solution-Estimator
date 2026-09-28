@@ -12,6 +12,23 @@ import type { AddedBundle, AddedSolution, Bundle, Catalog, CatalogTotals, Soluti
 export const CX_BUNDLE_ID = 'CX';
 export const UNASSIGNED_NAME = 'Unassigned estimates';
 
+/**
+ * The number for a bundle made in the app, by the desk or by an import: one past the highest B
+ * number in use, so it reads like the sheet's own (B16 after B15).
+ *
+ * `taken` is every id the platform's catalog shows plus every bundle made here. A gap is never
+ * filled: a link to a retired bundle must not open a different one. Bundles made before this
+ * numbering are CB-01, CB-02; they keep those ids and do not count.
+ */
+export function nextBundleId(taken: Iterable<string>): string {
+  let highest = 0;
+  for (const id of taken) {
+    const match = /^B(\d+)$/i.exec(id.trim());
+    if (match?.[1]) highest = Math.max(highest, Number(match[1]));
+  }
+  return `B${String(highest + 1).padStart(2, '0')}`;
+}
+
 /* ------------------------------------------------------ the two kinds */
 
 /**
@@ -125,7 +142,11 @@ export function composeCatalog({ base, platform, added, ownBundles }: ComposeInp
   const myBundles = ownBundles.filter((b) => (b.plat || 'openedx') === platform);
   if (mine.length === 0 && myBundles.length === 0) return base;
 
-  const shell: Bundle[] = [...base.bundles, ...myBundles.map(emptyBundle)];
+  /* A bundle made here takes the next B number, and the sheet can later add that number itself.
+     The sheet's bundle keeps the id, and what was filed under it shows there once: listed twice,
+     every estimate in it would count twice. */
+  const sheetIds = new Set(base.bundles.map((bundle) => bundle.id));
+  const shell: Bundle[] = [...base.bundles, ...myBundles.filter((bundle) => !sheetIds.has(bundle.id)).map(emptyBundle)];
 
   const bundles: Bundle[] = shell.map((bundle) => {
     const extra = mine.filter((a) => a.bundleId === bundle.id).map(toSolution);

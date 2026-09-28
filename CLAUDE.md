@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 814 tests across twenty-one files.
+`bun run test` runs 822 tests across twenty-one files.
 
 | File | Covers |
 |---|---|
@@ -177,10 +177,10 @@ reference.
 
 | | |
 |---|---|
-| Statements | 97.3% |
+| Statements | 97.4% |
 | Lines | 98.5% |
-| Functions | 98.5% |
-| Branches | 87.3% |
+| Functions | 98.6% |
+| Branches | 87.4% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -441,6 +441,11 @@ The spreadsheets hold real deal names, client names and pricing.
   estimate's notes when its row has none.
 - **Bundles and estimates never mix.** `solutionKind` decides which is which, estimates are violet
   everywhere, and the hero's client-facing stats count bundles only.
+- **A bundle made in the app takes the next B number** (`nextBundleId` in `domain/catalog.ts`),
+  B16 after the sheet's B15, whether the desk adds it or an import makes it from an Area. The user
+  chose this over the old CB-01 numbering on 2026-09-29, knowing the sheet can later add the same
+  number: `composeCatalog` then lists the sheet's bundle once and what was filed under the number
+  shows there. A gap is never refilled, and bundles already numbered CB keep their ids.
 - `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses.
 - **The AI only proposes.** No tool the model is given writes anything; every change to an
   estimation or the desk queue is a reducer action a person's click dispatches. Hours never come
