@@ -360,22 +360,27 @@ export async function readWorkbook(input: ArrayBuffer | Uint8Array, options: { s
   const text = (key: string): string => (files[key] ? decoder.decode(files[key]) : '');
   const sst = sharedStrings(text('xl/sharedStrings.xml'));
 
+  /*
+   * Attributes are read one by one from each tag, never as a sequence: XML gives them no order and
+   * writers differ. openpyxl puts Target before Id, and a reader that expected Id first found no
+   * sheets in a valid file. The relationship prefix on the sheet's id is the writer's choice too.
+   */
+  const attr = (tag: string, name: string): string | undefined => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
+
   const rels: Record<string, string> = {};
-  {
-    const re = /Id="([^"]+)"[^>]*?Target="([^"]+)"/g;
-    const xml = text('xl/_rels/workbook.xml.rels');
-    let match: RegExpExecArray | null;
-    while ((match = re.exec(xml))) rels[match[1]!] = match[2]!;
+  for (const [tag] of text('xl/_rels/workbook.xml.rels').matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = attr(tag, 'Id');
+    const target = attr(tag, 'Target');
+    if (id && target) rels[id] = target;
   }
 
   const out: Workbook = {};
-  const sheetRe = /<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*>/g;
-  const workbookXml = text('xl/workbook.xml');
-  let sheetMatch: RegExpExecArray | null;
-  while ((sheetMatch = sheetRe.exec(workbookXml))) {
-    if (options.skipHidden && /\sstate="(hidden|veryHidden)"/.test(sheetMatch[0])) continue;
-    const target = rels[sheetMatch[2]!];
-    if (!target) continue;
+  for (const [tag] of text('xl/workbook.xml').matchAll(/<sheet\b[^>]*>/g)) {
+    if (options.skipHidden && /\sstate="(hidden|veryHidden)"/.test(tag)) continue;
+    const name = attr(tag, 'name');
+    const id = attr(tag, '[\\w.-]+:id');
+    const target = id === undefined ? undefined : rels[id];
+    if (!name || !target) continue;
     const path = `xl/${target.replace(/^\/?xl\//, '')}`;
     const cells = sheetCells(text(path), sst);
     const table: SheetTable = [];
@@ -387,7 +392,7 @@ export async function readWorkbook(input: ArrayBuffer | Uint8Array, options: { s
       table[rowNumber - 1] = line;
     });
     for (let i = 0; i < table.length; i++) if (!table[i]) table[i] = [];
-    out[unescapeXml(sheetMatch[1]!)] = table;
+    out[unescapeXml(name)] = table;
   }
   return out;
 }
