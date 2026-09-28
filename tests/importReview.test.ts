@@ -70,9 +70,9 @@ describe('the estimates review', () => {
     expect(done.review.pending).toBe(0);
     expect(done.added.map((one) => [one.name, one.bundleId])).toEqual([
       ['Estimate 1', 'B15'],
-      ['Estimate 2', 'CB-01'],
-      ['Estimate 3', 'CB-01'],
-      ['Estimate 4', 'CB-02'],
+      ['Estimate 2', 'B16'],
+      ['Estimate 3', 'B16'],
+      ['Estimate 4', 'B17'],
       ['Estimate 5', 'CX'],
       ['Estimate 6', 'B09']
     ]);
@@ -113,7 +113,7 @@ describe('the estimates review', () => {
   it('makes one bundle of two new groups given the same name', () => {
     const done = plan(setGroup(approved(ALL), toNew('Gamification'), { name: 'Mobile Apps' }));
     expect(done.bundles.map((bundle) => bundle.name)).toEqual(['Mobile Apps']);
-    expect(done.added.filter((one) => one.bundleId === 'CB-01')).toHaveLength(3);
+    expect(done.added.filter((one) => one.bundleId === 'B16')).toHaveLength(3);
     expect(done.review.groups[2]?.note).toBe('Another new bundle in this file has the same name, so the two become one bundle.');
   });
 
@@ -130,7 +130,7 @@ describe('the estimates review', () => {
 
   it('merges one new group into another, and survives two sent into each other', () => {
     const merged = plan(setGroup(approved(ALL), toNew('Gamification'), { to: toNew('Mobile Apps') }));
-    expect(merged.added.find((one) => one.name === 'Estimate 4')?.bundleId).toBe('CB-01');
+    expect(merged.added.find((one) => one.name === 'Estimate 4')?.bundleId).toBe('B16');
 
     const loop = setGroup(setGroup(approved(ALL), toNew('Gamification'), { to: toNew('Mobile Apps') }), toNew('Mobile Apps'), { to: toNew('Gamification') });
     /* a loop must not hang the preview; each row still lands somewhere */

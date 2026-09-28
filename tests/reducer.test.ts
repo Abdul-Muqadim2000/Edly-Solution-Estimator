@@ -513,10 +513,21 @@ describe('requests and the estimation desk', () => {
     expect(reducer(priced, { type: 'setSolutionNotes', id: 'CS-99', notes: 'Anything' })).toBe(priced);
   });
 
-  it('adds and removes a custom bundle', () => {
-    const added = reducer(open, { type: 'addBundle', name: 'Compliance', pitch: 'SOC2', offerWhen: 'Enterprise' });
-    expect(added.bundles[0]).toMatchObject({ id: 'CB-01', name: 'Compliance', plat: 'openedx' });
-    expect(reducer(added, { type: 'removeBundle', id: 'CB-01' }).bundles).toHaveLength(0);
+  it("adds and removes a custom bundle, numbered after the catalog's last B number", () => {
+    const added = reducer(open, { type: 'addBundle', name: 'Compliance', pitch: 'SOC2', offerWhen: 'Enterprise', catalogBundleIds: ['B01', 'B15'] });
+    expect(added.bundles[0]).toMatchObject({ id: 'B16', name: 'Compliance', plat: 'openedx' });
+    expect(reducer(added, { type: 'removeBundle', id: 'B16' }).bundles).toHaveLength(0);
+  });
+
+  it('numbers the next bundle after the ones already made here, whatever older CB numbers there are', () => {
+    const older = { ...open, bundles: [{ id: 'CB-01', plat: 'openedx', name: 'Older', pitch: '', offerWhen: '', pairsWith: null, at: '' }] };
+    const twice = run(
+      older,
+      { type: 'addBundle', name: 'Compliance', pitch: '', offerWhen: '', catalogBundleIds: ['B01', 'B15'] },
+      { type: 'addBundle', name: 'Proctoring', pitch: '', offerWhen: '', catalogBundleIds: ['B01', 'B15'] }
+    );
+    /* the catalog passed in does not list the first one yet, and the second must still not reuse B16 */
+    expect(twice.bundles.map((bundle) => bundle.id)).toEqual(['CB-01', 'B16', 'B17']);
   });
 
   it('deletes a request', () => {
@@ -1343,8 +1354,9 @@ describe('importing estimates from a workbook', () => {
       row(4, { area: 'mobile apps' })
     ]);
 
-    expect(next.solutions.map((one) => one.bundleId)).toEqual(['B15', 'B01', 'CB-01', 'CB-01']);
-    expect(next.bundles).toEqual([expect.objectContaining({ id: 'CB-01', name: 'Mobile Apps', plat: 'openedx', imported: 'nordic.xlsx' })]);
+    /* the new bundle continues the catalog's B numbers: B15 is the last on screen */
+    expect(next.solutions.map((one) => one.bundleId)).toEqual(['B15', 'B01', 'B16', 'B16']);
+    expect(next.bundles).toEqual([expect.objectContaining({ id: 'B16', name: 'Mobile Apps', plat: 'openedx', imported: 'nordic.xlsx' })]);
   });
 
   it('puts a row with no bundle and no area in Unassigned, for the desk to file', () => {
@@ -1377,7 +1389,7 @@ describe('importing estimates from a workbook', () => {
     /* sheet row 3 (Estimate 2) was left out, the unassigned one was sent to B15, and Gamification
        was never approved, so neither it nor its bundle is saved */
     expect(next.solutions.map((one) => [one.name, one.bundleId])).toEqual([
-      ['Estimate 1', 'CB-01'],
+      ['Estimate 1', 'B16'],
       ['Estimate 3', 'B15']
     ]);
     expect(next.bundles.map((one) => one.name)).toEqual(['Mobile Learning']);
@@ -1417,10 +1429,11 @@ describe('undoing an import', () => {
   });
 
   it('keeps a bundle the import made once the desk has filed other work in it', () => {
-    const desk = reducer(state, { type: 'addSolution', input: { ...submission, bundleId: 'CB-02', name: 'Push notifications', desc: '', first: 12, repeat: 4 } });
+    const desk = reducer(state, { type: 'addSolution', input: { ...submission, bundleId: 'B16', name: 'Push notifications', desc: '', first: 12, repeat: 4 } });
     const next = reducer(desk, { type: 'removeImport', file: 'nordic.xlsx' });
 
-    expect(next.bundles.map((one) => one.id)).toEqual(['CB-01', 'CB-02']);
+    /* CB-01 is a bundle made before the B numbering, and sits alongside the import's B16 */
+    expect(next.bundles.map((one) => one.id)).toEqual(['CB-01', 'B16']);
   });
 
   it('leaves another platform\'s import of the same file alone', () => {

@@ -887,7 +887,13 @@ function AddToCatalog(): JSX.Element {
       return;
     }
     setBundleError('');
-    dispatch({ type: 'addBundle', name: bundle.name.trim(), pitch: bundle.pitch.trim(), offerWhen: bundle.offerWhen.trim() });
+    dispatch({
+      type: 'addBundle',
+      name: bundle.name.trim(),
+      pitch: bundle.pitch.trim(),
+      offerWhen: bundle.offerWhen.trim(),
+      catalogBundleIds: catalog.bundles.map((entry) => entry.id)
+    });
     setBundle({ name: '', pitch: '', offerWhen: '' });
     setBundleAdded(true);
     window.setTimeout(() => setBundleAdded(false), 2200);
