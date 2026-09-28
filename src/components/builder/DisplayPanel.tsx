@@ -21,7 +21,7 @@ const ROWS: ToggleRow[] = [
   { key: 'savings', label: 'Reuse savings & economics', sub: 'Savings pill, % bar, engineered hours' },
   { key: 'blendBuffer', label: 'Blend buffers into hours', sub: 'Buffers fold invisibly into each line' },
   { key: 'money', label: 'USD estimate', sub: 'Money total and rate field' },
-  { key: 'notes', label: 'Internal notes & references', sub: 'Catalog notes and source links' },
+  { key: 'notes', label: 'Internal notes & references', sub: 'How the catalog was compiled, and source links' },
   { key: 'controls', label: 'Estimation controls', sub: 'PM, QA, buffer and rate inputs' }
 ];
 

@@ -95,8 +95,7 @@ const submission = {
   category: 'Core Platform',
   subCategory: '',
   account: '',
-  limits: '',
-  note: 'Priced off the Zoom pattern',
+  notes: 'Assumes the client already holds a Zoom licence.',
   by: 'desk@edly.io'
 };
 
@@ -423,6 +422,28 @@ describe('requests and the estimation desk', () => {
     });
   });
 
+  it('gives the request and its catalog entry the same one Notes / Assumptions', () => {
+    const priced = run(open, { type: 'addManualItem', title: 'Custom SSO', hours: 0 }, { type: 'submitEstimate', id: 'RQ-01', submission });
+    expect(priced.requests[0]?.catNotes).toBe('Assumes the client already holds a Zoom licence.');
+    expect(priced.solutions[0]?.notes).toBe('Assumes the client already holds a Zoom licence.');
+  });
+
+  it('keeps no notes entry on a request the desk wrote none for, and clears one on a second estimate', () => {
+    const plain = run(
+      open,
+      { type: 'addManualItem', title: 'Custom SSO', hours: 0 },
+      { type: 'submitEstimate', id: 'RQ-01', submission: { ...submission, notes: '' } }
+    );
+    /* the way a request with no notes reads back from the sheet, so a reload is not a change */
+    expect(plain.requests[0]).not.toHaveProperty('catNotes');
+    expect(plain.solutions[0]?.notes).toBe('');
+
+    const noted = reducer(plain, { type: 'submitEstimate', id: 'RQ-01', submission });
+    const cleared = reducer(noted, { type: 'submitEstimate', id: 'RQ-01', submission: { ...submission, notes: '' } });
+    expect(cleared.requests[0]).not.toHaveProperty('catNotes');
+    expect(cleared.solutions[0]?.notes).toBe('');
+  });
+
   it('falls back to the first-delivery hours when the desk gives no repeat figure', () => {
     const priced = run(
       open,
@@ -464,6 +485,32 @@ describe('requests and the estimation desk', () => {
       input: { ...submission, name: 'Proctoring', desc: '', first: 30, repeat: 10 }
     });
     expect(next.solutions[0]).toMatchObject({ id: 'CS-01', direct: true, from: '', plat: 'openedx' });
+    expect(next.solutions[0]?.notes).toBe('Assumes the client already holds a Zoom licence.');
+  });
+
+  it("rewords an estimate's notes, and the copy on the request it was priced from with it", () => {
+    const priced = run(
+      open,
+      { type: 'addManualItem', title: 'Custom SSO', hours: 0 },
+      { type: 'addManualItem', title: 'Proctoring', hours: 0 },
+      { type: 'submitEstimate', id: 'RQ-01', submission }
+    );
+    const reworded = reducer(priced, { type: 'setSolutionNotes', id: 'CS-01', notes: '  Single sign-on through Azure AD only.\n' });
+    expect(reworded.solutions[0]?.notes).toBe('Single sign-on through Azure AD only.');
+    /* the request's own line in the sheet reads its copy, so a stale one would contradict the catalog */
+    expect(reworded.requests[0]?.catNotes).toBe('Single sign-on through Azure AD only.');
+    expect(reworded.requests[1]).toEqual(priced.requests[1]);
+
+    const cleared = reducer(reworded, { type: 'setSolutionNotes', id: 'CS-01', notes: ' ' });
+    expect(cleared.solutions[0]?.notes).toBe('');
+    expect(cleared.requests[0]).not.toHaveProperty('catNotes');
+  });
+
+  it('changes nothing for notes that are the same, or for an estimate that is gone', () => {
+    const priced = run(open, { type: 'addManualItem', title: 'Custom SSO', hours: 0 }, { type: 'submitEstimate', id: 'RQ-01', submission });
+    /* the same object back, so saving the unchanged notes does not trigger a save */
+    expect(reducer(priced, { type: 'setSolutionNotes', id: 'CS-01', notes: 'Assumes the client already holds a Zoom licence. ' })).toBe(priced);
+    expect(reducer(priced, { type: 'setSolutionNotes', id: 'CS-99', notes: 'Anything' })).toBe(priced);
   });
 
   it('adds and removes a custom bundle', () => {
@@ -636,7 +683,18 @@ describe('what goes in the Excel sheet', () => {
       expect(columns[id]).toBe(true);
     }
     expect(columns.solutionId).toBe(false);
-    expect(columns.internal).toBe(false);
+    /* Internal Notes went when the notes became one entry: its text is now the Notes/Assumptions */
+    expect(columns).not.toHaveProperty('internal');
+    expect(INITIAL_STATE.sheet.catalogNotes).toBe(true);
+  });
+
+  it("switches each solution's own notes off and back on without touching the columns", () => {
+    const off = reducer(open, { type: 'setSheet', catalogNotes: false });
+    expect(off.sheet.catalogNotes).toBe(false);
+    expect(off.sheet.columns).toEqual(INITIAL_STATE.sheet.columns);
+    /* a column change afterwards must not quietly switch them back on */
+    expect(reducer(off, { type: 'setSheet', columns: { item: true } }).sheet.catalogNotes).toBe(false);
+    expect(reducer(off, { type: 'setSheet', catalogNotes: true }).sheet.catalogNotes).toBe(true);
   });
 
   it('ticks and unticks one column without touching the others', () => {
@@ -683,12 +741,29 @@ describe('what goes in the Excel sheet', () => {
     expect(contactOnly.draft.sheet).toEqual({ contact: 'Jane' });
   });
 
-  it('removes a line note cleared to blank rather than storing an empty string', () => {
+  it('removes a line note cleared to blank when the line has no catalog text to fall back on', () => {
     const noted = reducer(open, { type: 'setLineNote', id: 'OX-1', note: 'Client supplies the logo files.' });
     expect(noted.draft.sheet?.notes).toEqual({ 'OX-1': 'Client supplies the logo files.' });
 
-    /* an empty string would print as a blank line above the caveats in the client's file */
+    /* blank is what the line prints anyway, so an entry would only be clutter in the deal */
     expect(reducer(noted, { type: 'setLineNote', id: 'OX-1', note: ' ' }).draft.sheet?.notes).toEqual({});
+  });
+
+  it("keeps an empty entry when a line with catalog text is cleared, so that text stays off this client's sheet", () => {
+    const cleared = reducer(open, { type: 'setLineNote', id: 'OX-1', note: '', catalogNote: 'Assumes AWS.' });
+    /* without the entry the line would print the catalog's text again, which is what was removed */
+    expect(cleared.draft.sheet?.notes).toEqual({ 'OX-1': '' });
+    expect(reducer(open, { type: 'setLineNote', id: 'OX-1', note: '   ', catalogNote: 'Assumes AWS.' }).draft.sheet?.notes).toEqual({ 'OX-1': '' });
+  });
+
+  it("stores this client's wording of a catalog note, and drops it once it reads the same as the catalog's", () => {
+    const reworded = reducer(open, { type: 'setLineNote', id: 'OX-1', note: 'Assumes Azure.', catalogNote: 'Assumes AWS.' });
+    expect(reworded.draft.sheet?.notes).toEqual({ 'OX-1': 'Assumes Azure.' });
+
+    /* "Use catalog text" sends the catalog's own words; the line then follows the catalog again */
+    const reset = reducer(reworded, { type: 'setLineNote', id: 'OX-1', note: 'Assumes AWS.', catalogNote: 'Assumes AWS.' });
+    expect(reset.draft.sheet?.notes).toEqual({});
+    expect(reducer(reworded, { type: 'setLineNote', id: 'OX-1', note: ' Assumes AWS. ', catalogNote: 'Assumes AWS.' }).draft.sheet?.notes).toEqual({});
   });
 
   it('keeps the other notes and the cover details when one note changes', () => {
@@ -1195,8 +1270,7 @@ const row = (n: number, over: Partial<EstimateRow> = {}): EstimateRow => ({
   deploy: '',
   integrations: '',
   account: '',
-  limits: '',
-  note: '',
+  notes: '',
   estBy: '',
   estAt: '',
   ...over

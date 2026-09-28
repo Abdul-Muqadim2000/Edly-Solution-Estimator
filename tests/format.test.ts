@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CURRENCIES, FX, hours, hours1, longDate, money, plural, rateLabel, today } from '../src/lib/format';
+import { CURRENCIES, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
 import { quoteText } from '../src/lib/quoteExport';
 import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { schedule } from '../src/domain/planner';
@@ -81,6 +81,22 @@ describe('hours', () => {
     expect(plural(3, 'week')).toBe('3 weeks');
     /* an import preview counts past a thousand, and "1203 estimates" reads as a code, not a count */
     expect(plural(1203, 'estimate')).toBe('1,203 estimates');
+  });
+});
+
+describe('one Notes / Assumptions entry from the parts older data kept apart', () => {
+  it('joins the parts on separate lines, first part first', () => {
+    expect(joinNotes('Single region only.', 'Assumes AWS.')).toBe('Single region only.\nAssumes AWS.');
+  });
+
+  it('drops blank parts, so one filled box reads as that box alone', () => {
+    expect(joinNotes('', '  Assumes AWS. ', null, undefined)).toBe('Assumes AWS.');
+    expect(joinNotes('', null)).toBe('');
+  });
+
+  it('keeps a sentence typed into both old boxes once', () => {
+    /* the desk often typed the same assumption as the catalog note and the note to sales */
+    expect(joinNotes('Assumes AWS.', ' Assumes AWS.')).toBe('Assumes AWS.');
   });
 });
 

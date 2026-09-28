@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SHEET,
+  lineNote,
   readSheetPrefs,
   SHEET_COLUMNS,
   sheetBlockers,
@@ -248,18 +249,37 @@ describe('what a line says about itself', () => {
   it('says which account a line needs, unless the account has a column of its own', () => {
     const said = build().lines.find((line) => line.key === 'OX-1');
     expect(said?.notes).toContain('Needs a client-held Stripe account. Vendor fees are payable by the client.');
-    expect(build({ accountNote: false }).lines.find((line) => line.key === 'OX-1')?.notes).toEqual([]);
+    expect(build({ accountNote: false }).lines.find((line) => line.key === 'OX-1')?.notes).toEqual(['Runs through the storefront plugin.']);
   });
 
-  it("keeps catalog and desk notes out of the client's notes", () => {
-    /* they are written for Edly; the Internal Notes column carries them only when ticked */
-    const { lines } = build({ requests: [request('RQ-01', { est: 8, estNote: 'Priced low to win it.' })] });
+  it("prints each solution's own Notes / Assumptions, from the catalog and the desk, before the caveats", () => {
+    const { lines } = build({ requests: [request('RQ-01', { est: 8, catNotes: 'Assumes the client hosts the webhook receiver.' })] });
     const stripe = lines.find((line) => line.key === 'OX-1');
     const custom = lines.find((line) => line.key === 'RQ-01');
-    expect(stripe?.notes.join(' ')).not.toContain('storefront');
-    expect(stripe?.internal).toEqual(['Runs through the storefront plugin.']);
-    expect(custom?.notes.join(' ')).not.toContain('Priced low');
-    expect(custom?.internal).toEqual(['Priced low to win it.']);
+    expect(stripe?.notes).toEqual(['Runs through the storefront plugin.', 'Needs a client-held Stripe account. Vendor fees are payable by the client.']);
+    expect(custom?.notes).toEqual(['Assumes the client hosts the webhook receiver.']);
+    /* the panel starts each line's box from this, whatever the sheet prints instead */
+    expect([stripe?.catalogNote, custom?.catalogNote]).toEqual(['Runs through the storefront plugin.', 'Assumes the client hosts the webhook receiver.']);
+    expect(lines.find((line) => line.key === 'OX-2')?.catalogNote).toBe('');
+  });
+
+  it("prints this client's wording in place of the catalog's, and nothing where sales cleared it", () => {
+    const reworded = build({ snapshot: snap({ sheet: { notes: { 'OX-1': 'Runs through the client’s own storefront.' } } }) }).lines.find((line) => line.key === 'OX-1');
+    /* replaced, not added to: an assumption wrong for this client must be able to go */
+    expect(reworded?.notes).toEqual(['Runs through the client’s own storefront.', 'Needs a client-held Stripe account. Vendor fees are payable by the client.']);
+    expect(reworded?.catalogNote).toBe('Runs through the storefront plugin.');
+
+    const cleared = build({ snapshot: snap({ sheet: { notes: { 'OX-1': '' } } }) }).lines.find((line) => line.key === 'OX-1');
+    expect(cleared?.notes).toEqual(['Needs a client-held Stripe account. Vendor fees are payable by the client.']);
+  });
+
+  it("leaves the catalog's notes off when the sheet says so, keeping this client's own and the caveats", () => {
+    const off = build({ catalogNotes: false, requests: [request('RQ-01', { est: 8, catNotes: 'Assumes the client hosts the webhook receiver.' })] }).lines;
+    expect(off.find((line) => line.key === 'OX-1')?.notes).toEqual(['Needs a client-held Stripe account. Vendor fees are payable by the client.']);
+    expect(off.find((line) => line.key === 'RQ-01')?.notes).toEqual([]);
+
+    const own = build({ catalogNotes: false, snapshot: snap({ sheet: { notes: { 'OX-1': 'Phase one only.' } } }) }).lines.find((line) => line.key === 'OX-1');
+    expect(own?.notes[0]).toBe('Phase one only.');
   });
 
   it('describes a tender-drafted request by its first paragraph only', () => {
@@ -305,6 +325,21 @@ describe('the choices sales makes', () => {
     }
   });
 
+  it("reads a saved Internal Notes choice as gone, and each solution's own notes as on unless switched off", () => {
+    /* Internal Notes carried the catalog and desk notes, which are now the Notes/Assumptions */
+    const saved = readSheetPrefs({ columns: { internal: true, notes: true } });
+    expect(saved.columns).not.toHaveProperty('internal');
+    expect(saved.catalogNotes).toBe(true);
+    expect(readSheetPrefs({ catalogNotes: false }).catalogNotes).toBe(false);
+    expect(readSheetPrefs({ catalogNotes: 'no' }).catalogNotes).toBe(true);
+  });
+
+  it("says each solution's own notes need the Notes/Assumptions column", () => {
+    const blocked = sheetBlockers(readSheetPrefs({ columns: { notes: false } }), { blendBuffer: false, planned: 1, assigned: 0 });
+    expect(blocked.catalogNotes).toBe('Needs the Notes/Assumptions column');
+    expect(sheetBlockers(DEFAULT_SHEET, { blendBuffer: false, planned: 1, assigned: 0 }).catalogNotes).toBeUndefined();
+  });
+
   it('keeps Component whatever was saved', () => {
     expect(readSheetPrefs({ columns: { component: false } }).columns.component).toBe(true);
   });
@@ -331,5 +366,22 @@ describe('the choices sales makes', () => {
     expect(sheetBlockers(DEFAULT_SHEET, { blendBuffer: false, planned: 3, assigned: 0 }).team).toBe('Assign roles to lines in Rates first');
     expect(sheetHas(DEFAULT_SHEET, { blendBuffer: false, planned: 3, assigned: 12 }, 'team')).toBe(true);
     expect(sheetHas(readSheetPrefs({ sections: { team: false } }), { blendBuffer: false, planned: 3, assigned: 12 }, 'team')).toBe(false);
+  });
+});
+
+describe("a line's Notes / Assumptions", () => {
+  it("is this client's own text when there is some, else the catalog's", () => {
+    expect(lineNote({ 'OX-1': ' Phase one only. ' }, 'OX-1', 'Assumes AWS.')).toBe('Phase one only.');
+    expect(lineNote({}, 'OX-1', ' Assumes AWS. ')).toBe('Assumes AWS.');
+    expect(lineNote(undefined, 'OX-1', null)).toBe('');
+  });
+
+  it("is blank when sales cleared it for this client, even though the catalog has text", () => {
+    expect(lineNote({ 'OX-1': '' }, 'OX-1', 'Assumes AWS.')).toBe('');
+  });
+
+  it("leaves the catalog's text out when the sheet carries none, but never this client's own", () => {
+    expect(lineNote({}, 'OX-1', 'Assumes AWS.', false)).toBe('');
+    expect(lineNote({ 'OX-1': 'Phase one only.' }, 'OX-1', 'Assumes AWS.', false)).toBe('Phase one only.');
   });
 });

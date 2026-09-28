@@ -17,6 +17,7 @@ import {
   type Aliases
 } from '@/lib/catalogSheet';
 import { estimateKey, type EstimateRow } from '@/domain/estimateImport';
+import { joinNotes } from '@/lib/format';
 import { sheetColor } from '@/theme';
 
 /**
@@ -211,22 +212,13 @@ export const ESTIMATE_COLUMNS: readonly TemplateColumn[] = [
     width: 16
   },
   {
-    field: 'limits',
-    label: 'Notes & limits',
+    field: 'notes',
+    label: 'Notes/Assumptions',
     need: 'optional',
-    help: 'Scope boundaries the next client must know. Shown in the catalog.',
-    example: 'Single region only.',
-    aliases: ['notes limits', 'notes and limits', 'limits'],
-    width: 30
-  },
-  {
-    field: 'note',
-    label: 'Assumptions',
-    need: 'optional',
-    help: 'Assumptions and exclusions, shown to sales as the estimator note.',
-    example: 'Assumes the client already runs on AWS.',
-    aliases: ['assumptions', 'notes assumptions', 'note to sales'],
-    width: 30
+    help: 'Scope limits, assumptions and exclusions, in one cell. Printed on the client’s task breakdown, so write it for the client. Leave it blank where there are none.',
+    example: 'Single region only. Assumes the client already runs on AWS.',
+    aliases: ['notes assumptions', 'notes and assumptions', 'notes limits', 'notes and limits', 'notes', 'note', 'limits'],
+    width: 36
   },
   { field: 'estBy', label: 'Estimated by', need: 'optional', help: 'Who priced it.', example: 'Estimation desk', aliases: ['estimated by'], width: 16 },
   {
@@ -240,7 +232,17 @@ export const ESTIMATE_COLUMNS: readonly TemplateColumn[] = [
   }
 ];
 
-const ESTIMATE_ALIASES: Aliases = Object.fromEntries(ESTIMATE_COLUMNS.map((column) => [column.field, column.aliases]));
+/**
+ * Headers the reader accepts that the template no longer writes. The first estimates template had
+ * Notes & limits and Assumptions as two columns; a file filled in on it still imports, with a
+ * row's two cells joined into its one Notes/Assumptions.
+ */
+const OLD_ESTIMATE_ALIASES: Aliases = { assumptions: ['assumptions', 'note to sales'] };
+
+const ESTIMATE_ALIASES: Aliases = {
+  ...Object.fromEntries(ESTIMATE_COLUMNS.map((column) => [column.field, column.aliases])),
+  ...OLD_ESTIMATE_ALIASES
+};
 const REQUIRED = ESTIMATE_COLUMNS.filter((column) => column.need === 'required');
 
 /* ------------------------------------------------------ what a file is */
@@ -457,6 +459,11 @@ export function checkBundles(workbook: Workbook): ImportIssue[] {
   for (const column of RECOMMENDED_ITEM) {
     if (!present.has(column.field)) warn(`No sheet has a ${column.label} column, so ${column.without}.`);
   }
+  /* Notes/Assumptions is optional: no word when a workbook has none, as the master sheet's
+     All Components does not. Only a second, separate Assumptions column is worth a note. */
+  if (present.has('notes') && present.has('assumptions')) {
+    note('Notes & limits and Assumptions are one field, Notes/Assumptions. Where a solution has both, they are joined, notes first.');
+  }
 
   const described = new Set<string>();
   if (catalogName) {
@@ -548,6 +555,13 @@ export function readEstimates(workbook: Workbook): { rows: EstimateRow[]; issues
   const unknown = (table[header.row] ?? []).map((value, index) => (mapped.has(index) ? '' : String(value ?? '').trim())).filter(Boolean);
   if (unknown.length > 0) warn(`${unknown.length === 1 ? 'A column was' : 'Columns were'} not recognised, so ${unknown.length === 1 ? 'it was' : 'they were'} ignored: ${quoted(unknown)}.`);
 
+  if (header.map.notes !== undefined && header.map.assumptions !== undefined) {
+    issues.push({
+      level: 'note',
+      text: 'Notes & limits and Assumptions are one column now, Notes/Assumptions. Where a row has both, they are joined, notes first.'
+    });
+  }
+
   const seen = new Map<string, number>();
   let dataRows = 0;
   let examples = 0;
@@ -620,8 +634,7 @@ export function readEstimates(workbook: Workbook): { rows: EstimateRow[]; issues
       deploy: get('deploy'),
       integrations: get('integrations'),
       account: get('account'),
-      limits: get('limits'),
-      note: get('note'),
+      notes: joinNotes(get('notes'), text(cell(line, header.map, 'assumptions'))),
       estBy: get('estBy'),
       estAt: estAt ?? ''
     };
@@ -690,8 +703,7 @@ const ESTIMATE_EXAMPLES: readonly Partial<Record<EstimateField, string | number>
     deploy: '1 week',
     integrations: 'GitHub Actions, AWS',
     account: 'AWS',
-    limits: 'Single region only.',
-    note: 'Assumes the client already runs on AWS. Bundle ID B15 files a row like this under Platform Engineering & Integrations in the Open edX catalog.',
+    notes: 'Single region only. Assumes the client already runs on AWS. Bundle ID B15 files a row like this under Platform Engineering & Integrations in the Open edX catalog.',
     estBy: 'Estimation desk',
     estAt: '2026-03-01'
   },
@@ -708,7 +720,7 @@ const ESTIMATE_EXAMPLES: readonly Partial<Record<EstimateField, string | number>
     deploy: '3 days',
     integrations: 'Firebase',
     account: 'Firebase',
-    note: 'An Area the catalog has no bundle for: a row like this gets a new Mobile Apps bundle.',
+    notes: 'An Area the catalog has no bundle for: a row like this gets a new Mobile Apps bundle.',
     estBy: 'Estimation desk',
     estAt: '2026-04-15'
   },
@@ -719,7 +731,7 @@ const ESTIMATE_EXAMPLES: readonly Partial<Record<EstimateField, string | number>
     first: 90,
     client: 'Acme Academy',
     category: 'Assessment',
-    note: 'No Area or Bundle ID: a row like this goes to Unassigned, and the estimation desk files it.'
+    notes: 'No Area or Bundle ID: a row like this goes to Unassigned, and the estimation desk files it.'
   }
 ];
 
@@ -795,6 +807,7 @@ const COMPONENT_COLUMNS: readonly { label: string; required?: boolean; width: nu
   { label: 'Original build hrs', width: 16 },
   { label: 'Std deployment time', width: 16 },
   { label: '3rd-party account', width: 16 },
+  { label: 'Notes/Assumptions', width: 36 },
   { label: 'Reference', width: 30 }
 ];
 
@@ -822,8 +835,8 @@ export function bundlesTemplate(): Uint8Array {
       { h: 26, cells: [{ v: 'All Components', s: TITLE }] },
       { cells: [] },
       headerRow(COMPONENT_COLUMNS),
-      exampleRow(['EXAMPLE', 'Mobile Apps (example)', 'EXAMPLE-1', 'Branded mobile app', 'Mobile', 'Custom Plugin', 'Production', 'The Open edX app in the client’s colours, published to both stores.', 40, 10, 320, '2 weeks', 'Apple, Google', '—']),
-      exampleRow(['EXAMPLE', 'Mobile Apps (example)', 'EXAMPLE-2', 'Offline downloads', 'Mobile', 'Custom Plugin', 'In Development', 'Learners download units to study offline. Not priced yet, so its hours are blank.', '', '', 200, 'Not recorded', '—', '—'])
+      exampleRow(['EXAMPLE', 'Mobile Apps (example)', 'EXAMPLE-1', 'Branded mobile app', 'Mobile', 'Custom Plugin', 'Production', 'The Open edX app in the client’s colours, published to both stores.', 40, 10, 320, '2 weeks', 'Apple, Google', 'Published under the client’s own Apple and Google developer accounts. Store review times are outside our control.', '—']),
+      exampleRow(['EXAMPLE', 'Mobile Apps (example)', 'EXAMPLE-2', 'Offline downloads', 'Mobile', 'Custom Plugin', 'In Development', 'Learners download units to study offline. Not priced yet, so its hours are blank.', '', '', 200, 'Not recorded', '—', '', '—'])
     ],
     widths: COMPONENT_COLUMNS.map((column) => column.width),
     freezeRows: 3,
@@ -837,6 +850,7 @@ export function bundlesTemplate(): Uint8Array {
         'Bundle Catalog: one row per bundle, with a Bundle ID such as B01 and its name. The pitch and "offer when" text are what sales reads out.',
         'All Components: one row per solution, with its Bundle ID, a Solution ID such as EDU-101 that no other solution uses, the Feature and its First-delivery hrs. Pink headers are required.',
         'Status is Production, or In Development for something not finished. Leave First-delivery hrs blank only for a solution nobody has priced yet: it shows as No estimate.',
+        'Notes/Assumptions is optional, one cell per solution: scope limits, assumptions and exclusions. It is printed on the client’s task breakdown, so write it for the client, and leave it blank where there are none.',
         'Optional: one sheet per bundle, named "B01 Commerce" and so on, with the same columns and Pitch:, "Offer when the client asks about:" and "Pairs well with:" lines above the header. It wins over All Components for the rows it lists.',
         'When adding this workbook to a catalog that already has bundles, use Bundle IDs the catalog does not use yet, or the same ID and name as the bundle you are adding to.',
         'The grey rows are an example bundle: its IDs start EXAMPLE, and the import always leaves them out. Delete them or keep them, and add your rows under them.'

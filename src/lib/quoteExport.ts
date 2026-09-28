@@ -134,7 +134,6 @@ const WIDTH: Record<SheetColumnId, number> = {
   deploy: 13,
   window: 14,
   notes: 40.25,
-  internal: 32,
   role: 18,
   rate: 12,
   build: 11,
@@ -333,7 +332,8 @@ export const sheetBreakdown = (input: SheetInput): Breakdown =>
     bundles: input.bundles,
     blendBuffer: input.blendBuffer,
     /* with its own column the account would be said twice on the same row */
-    accountNote: !sheetColumns(input.prefs, contextOf(input)).some((column) => column.id === 'account')
+    accountNote: !sheetColumns(input.prefs, contextOf(input)).some((column) => column.id === 'account'),
+    catalogNotes: input.prefs.catalogNotes
   });
 
 /* ------------------------------------------------------- shared pieces ---- */
@@ -493,8 +493,6 @@ function lineCell(column: SheetColumn, line: BreakdownLine, input: SheetInput): 
       return { v: windowLabel(line.window), s: S.center };
     case 'notes':
       return { v: line.notes.join('\n'), s: S.cell };
-    case 'internal':
-      return { v: line.internal.join('\n'), s: tweak(S.cell, { font: { italic: true } }) };
     case 'role':
       return { v: line.role || 'Blended', s: S.cell };
     case 'rate':
@@ -530,11 +528,9 @@ function lineHeight(columns: readonly SheetColumn[], line: BreakdownLine): numbe
           ? line.description
           : column.id === 'notes'
             ? line.notes.join('\n')
-            : column.id === 'internal'
-              ? line.internal.join('\n')
-              : column.id === 'form' || column.id === 'integrations' || column.id === 'account'
-                ? line[column.id]
-                : '';
+            : column.id === 'form' || column.id === 'integrations' || column.id === 'account'
+              ? line[column.id]
+              : '';
     if (value) wrapped.push({ value, width: WIDTH[column.id] });
   }
   return rowHeight(wrapped);

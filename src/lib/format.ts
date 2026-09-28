@@ -37,6 +37,20 @@ export function plural(n: number, word: string): string {
   return `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 }
 
+/**
+ * One Notes / Assumptions entry from the parts older data kept apart: "Notes & limits" and the
+ * desk's note or an "Assumptions" column. Blank parts are dropped, and a part repeated word for
+ * word is kept once: the desk often typed the same sentence into both of the old boxes.
+ */
+export function joinNotes(...parts: readonly (string | null | undefined)[]): string {
+  const kept: string[] = [];
+  for (const part of parts) {
+    const value = String(part ?? '').trim();
+    if (value && !kept.includes(value)) kept.push(value);
+  }
+  return kept.join('\n');
+}
+
 export function today(): string {
   return new Date().toISOString().slice(0, 10);
 }

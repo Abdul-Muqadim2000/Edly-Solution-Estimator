@@ -64,7 +64,7 @@ function importedRef(added: AddedSolution): string {
 
 /** A desk-added solution as a catalog row. */
 export function toSolution(added: AddedSolution): Solution {
-  const notes = [added.limits, added.note ? `Estimator note: ${added.note}` : null].filter(Boolean).join(' · ');
+  const notes = (added.notes ?? '').trim();
   return {
     id: added.id,
     name: added.name,

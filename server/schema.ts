@@ -10,7 +10,7 @@ import type {
   TenderStage
 } from '../src/types.js';
 import type { CellValue, SheetTable, WriteSheets, Workbook } from '../src/lib/xlsx.js';
-import { withSlugs } from '../src/lib/format.js';
+import { joinNotes, withSlugs } from '../src/lib/format.js';
 
 /**
  * The bridge between app state and spreadsheet rows.
@@ -41,10 +41,15 @@ export const COLUMNS = {
   ],
   /* `integrations` and `estimationName` came later, and so did the four columns after `direct`,
      which only an estimate imported from a workbook fills in. All are read by name and default
-     when absent, so a sheet written before them still loads. */
+     when absent, so a sheet written before them still loads.
+     `note` is the solution's Notes / Assumptions, its one note. A `limits` column used to sit
+     beside it and is no longer written; a row that still has one is joined into the note when
+     read. The column kept its name so a tab still running an older build reads the whole entry
+     as its note rather than dropping it. `note` on Requests, and `catLimits` in its extraJson,
+     work the same way. */
   solutions: [
     'id', 'plat', 'bundleId', 'name', 'description', 'firstHours', 'repeatHours', 'form', 'deploy',
-    'integrations', 'category', 'subCategory', 'account', 'limits', 'note', 'fromRequest', 'estimationName',
+    'integrations', 'category', 'subCategory', 'account', 'note', 'fromRequest', 'estimationName',
     'addedOn', 'direct', 'importedFrom', 'sourceId', 'client', 'estimatedBy'
   ],
   bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn', 'importedFrom'],
@@ -120,11 +125,11 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       str(r.at),
       r.est !== undefined && r.est !== null ? Number(r.est) : '',
       r.repeatEst !== undefined && r.repeatEst !== null ? Number(r.repeatEst) : '',
-      str(r.csId), str(r.catBundle), str(r.estBy), str(r.estAt), str(r.estNote), str(r.tender), str(r.tenderReq),
+      str(r.csId), str(r.catBundle), str(r.estBy), str(r.estAt), str(r.catNotes), str(r.tender), str(r.tenderReq),
       toJson({
         manual: Boolean(r.manual),
         catForm: r.catForm, catDeploy: r.catDeploy, catInteg: r.catInteg,
-        catCategory: r.catCategory, catSub: r.catSub, catAccount: r.catAccount, catLimits: r.catLimits
+        catCategory: r.catCategory, catSub: r.catSub, catAccount: r.catAccount
       })
     ]);
   }
@@ -137,7 +142,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       s.first !== undefined && s.first !== null ? Number(s.first) : '',
       s.repeat !== undefined && s.repeat !== null ? Number(s.repeat) : '',
       str(s.form), str(s.deploy), str(s.integrations), str(s.category), str(s.subCategory), str(s.account),
-      str(s.limits), str(s.note), str(s.from), str(s.estName), str(s.estAt), s.direct ? 'yes' : '',
+      str(s.notes), str(s.from), str(s.estName), str(s.estAt), s.direct ? 'yes' : '',
       str(s.imported), str(s.sourceId), str(s.client), str(s.estBy)
     ]);
   }
@@ -248,7 +253,6 @@ export function sheetsToState(workbook: Workbook): PersistedState {
         email: r.email ?? '',
         org: r.org ?? '',
         at: r.submitted ?? '',
-        estNote: r.note ?? '',
         estBy: r.estimatedBy ?? '',
         estAt: r.estimatedOn ?? '',
         csId: r.catalogId ?? '',
@@ -263,10 +267,13 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       const repeat = num(r.repeatHours);
       if (repeat !== null) out.repeatEst = repeat;
       if (extra.manual) out.manual = true;
-      for (const key of ['catForm', 'catDeploy', 'catInteg', 'catCategory', 'catSub', 'catAccount', 'catLimits'] as const) {
+      for (const key of ['catForm', 'catDeploy', 'catInteg', 'catCategory', 'catSub', 'catAccount'] as const) {
         const value = extra[key];
         if (typeof value === 'string' && value) out[key] = value;
       }
+      /* an older row kept the desk's limits apart from its note; they are one entry now, limits first */
+      const notes = joinNotes(typeof extra.catLimits === 'string' ? extra.catLimits : '', r.note);
+      if (notes) out.catNotes = notes;
       return out;
     })
     .filter((r) => r.id);
@@ -287,8 +294,7 @@ export function sheetsToState(workbook: Workbook): PersistedState {
         category: r.category ?? '',
         subCategory: r.subCategory ?? '',
         account: r.account ?? '',
-        limits: r.limits ?? '',
-        note: r.note ?? '',
+        notes: joinNotes(r.limits, r.note),
         from: r.fromRequest ?? '',
         estAt: r.addedOn ?? '',
         direct: String(r.direct ?? '').toLowerCase() === 'yes'

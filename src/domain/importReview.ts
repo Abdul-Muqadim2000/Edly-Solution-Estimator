@@ -47,6 +47,8 @@ export interface ReviewRow {
   key: string;
   title: string;
   detail: string;
+  /** The Notes / Assumptions it will carry, so a person reads them before approving. Blank for none. */
+  notes: string;
   hours: number | null;
   /** The row's own destination, when moved. */
   to: string | null;

@@ -74,7 +74,7 @@ const catalog: Catalog = {
       accounts: null,
       pairsWith: null,
       items: [
-        solution('OX-1', 'Stripe Payments', 40, { account: 'Stripe', notes: 'Internal: patched build.' }),
+        solution('OX-1', 'Stripe Payments', 40, { account: 'Stripe', notes: 'Runs on a patched platform build.' }),
         solution('OX-2', 'Single sign-on', 60),
         solution('OX-3', 'Unpriced thing', null),
         solution('OX-4', 'Still building', 20, { status: 'In Development' })
@@ -269,12 +269,14 @@ describe('the numbers', () => {
   });
 
   it('folds the buffer into the line when blended, and does not list it', async () => {
-    /* OX-1 is 40 h with an 8 h line buffer and 10%: 52.8 h blended */
-    const blended = await breakdownText({ blendBuffer: true });
+    /* OX-1 is 40 h with an 8 h line buffer and 10%: 52.8 h blended. Its catalog notes are left
+       off so its Notes/Assumptions cell is one line, and the row reads as one line of text. */
+    const prefs = readSheetPrefs({ catalogNotes: false });
+    const blended = await breakdownText({ blendBuffer: true, prefs });
     expect(blended).toMatch(/Stripe Payments[^\n]*\| 52\.8 \|/);
     expect(blended).not.toContain('Risk buffer');
 
-    const apart = await breakdownText({ blendBuffer: false });
+    const apart = await breakdownText({ blendBuffer: false, prefs });
     expect(apart).toMatch(/Stripe Payments[^\n]*\| 40 \|/);
   });
 
@@ -318,9 +320,22 @@ describe('what unticking keeps out of the file', () => {
     expect(trimmed).toContain('Delivery Window');
   });
 
-  it('keeps catalog notes out unless Internal Notes is ticked', async () => {
-    expect(await breakdownText()).not.toContain('Internal: patched build.');
-    expect(await breakdownText({ prefs: readSheetPrefs({ columns: { internal: true } }) })).toContain('Internal: patched build.');
+  it("prints each solution's own Notes/Assumptions, and leaves them out when switched off", async () => {
+    expect(await breakdownText()).toContain('Runs on a patched platform build.');
+    expect(await breakdownText({ requests: [request({ est: 12, catNotes: 'Assumes weekly exports only.' })] })).toContain('Assumes weekly exports only.');
+    expect(await breakdownText({ prefs: readSheetPrefs({ catalogNotes: false }) })).not.toContain('Runs on a patched platform build.');
+    /* with the column unticked the text has nowhere to go, and no route into the file */
+    expect(await breakdownText({ prefs: readSheetPrefs({ columns: { notes: false } }) })).not.toContain('Runs on a patched platform build.');
+  });
+
+  it("prints this client's wording of a line's notes in place of the catalog's", async () => {
+    const text = await breakdownText({ snapshot: { ...snap, sheet: { notes: { 'OX-1': 'Runs on the client’s own build.' } } } });
+    expect(text).toContain('Runs on the client’s own build.');
+    expect(text).not.toContain('Runs on a patched platform build.');
+  });
+
+  it('has no Internal Notes column any more, even for someone who had it ticked', async () => {
+    expect(await headers({ prefs: readSheetPrefs({ columns: { internal: true } }) })).not.toContain('Internal Notes');
   });
 
   it('drops the Introduction, the Delivery Plan and the terms when they are unticked', async () => {

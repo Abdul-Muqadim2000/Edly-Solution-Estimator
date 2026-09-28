@@ -109,20 +109,52 @@ function Group({ title, action, children }: { title: string; action?: ReactNode;
   );
 }
 
-function NoteInput({ item, name, value, onChange }: { item: string; name: string; value: string; onChange: (value: string) => void }): JSX.Element {
+/**
+ * One line's Notes/Assumptions for this client. It starts as the solution's own text, from the
+ * catalog or the desk; what sales types replaces that on this deal's sheet only.
+ */
+function NoteInput({
+  item,
+  name,
+  value,
+  fallback,
+  changed,
+  onChange,
+  onReset
+}: {
+  item: string;
+  name: string;
+  value: string;
+  /** What the line prints with nothing written for this client. */
+  fallback: string;
+  /** Sales has written this client's own text for the line. */
+  changed: boolean;
+  onChange: (value: string) => void;
+  onReset: () => void;
+}): JSX.Element {
   const focus = useFocus();
   return (
-    <label style={{ display: 'block', padding: '5px 6px' }}>
-      <span style={{ display: 'flex', gap: 6, fontSize: 11.5, color: color.inkSoft, marginBottom: 4 }}>
+    <div style={{ padding: '5px 6px' }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: color.inkSoft, marginBottom: 4 }}>
         <span style={{ fontFamily: font.mono, color: color.faint }}>{item}</span>
-        <span style={{ fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        <span style={{ flex: 1, fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        {changed && fallback ? (
+          <Button tone="ghost" size="sm" onClick={onReset} title={`Print the catalog’s text again: ${fallback}`} style={{ padding: '2px 7px', fontSize: 10.5 }}>
+            Use catalog text
+          </Button>
+        ) : null}
       </span>
-      <input
+      {/* a textarea, not an input: an input drops the line break an older, joined note carries */}
+      <textarea
         value={value}
+        rows={2}
+        aria-label={`Notes and assumptions for ${item} ${name}`}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Assumption the client should read"
+        placeholder={changed && fallback ? 'Left off this client’s sheet' : 'Assumption the client should read'}
         {...focus.bind}
         style={{
+          resize: 'vertical',
+          lineHeight: 1.45,
           width: '100%',
           boxSizing: 'border-box',
           borderWidth: 1,
@@ -138,7 +170,7 @@ function NoteInput({ item, name, value, onChange }: { item: string; name: string
           outline: 'none'
         }}
       />
-    </label>
+    </div>
   );
 }
 
@@ -158,7 +190,9 @@ export function SheetPanel({ onClose }: { onClose: () => void }): JSX.Element {
   const breakdown = input ? sheetBreakdown(input) : null;
   const lines = breakdown?.deliverables.flatMap((deliverable) => deliverable.lines) ?? [];
   const written = state.draft.sheet?.notes ?? {};
-  const writtenCount = lines.filter((line) => written[line.key]?.trim()).length;
+  /* what a line prints when this client has nothing of its own, so each box starts from it */
+  const fallbackOf = (catalogNote: string): string => (prefs.catalogNotes ? catalogNote : '');
+  const changedCount = lines.filter((line) => written[line.key] !== undefined).length;
   const currency = state.draft.cur ?? 'USD';
 
   /* The estimate column prices every line, so say at what, and warn when nobody has set a rate:
@@ -267,7 +301,7 @@ export function SheetPanel({ onClose }: { onClose: () => void }): JSX.Element {
       </Group>
 
       <Group
-        title={`Notes per line${writtenCount > 0 ? `, ${writtenCount} written` : ''}`}
+        title={`Notes and assumptions${changedCount > 0 ? `, ${changedCount} changed for this client` : ''}`}
         action={
           lines.length > 0 ? (
             <Button tone="ghost" size="sm" onClick={() => setNotesOpen((value) => !value)} style={{ padding: '3px 8px' }}>
@@ -276,22 +310,37 @@ export function SheetPanel({ onClose }: { onClose: () => void }): JSX.Element {
           ) : null
         }
       >
+        <Check
+          label="Each solution’s own notes"
+          sub={blocked.catalogNotes ?? 'From the catalog and the estimation desk. Off, a line says only what you write for it and the caveats'}
+          warn={Boolean(prefs.catalogNotes && blocked.catalogNotes)}
+          checked={prefs.catalogNotes}
+          onChange={(checked) => dispatch({ type: 'setSheet', catalogNotes: checked })}
+        />
         {lines.length === 0 ? (
           <div style={{ fontSize: 11.5, color: color.faint, padding: '2px 6px' }}>Select solutions to write notes for them.</div>
         ) : notesOpen ? (
           <>
             <div style={{ fontSize: 11, color: color.faint, lineHeight: 1.45, padding: '0 6px 4px' }}>
-              Shown first in Notes/Assumptions, above the caveats the sheet adds itself.
+              Each box starts with the solution’s own notes. What you write replaces them on this client’s sheet only, and the caveats
+              the sheet adds itself follow.
             </div>
-            {lines.map((line) => (
-              <NoteInput
-                key={line.key}
-                item={line.item}
-                name={line.component}
-                value={written[line.key] ?? ''}
-                onChange={(note) => dispatch({ type: 'setLineNote', id: line.key, note })}
-              />
-            ))}
+            {lines.map((line) => {
+              const fallback = fallbackOf(line.catalogNote);
+              const own = written[line.key];
+              return (
+                <NoteInput
+                  key={line.key}
+                  item={line.item}
+                  name={line.component}
+                  value={own ?? fallback}
+                  fallback={fallback}
+                  changed={own !== undefined}
+                  onChange={(note) => dispatch({ type: 'setLineNote', id: line.key, note, catalogNote: fallback })}
+                  onReset={() => dispatch({ type: 'setLineNote', id: line.key, note: fallback, catalogNote: fallback })}
+                />
+              );
+            })}
           </>
         ) : null}
       </Group>

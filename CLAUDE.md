@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 741 tests across twenty-one files.
+`bun run test` runs 775 tests across twenty-one files.
 
 | File | Covers |
 |---|---|
@@ -173,14 +173,14 @@ reference.
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-09-27):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-09-28):
 
 | | |
 |---|---|
 | Statements | 97.2% |
 | Lines | 98.4% |
 | Functions | 98.4% |
-| Branches | 86.7% |
+| Branches | 86.9% |
 
 The thresholds in `vitest.config.ts` are floors: 96% statements, 86% branches, 98% functions and
 98% lines, each set just under the figures above when the bundles and estimates import landed. A change that
@@ -431,6 +431,14 @@ The spreadsheets hold real deal names, client names and pricing.
   renamed or sent elsewhere; single rows can be moved or dropped. Import stays disabled while any
   group is pending, and the reducer saves only approved rows. `planEstimateImport` and
   `planBundleImport` compute the preview and the result from the same decisions; keep it that way.
+- **Notes / Assumptions is one entry per solution, and it is written for the client.** It is
+  `Solution.notes`, `AddedSolution.notes` and `EstimateRequest.catNotes`, and the spreadsheet keeps
+  it in the `note` column of EstimatedSolutions and Requests, the column an older build also reads.
+  A leftover `limits` column or `catLimits` is joined into it on read. Do not split it into two
+  fields again: the user asked for a single entry. On the client's sheet, a deal's own text for a
+  line replaces the catalog's (`lineNote` in `domain/taskBreakdown.ts`), and an empty entry means
+  "left off for this client", not "no entry". A second import of an estimates file keeps an
+  estimate's notes when its row has none.
 - **Bundles and estimates never mix.** `solutionKind` decides which is which, estimates are violet
   everywhere, and the hero's client-facing stats count bundles only.
 - `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses.

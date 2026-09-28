@@ -33,6 +33,10 @@ export interface Solution {
   /** Third-party account the client must hold (Stripe, Zoom, …). */
   account: string | null;
   integrations: string | null;
+  /**
+   * Notes / Assumptions: one entry, written for the client. Scope limits, assumptions and
+   * exclusions all go here. It is printed on the client's task breakdown, so nothing internal.
+   */
   notes: string | null;
   ref: string | null;
   category: string | null;
@@ -214,7 +218,11 @@ export interface SheetDetails {
   contact?: string;
   /** The cover's General Comments. Blank means the sheet writes its own. */
   comments?: string;
-  /** Solution or request id → the assumption sales wrote for that line. */
+  /**
+   * Solution or request id → what this deal's sheet says in that line's Notes/Assumptions, in
+   * place of the catalog's own text. An empty string leaves the catalog's text off for this client;
+   * a line with no entry prints the catalog's.
+   */
   notes?: Record<string, string>;
 }
 
@@ -276,7 +284,6 @@ export interface EstimateRequest {
   repeatEst?: number;
   estBy?: string;
   estAt?: string;
-  estNote?: string;
 
   /** Catalog entry created when the desk priced it. */
   csId?: string;
@@ -287,7 +294,8 @@ export interface EstimateRequest {
   catCategory?: string;
   catSub?: string;
   catAccount?: string;
-  catLimits?: string;
+  /** Its Notes / Assumptions, as the desk wrote them. The catalog entry carries the same text. */
+  catNotes?: string;
 
   /** Tender this request was drafted from, and the requirement within it. */
   tender?: string;
@@ -309,8 +317,8 @@ export interface AddedSolution {
   category: string;
   subCategory: string;
   account: string;
-  limits: string;
-  note: string;
+  /** Notes / Assumptions, one entry. Blank when the desk wrote none. */
+  notes: string;
   /** Request it came from, empty when entered directly at the desk. */
   from: string;
   estName?: string;

@@ -73,6 +73,8 @@ describe('which kind of workbook a file is', () => {
     expect(read.catalog?.bundles).toHaveLength(15);
     expect(read.catalog?.bundles.flatMap((bundle) => bundle.items)).toHaveLength(87);
     expect(read.hash).not.toBe('');
+    /* its Notes & limits column is read as each solution's Notes / Assumptions */
+    expect(read.catalog?.bundles.flatMap((bundle) => bundle.items).filter((item) => item.notes).length).toBeGreaterThan(0);
   });
 
   it('reads the same catalog the served sheet loads, so an import and a page load agree', async () => {
@@ -238,6 +240,33 @@ describe('checking a bundles workbook', () => {
     expect(warnings(read.issues)).toEqual([expect.stringMatching(/^1 solution has status Estimation, so it is listed as estimates, not bundles/)]);
   });
 
+  it('reads a Notes/Assumptions column on a bundles sheet as each solution\'s notes', async () => {
+    const read = await asBundles({
+      'All Components': [
+        [...COMPONENTS, 'Notes/Assumptions'],
+        [...component('B01', 'EDU-101', 'Stripe'), 'Assumes the client holds a Stripe account.'],
+        [...component('B01', 'EDU-102', 'PayPal'), '']
+      ],
+      'Bundle Catalog': CATALOG_SHEET
+    });
+    expect(read.issues).toEqual([]);
+    expect(read.catalog?.bundles[0]?.items.map((item) => item.notes)).toEqual(['Assumes the client holds a Stripe account.', null]);
+  });
+
+  it('joins a separate Assumptions column into the notes on a bundles sheet, and says so', async () => {
+    const read = await asBundles({
+      'All Components': [
+        [...COMPONENTS, 'Notes & limits', 'Assumptions'],
+        [...component('B01', 'EDU-101', 'Stripe'), 'Card payments only.', 'Assumes the client holds a Stripe account.']
+      ],
+      'Bundle Catalog': CATALOG_SHEET
+    });
+    expect(read.issues).toEqual([
+      { level: 'note', text: 'Notes & limits and Assumptions are one field, Notes/Assumptions. Where a solution has both, they are joined, notes first.' }
+    ]);
+    expect(read.catalog?.bundles[0]?.items[0]?.notes).toBe('Card payments only.\nAssumes the client holds a Stripe account.');
+  });
+
   it('refuses a workbook with headers and no solutions', async () => {
     expect(errors(checkBundles(await tables({ 'All Components': [COMPONENTS] })))).toEqual(['No solutions found: the sheets have headers but no rows with a Solution ID.']);
   });
@@ -265,8 +294,7 @@ describe('reading an estimates sheet', () => {
           deploy: '1 week',
           integrations: 'GitHub Actions',
           account: 'AWS',
-          limits: 'Single region',
-          note: 'Assumes AWS',
+          notes: 'Single region. Assumes AWS.',
           estBy: 'Sam',
           estAt: '2026-03-01'
         })
@@ -290,8 +318,7 @@ describe('reading an estimates sheet', () => {
         deploy: '1 week',
         integrations: 'GitHub Actions',
         account: 'AWS',
-        limits: 'Single region',
-        note: 'Assumes AWS',
+        notes: 'Single region. Assumes AWS.',
         estBy: 'Sam',
         estAt: '2026-03-01'
       }
@@ -321,6 +348,36 @@ describe('reading an estimates sheet', () => {
       'There is no Estimated for column, so nobody will be able to tell which client each estimate was made for.'
     ]);
     expect(read.rows).toHaveLength(1);
+  });
+
+  it('imports a sheet with no Notes/Assumptions column without a word, as the sheets estimates first came from', async () => {
+    /* the column is optional: most rows have none, and a warning here would be one people learn to ignore */
+    const read = await asEstimates({ Estimates: [['Feature', 'First-delivery hrs', 'What it does', 'Estimated for'], ['SSO', 40, 'Sign in', 'Acme Academy']] });
+    expect(read.issues).toEqual([]);
+    expect(read.rows[0]?.notes).toBe('');
+  });
+
+  it('reads a file filled in on the first template, joining its Notes & limits and Assumptions into one', async () => {
+    const read = await asEstimates({
+      Estimates: [
+        ['Feature', 'First-delivery hrs', 'What it does', 'Estimated for', 'Notes & limits', 'Assumptions'],
+        ['SSO', 40, 'Sign in', 'Acme Academy', 'Single region only.', 'Assumes Azure AD.'],
+        ['Proctoring', 30, 'Exams', 'Acme Academy', 'One exam window per course.', ''],
+        ['Webhooks', 20, 'Events out', 'Acme Academy', '', 'Assumes the client hosts the receiver.']
+      ]
+    });
+    expect(read.rows.map((one) => one.notes)).toEqual(['Single region only.\nAssumes Azure AD.', 'One exam window per course.', 'Assumes the client hosts the receiver.']);
+    /* said once as news, not as a warning: nothing was lost */
+    expect(read.issues).toEqual([
+      { level: 'note', text: 'Notes & limits and Assumptions are one column now, Notes/Assumptions. Where a row has both, they are joined, notes first.' }
+    ]);
+  });
+
+  it('takes every header people write for the one note', async () => {
+    for (const header of ['Notes/Assumptions', 'Notes & Assumptions', 'Notes & limits', 'Notes', 'Note', 'Assumptions', 'Note to sales', 'Limits']) {
+      const read = await asEstimates({ Estimates: [['Feature', 'First-delivery hrs', 'What it does', 'Estimated for', header], ['SSO', 40, 'Sign in', 'Acme Academy', 'Assumes Azure AD.']] });
+      expect({ header, notes: read.rows[0]?.notes, issues: read.issues }).toEqual({ header, notes: 'Assumes Azure AD.', issues: [] });
+    }
   });
 
   it('names a column it does not recognise, so a typo is not silently dropped', async () => {
@@ -476,6 +533,14 @@ describe('the templates', () => {
     expect(read.rows).toHaveLength(1);
   });
 
+  it('writes one Notes/Assumptions column in the estimates template, never two', async () => {
+    const header = (await readWorkbook(estimatesTemplate())).Estimates?.[0] ?? [];
+    expect(header).toContain('Notes/Assumptions');
+    expect(header).not.toContain('Notes & limits');
+    expect(header).not.toContain('Assumptions');
+    expect(ESTIMATE_COLUMNS.find((column) => column.field === 'notes')?.need).toBe('optional');
+  });
+
   it('explains every column on the help sheet', async () => {
     const help = (await readWorkbook(estimatesTemplate()))['How to fill this in'] ?? [];
     const described = help.map((row) => row[0]);
@@ -525,6 +590,8 @@ describe('the templates', () => {
       ['EDU-1', 'Production', 40],
       ['EDU-2', 'In Development', null]
     ]);
+    /* the template carries the column, and the example shows a filled cell and a blank one */
+    expect(read.catalog?.bundles[0]?.items.map((item) => item.notes)).toEqual([expect.stringMatching(/developer accounts/), null]);
   });
 
   it('imports a filled-in bundles template, leaving the example bundle out with a note', async () => {
@@ -548,7 +615,7 @@ describe('the templates', () => {
 
 const row = (n: number, over: Partial<EstimateRow> = {}): EstimateRow => ({
   row: n + 1, sourceId: '', name: `Estimate ${n}`, desc: '', first: 10, repeat: null, client: 'Acme Academy', bundleId: '', area: '',
-  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', limits: '', note: '', estBy: '', estAt: '', ...over
+  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', notes: '', estBy: '', estAt: '', ...over
 });
 
 describe('the estimates preview', () => {

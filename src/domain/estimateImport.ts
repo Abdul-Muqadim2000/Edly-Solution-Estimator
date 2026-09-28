@@ -54,8 +54,8 @@ export interface EstimateRow {
   deploy: string;
   integrations: string;
   account: string;
-  limits: string;
-  note: string;
+  /** Notes / Assumptions, one entry. Blank when the row has none. */
+  notes: string;
   estBy: string;
   /** ISO date, blank when the sheet gives none. */
   estAt: string;
@@ -244,7 +244,17 @@ export function planEstimateImport(input: EstimateImportInput): EstimateImportPl
     const lands = out ? LEFT_OUT : status !== 'pending' ? landsLabel(landing) : rowDecision.to ? `${landsLabel(landing)}, once this group is approved` : WAITING;
     reviewRows.set(groupKey, [
       ...(reviewRows.get(groupKey) ?? []),
-      { key: String(row.row), title: row.name, detail, hours: row.first, to: rowDecision.to ?? null, skip: rowDecision.skip === true, lands }
+      {
+        key: String(row.row),
+        title: row.name,
+        detail,
+        /* what it will carry, which on a second import can be the note it already has */
+        notes: row.notes || match?.notes || '',
+        hours: row.first,
+        to: rowDecision.to ?? null,
+        skip: rowDecision.skip === true,
+        lands
+      }
     ]);
     if (out) {
       leftOut += 1;
@@ -268,8 +278,10 @@ export function planEstimateImport(input: EstimateImportInput): EstimateImportPl
       category: row.category,
       subCategory: row.subCategory,
       account: row.account,
-      limits: row.limits,
-      note: row.note,
+      /* The file wins for every field but this one. The desk can reword a note in the app, and a
+         file without notes, like the sheets estimates first came from, must not wipe that on a
+         second import; so a blank note keeps the one already there. Clearing one is done in the app. */
+      notes: row.notes || match?.notes || '',
       from: '',
       estAt: row.estAt || match?.estAt || input.today,
       direct: false,

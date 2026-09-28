@@ -11,7 +11,7 @@ import { ImportModal } from '@/components/ImportModal';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
 import { hours, hours1, money, plural, today } from '@/lib/format';
 import { AppHeader } from '@/components/AppHeader';
-import { Banner, Button, Chip, Empty, Field, Mono, Row, Select, Spacer, useRowHover } from '@/components/ui';
+import { Banner, Button, Chip, Empty, Field, Mono, Row, Select, Spacer, TextArea, useRowHover } from '@/components/ui';
 import { allSolutions } from '@/domain/catalog';
 import { useHover } from '@/lib/useHover';
 import { isLiveCatalog } from '@/data/practices';
@@ -312,8 +312,7 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
   const [subCategory, setSubCategory] = useState(request.catSub ?? '');
   const [integrations, setIntegrations] = useState(request.catInteg ?? request.integrations ?? '');
   const [account, setAccount] = useState(request.catAccount ?? '');
-  const [limits, setLimits] = useState(request.catLimits ?? '');
-  const [note, setNote] = useState(request.estNote ?? '');
+  const [notes, setNotes] = useState(request.catNotes ?? '');
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
@@ -343,8 +342,7 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         category: category.trim() || 'Custom',
         subCategory: subCategory.trim(),
         account: account.trim(),
-        limits: limits.trim(),
-        note: note.trim(),
+        notes: notes.trim(),
         by: state.auth?.user ?? 'estimator'
       }
     });
@@ -445,8 +443,9 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         <Field label="Sub-category" flex="0 0 160px" value={subCategory} onChange={setSubCategory} list="edly-subcategories" placeholder="e.g. Custom" />
         <Field label="Integrations / vendors" flex="1 1 180px" value={integrations} onChange={setIntegrations} placeholder="e.g. MS Graph API, Zoom" />
         <Field label="3rd-party account (client-held)" flex="1 1 180px" value={account} onChange={setAccount} placeholder="e.g. Stripe, Zoom — or leave blank" />
-        <Field label="Notes &amp; limits (goes to the catalog)" flex="1 1 220px" value={limits} onChange={setLimits} placeholder="Scope boundaries future clients must know" />
-        <Field label="Note to sales (optional)" flex="1 1 200px" value={note} onChange={setNote} placeholder="Assumptions, exclusions, risks…" />
+        <div style={{ flex: '1 1 420px', minWidth: 0 }}>
+          <TextArea label="Notes / Assumptions (optional)" hint={NOTES_HINT} value={notes} onChange={setNotes} placeholder={NOTES_PLACEHOLDER} />
+        </div>
 
         <Button tone="primary" onClick={submit} style={{ borderRadius: 9, padding: '11px 16px', fontSize: 12 }}>
           {sent ? '✓ Sent to sales' : done ? 'Update estimate' : 'Submit estimate'}
@@ -747,6 +746,61 @@ function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX
   );
 }
 
+/* ------------------------------------------------------- notes / assumptions */
+
+/* The desk used to have a catalog note and a separate note to sales. It is one entry now, and it
+   reaches the client, so the form says so where the desk types it. */
+const NOTES_HINT = 'Printed in Notes/Assumptions on the client’s task breakdown, and shown to sales in the catalog. Write it for the client.';
+const NOTES_PLACEHOLDER = 'Scope limits, assumptions and exclusions the client should read';
+
+/** An estimate's Notes / Assumptions in the desk's list, with a way to reword them. */
+function EstimateNotes({ id, notes }: { id: string; notes: string }): JSX.Element {
+  const { dispatch } = useApp();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(notes);
+
+  if (editing) {
+    return (
+      <div style={{ display: 'grid', gap: 8 }}>
+        <TextArea label="Notes / Assumptions" hint={NOTES_HINT} value={draft} onChange={setDraft} placeholder={NOTES_PLACEHOLDER} />
+        <Row gap={8}>
+          <Button
+            size="sm"
+            tone="primary"
+            onClick={() => {
+              dispatch({ type: 'setSolutionNotes', id, notes: draft });
+              setEditing(false);
+            }}
+          >
+            Save notes
+          </Button>
+          <Button size="sm" tone="ghost" onClick={() => setEditing(false)}>
+            Cancel
+          </Button>
+        </Row>
+      </div>
+    );
+  }
+  return (
+    <Row gap={10} wrap={false} align="flex-start">
+      <span style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-line', color: notes ? color.body : color.faint }}>
+        {notes || 'No notes or assumptions yet.'}
+      </span>
+      <Button
+        size="sm"
+        tone="ghost"
+        title="Notes and assumptions, printed on the client’s task breakdown"
+        onClick={() => {
+          setDraft(notes);
+          setEditing(true);
+        }}
+      >
+        {notes ? 'Edit notes' : 'Add notes'}
+      </Button>
+    </Row>
+  );
+}
+
 /* --------------------------------------------------------- add to catalog */
 
 function AddToCatalog(): JSX.Element {
@@ -763,8 +817,7 @@ function AddToCatalog(): JSX.Element {
     category: '',
     subCategory: '',
     account: '',
-    limits: '',
-    note: ''
+    notes: ''
   });
   const [bundle, setBundle] = useState({ name: '', pitch: '', offerWhen: '' });
   const [solutionError, setSolutionError] = useState('');
@@ -816,11 +869,10 @@ function AddToCatalog(): JSX.Element {
         category: solution.category.trim() || 'Custom',
         subCategory: solution.subCategory.trim(),
         account: solution.account.trim(),
-        limits: solution.limits.trim(),
-        note: solution.note.trim()
+        notes: solution.notes.trim()
       }
     });
-    setSolution({ ...solution, name: '', desc: '', first: '', repeat: '', deploy: '', limits: '', note: '' });
+    setSolution({ ...solution, name: '', desc: '', first: '', repeat: '', deploy: '', notes: '' });
     setSolutionAdded(true);
     window.setTimeout(() => setSolutionAdded(false), 2200);
   };
@@ -943,9 +995,8 @@ function AddToCatalog(): JSX.Element {
           <Field label="Integrations / vendors" value={solution.integrations} onChange={set('integrations')} placeholder="e.g. MS Graph API, Zoom" />
           <Field label="3rd-party account (client-held)" value={solution.account} onChange={set('account')} placeholder="e.g. Stripe, Zoom — or leave blank" />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginTop: 10 }}>
-          <Field label="Notes &amp; limits (goes to the catalog)" value={solution.limits} onChange={set('limits')} placeholder="Scope boundaries future clients must know" />
-          <Field label="Note to sales (optional)" value={solution.note} onChange={set('note')} placeholder="Assumptions, exclusions, risks…" />
+        <div style={{ marginTop: 10 }}>
+          <TextArea label="Notes / Assumptions (optional)" hint={NOTES_HINT} value={solution.notes} onChange={set('notes')} placeholder={NOTES_PLACEHOLDER} />
         </div>
         <Row gap={10} style={{ marginTop: 14 }}>
           <Button tone="primary" onClick={addSolution} style={{ borderRadius: 9, padding: '11px 18px', fontSize: 12 }}>
@@ -1053,6 +1104,7 @@ function AddToCatalog(): JSX.Element {
                   Remove
                 </Button>
               </Row>
+              <EstimateNotes id={entry.id} notes={entry.notes} />
             </div>
           ))
         )}

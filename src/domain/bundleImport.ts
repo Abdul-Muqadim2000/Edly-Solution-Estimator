@@ -167,6 +167,7 @@ export function planBundleImport(input: BundleImportInput): BundleImportPlan {
           key: item.id,
           title: item.name,
           detail: `${item.id} · ${item.status}${item.first === null ? ' · not priced' : ` · ${hours(item.first)} h`}`,
+          notes: item.notes ?? '',
           hours: item.first,
           to: rowDecision.to ?? null,
           skip: rowDecision.skip === true,

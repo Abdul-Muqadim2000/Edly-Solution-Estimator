@@ -1,5 +1,6 @@
 import type { Bundle, Catalog, CatalogTotals, Solution, SolutionStatus } from '@/types';
 import { fingerprint, readWorkbook, type SheetTable, type Workbook } from '@/lib/xlsx';
+import { joinNotes } from '@/lib/format';
 
 /**
  * Reads the master "Open edX Solution Bundles" workbook and rebuilds the catalog from it.
@@ -50,7 +51,9 @@ export const ITEM_ALIASES: Aliases = {
   saving: ['reuse saving'],
   account: ['3rd party account', 'third party account', 'client held account', 'client accounts'],
   integrations: ['integrations'],
-  notes: ['notes limits', 'notes'],
+  /* Notes / Assumptions is one field. A sheet with a separate Assumptions column has it joined in */
+  notes: ['notes assumptions', 'notes and assumptions', 'notes limits', 'notes and limits', 'notes'],
+  assumptions: ['assumptions', 'note to sales'],
   ref: ['reference'],
   bundleId: ['bundle id'],
   bundle: ['bundle'],
@@ -181,7 +184,7 @@ function buildSolution(row: string[], map: Record<string, number>, fallback?: Pa
     saving: pick('saving', num),
     account: text(cell(row, map, 'account')) ?? fallback?.account ?? null,
     integrations: text(cell(row, map, 'integrations')) ?? fallback?.integrations ?? null,
-    notes: text(cell(row, map, 'notes')) ?? fallback?.notes ?? null,
+    notes: joinNotes(text(cell(row, map, 'notes')), text(cell(row, map, 'assumptions'))) || (fallback?.notes ?? null),
     ref: text(cell(row, map, 'ref')) ?? fallback?.ref ?? null,
     category,
     subCategory

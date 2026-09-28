@@ -194,8 +194,8 @@ export interface EstimateSubmission {
   category: string;
   subCategory: string;
   account: string;
-  limits: string;
-  note: string;
+  /** Notes / Assumptions, one entry. Blank for none. */
+  notes: string;
   by: string;
 }
 
@@ -211,8 +211,8 @@ export interface NewSolutionInput {
   category: string;
   subCategory: string;
   account: string;
-  limits: string;
-  note: string;
+  /** Notes / Assumptions, one entry. Blank for none. */
+  notes: string;
 }
 
 /**
@@ -250,16 +250,18 @@ export type Action =
   | { type: 'setCurrency'; currency: CurrencyCode }
   | { type: 'setDisplay'; patch: Partial<DisplayPrefs> }
   | { type: 'togglePresenting' }
-  | { type: 'setSheet'; columns?: Partial<Record<SheetColumnId, boolean>>; sections?: Partial<Record<SheetSectionId, boolean>> }
+  | { type: 'setSheet'; columns?: Partial<Record<SheetColumnId, boolean>>; sections?: Partial<Record<SheetSectionId, boolean>>; catalogNotes?: boolean }
   | { type: 'resetSheet' }
   | { type: 'setSheetDetails'; patch: Pick<SheetDetails, 'contact' | 'comments'> }
-  | { type: 'setLineNote'; id: string; note: string }
+  /** `catalogNote` is what the line prints with no entry of its own; typing it back removes the entry. */
+  | { type: 'setLineNote'; id: string; note: string; catalogNote?: string }
   | { type: 'addRequest'; input: NewRequestInput }
   | { type: 'addManualItem'; title: string; hours: number }
   | { type: 'deleteRequest'; id: string }
   | { type: 'submitEstimate'; id: string; submission: EstimateSubmission }
   | { type: 'addSolution'; input: NewSolutionInput }
   | { type: 'removeSolution'; id: string }
+  | { type: 'setSolutionNotes'; id: string; notes: string }
   | { type: 'addBundle'; name: string; pitch: string; offerWhen: string }
   | { type: 'removeBundle'; id: string }
   /** `catalogBundles`: the bundles on screen when the person clicked, which rows are filed under.
@@ -602,7 +604,8 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         sheet: readSheetPrefs({
           columns: { ...state.sheet.columns, ...action.columns },
-          sections: { ...state.sheet.sections, ...action.sections }
+          sections: { ...state.sheet.sections, ...action.sections },
+          catalogNotes: action.catalogNotes ?? state.sheet.catalogNotes
         })
       };
 
@@ -622,9 +625,12 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'setLineNote': {
       const notes = { ...(state.draft.sheet?.notes ?? {}) };
-      /* a cleared note is removed, not stored as an empty string the sheet would print */
-      if (action.note.trim()) notes[action.id] = action.note;
-      else delete notes[action.id];
+      /* An entry is kept only when it differs from what the line prints without one. So text typed
+         back to the catalog's removes the entry, and the line follows the catalog again; and
+         clearing a line whose catalog has text stores an empty entry, which leaves it off for this
+         client, where clearing a line with nothing to fall back on stores nothing. */
+      if (action.note.trim() === (action.catalogNote ?? '').trim()) delete notes[action.id];
+      else notes[action.id] = action.note.trim() ? action.note : '';
       return { ...state, draft: { ...state.draft, sheet: { ...(state.draft.sheet ?? {}), notes } } };
     }
 
@@ -687,11 +693,12 @@ export function reducer(state: AppState, action: Action): AppState {
         catCategory: submission.category,
         catSub: submission.subCategory,
         catAccount: submission.account,
-        catLimits: submission.limits,
-        estNote: submission.note,
+        catNotes: submission.notes,
         estBy: submission.by,
         estAt: stamp
       };
+      /* no entry rather than an empty one, which is how a request with no notes reads back */
+      if (!updated.catNotes) delete updated.catNotes;
 
       const solution: AddedSolution = {
         id: catalogId,
@@ -707,8 +714,7 @@ export function reducer(state: AppState, action: Action): AppState {
         category: submission.category,
         subCategory: submission.subCategory,
         account: submission.account,
-        limits: submission.limits,
-        note: submission.note,
+        notes: submission.notes,
         from: request.id,
         estName: request.estName,
         estAt: stamp,
@@ -734,6 +740,24 @@ export function reducer(state: AppState, action: Action): AppState {
         direct: true
       };
       return { ...state, solutions: [...state.solutions, solution] };
+    }
+
+    /* The desk rewording an estimate's note later. The request it was priced from keeps a copy for
+       its own line in the sheet, so that copy changes with it. */
+    case 'setSolutionNotes': {
+      const target = state.solutions.find((solution) => solution.id === action.id);
+      const notes = action.notes.trim();
+      if (!target || target.notes === notes) return state;
+      return {
+        ...state,
+        solutions: state.solutions.map((solution) => (solution.id === action.id ? { ...solution, notes } : solution)),
+        requests: state.requests.map((request) => {
+          if (request.csId !== action.id) return request;
+          const next: EstimateRequest = { ...request, catNotes: notes };
+          if (!notes) delete next.catNotes;
+          return next;
+        })
+      };
     }
 
     case 'removeSolution': {

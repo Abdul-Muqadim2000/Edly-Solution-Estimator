@@ -137,8 +137,8 @@ start `EXAMPLE`, and the import always leaves them out, so they can stay or go.
 
 **A bundles workbook** is the master sheet's format: a *Bundle Catalog* sheet (Bundle ID, Bundle,
 pitch, "offer when") and an *All Components* sheet (Bundle ID, Solution ID, Feature,
-First-delivery hrs, plus Status, What it does, Repeat config hrs and Original build hrs), with a
-`B01 …` sheet per bundle if you like. It can be **added** to the catalog, updating the solutions it
+First-delivery hrs, plus Status, What it does, Repeat config hrs, Original build hrs and
+Notes/Assumptions), with a `B01 …` sheet per bundle if you like. It can be **added** to the catalog, updating the solutions it
 names and keeping the rest, or it can **replace** the catalog. A Bundle ID the catalog already uses
 for a different bundle is a decision in the review: a new bundle under a free ID, or the existing
 one. An imported catalog stays
@@ -148,7 +148,7 @@ in place over the sheet served beside the app, across reloads.
 *Feature* and *First-delivery hrs* are required. *What it does* and *Estimated for* (the client) are
 recommended. The optional columns are *Estimate ID*, *Repeat hrs*, *Bundle ID*, *Area*,
 *Category*, *Sub category*, *Delivery form*, *Std deployment time*, *Integrations*,
-*3rd-party account*, *Notes & limits*, *Assumptions*, *Estimated by* and *Estimated on*. A row goes
+*3rd-party account*, *Notes/Assumptions*, *Estimated by* and *Estimated on*. A row goes
 under its Bundle ID, else under the bundle its Area names (a new bundle if none matches), else to
 *Unassigned estimates*, where the desk files it. Importing the same file again updates rows by
 Estimate ID, or by Feature and Estimated for, instead of adding them twice, and the desk can remove
@@ -178,6 +178,27 @@ warnings, and the row is skipped or read as the warning says.
 
 Scalar columns stay readable so anyone can scan it in Excel; nested state sits in one JSON column
 per row so the app round-trips losslessly. Download the live copy from `/api/state?format=xlsx`.
+
+### Notes and assumptions
+
+Every solution, built bundle or estimate, has one optional **Notes / Assumptions** entry: scope
+limits, assumptions and exclusions, written for the client.
+
+- **Where it comes from.** A bundles workbook's *Notes/Assumptions* column (the master sheet's
+  *Notes & limits* is read as the same thing), an estimates workbook's *Notes/Assumptions* column,
+  and the estimation desk, when it prices a request or adds an estimate. The desk can reword an
+  estimate's notes later, in *Estimates in the catalog*. Neither template requires the column, and
+  a file without it imports without a warning.
+- **Older files.** The first estimates template had *Notes & limits* and *Assumptions* as two
+  columns, and the desk had two boxes. Both still load, joined into one entry, notes first.
+- **A second import** of the same estimates file replaces an estimate's notes only where its row has
+  some, so a file with no notes never wipes what the desk wrote in the app.
+- **Where it goes.** The catalog row's details (they stay on while presenting, since they are
+  written for the client), under a priced custom request in the estimate column, the printed quote,
+  and the *Notes/Assumptions* column of the Excel task breakdown, before the caveats the sheet adds
+  itself. In the builder's *Excel sheet* panel, each line's box starts with the solution's own text:
+  what sales writes there replaces it on that client's sheet only, and clearing it leaves the line
+  blank. *Each solution's own notes* switches all of them off at once.
 
 ---
 

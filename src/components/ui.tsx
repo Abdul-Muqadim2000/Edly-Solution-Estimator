@@ -278,11 +278,11 @@ export function Select<T extends string>({
   );
 }
 
-export function TextArea({ label, value, onChange, placeholder }: Omit<FieldProps, 'type'>): JSX.Element {
+export function TextArea({ label, value, onChange, placeholder, hint }: Omit<FieldProps, 'type'>): JSX.Element {
   const focus = useFocus();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <Label>{label}</Label>
+      <Label hint={hint}>{label}</Label>
       <textarea
         value={value}
         placeholder={placeholder}
