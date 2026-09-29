@@ -6,6 +6,8 @@ import {
   aiSpent,
   aiStep,
   approvedToGoOn,
+  CACHE_FRESH_MS,
+  callSlots,
   canSpend,
   catalogHours,
   catalogLines,
@@ -50,6 +52,7 @@ import {
   tenderRequests,
   tenderSelection,
   tokenSummary,
+  touchedCache,
   type DeskDraft,
   type ExtractedRequirement
 } from '../src/domain/tender';
@@ -493,6 +496,29 @@ describe('planning the extraction calls', () => {
     expect(nextKeepWarm(fit, KEEP_WARM_MAX)).toBeNull();
     expect(KEEP_WARM_MAX * 0.1).toBeLessThan(0.75);
     expect(nextKeepWarm(0, 0)).toBeNull();
+  });
+
+  it('sends one call first while the cache is cold, and all of them once a read has cached it', () => {
+    const now = 10_000_000;
+    /* a tab that has seen no read, after a reload, cannot know the cache is warm: one call goes first */
+    expect(callSlots(3, undefined, now)).toBe(1);
+    expect(callSlots(3, 0, now)).toBe(1);
+    /* the fit call a minute ago left the tender cached, so the three extraction calls can read it together */
+    expect(callSlots(3, now - 60_000, now)).toBe(3);
+    expect(callSlots(2, now - 1_000, now)).toBe(2);
+    /* past the five minutes, three calls at once would each write the whole tender: 96,014 tokens at $0.48 */
+    expect(callSlots(3, now - CACHE_FRESH_MS, now)).toBe(1);
+    expect(callSlots(3, now - 20 * 60_000, now)).toBe(1);
+    /* the margin is inside the API's five minutes, timed from the start of the last read */
+    expect(CACHE_FRESH_MS).toBeLessThan(5 * 60_000);
+  });
+
+  it('counts a call as a read of the cache only when it read or wrote it', () => {
+    expect(touchedCache({ cacheRead: 96_014, cacheWrite: 0 })).toBe(true);
+    expect(touchedCache({ cacheRead: 0, cacheWrite: 47_005 })).toBe(true);
+    /* a call refused before the model ran (a model the key cannot use, a deleted file) cached nothing */
+    expect(touchedCache({ cacheRead: 0, cacheWrite: 0 })).toBe(false);
+    expect(touchedCache(undefined)).toBe(false);
   });
 
   it('says how much of each document is read, in its own unit', () => {

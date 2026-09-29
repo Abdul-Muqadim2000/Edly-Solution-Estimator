@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 845 tests across twenty-one files.
+`bun run test` runs 848 tests across twenty-one files.
 
 | File | Covers |
 |---|---|
@@ -203,7 +203,8 @@ Two things to know before you touch the coverage config:
 
 What the number does not cover, and you should say so rather than implying otherwise: the React
 components, the sync loop's timing behaviour, the cloud providers against their real services, and
-the AI against the real Anthropic API (DEFERRED.md 8).
+the AI against the real Anthropic API. That last one has been run by hand once, on one Word tender
+(VERIFY.md, "The tender AI, run for real"); PDF and spreadsheet tenders have not.
 
 ---
 
@@ -462,6 +463,13 @@ The spreadsheets hold real deal names, client names and pricing.
   five minutes, not an hour, and `keepWarm` bridges the wait on the fit screen: it must send
   exactly what the fit call cached (model, thinking, effort, tools, system, documents), or it writes
   an entry nothing reads. `tests/tenderApi.test.ts` compares the two requests.
+- **On a cold cache the first call goes alone** (`callSlots` in `src/domain/tender.ts`). A call
+  started beside the one writing the tender or the catalog to the cache cannot read that entry, so
+  it writes its own: on the real API two match batches started together each wrote the 47,005-token
+  catalog. The runner sends one match batch first, and one extraction call first whenever this tab
+  has not read the tender in the last four and a half minutes; the intake hands over its last read
+  (`noteTenderRead`) so extraction after the fit starts at full width. Keep both when changing how
+  many calls run at once.
 - **A tender's AI spending is checked before each call starts, never during one.** `canSpend` in
   `src/domain/tender.ts` gates the runner, the intake's fit call and the keep-warm; the calls already
   running finish, because a call stopped part way is billed all the same, so a tender goes a few
@@ -507,8 +515,9 @@ The spreadsheets hold real deal names, client names and pricing.
 - **`/api/tender` is unauthenticated too, and it spends money.** Anyone with the URL can send
   files to Anthropic under Edly's key. Deployment protection must be on before
   `ANTHROPIC_API_KEY` is set on a public deployment (DEFERRED.md 4).
-- **The tender AI has not been run against the real API yet** (DEFERRED.md 8), and PDFs are
-  limited to 4 MB until uploads are staged (DEFERRED.md 9).
+- **The tender AI has been run against the real API once, on one Word tender** (2026-09-29,
+  VERIFY.md). PDF and spreadsheet tenders have only met the stand-in (Worth adding next 17), and
+  PDFs are limited to 4 MB until uploads are staged (DEFERRED.md 9).
 - **The per-tender AI limit is a check in the browser, not a cap.** A caller going straight to
   `/api/tender` skips it (DEFERRED.md 11). The cap that holds is a monthly spend limit on the
   Anthropic Console workspace that owns the key.
@@ -618,6 +627,29 @@ everything else waiting on a server, are in DEFERRED.md.
     own pages at full price, and lift the 600-page limit on one request. Needs a PDF library (a
     new dependency, so ask) or a hand-written page splitter, which real-world PDFs make hard.
     Measure first: with caching working, it may not be cheaper.
+17. **Run a PDF tender and a spreadsheet tender through the real API**, and build the small eval.
+    The 2026-09-29 run (VERIFY.md) used one Word tender, so these are still unmeasured: what a PDF
+    page really costs (the stand-in assumes 3,000 tokens), whether a spreadsheet call reads only the
+    converted text from cache and writes nothing, how long a 20-page PDF range and a 60-row sheet
+    range take, and the same tender at `EDLY_AI_EFFORT=low` against `medium` (requirements found,
+    output tokens). Then three or four invented tenders with known requirements, so a prompt change
+    is measured rather than eyeballed. Each run spends real money, about $1 to $3 a tender on Opus
+    5.5, so it needs a yes first. Also compare the tender's "AI cost" line with the Anthropic
+    Console for the same day; the app's figure matched the per-call usage to the millionth of a
+    dollar, but only the Console holds the bill.
+18. **Count what a call wrote before it was cut off.** The API reports output tokens only at the
+    end of a stream, so a call stopped at the deadline (`callDeadlineMs`) is counted with the input
+    it read and almost no output, while everything it streamed is billed. Opus 5.5 at `medium`
+    wrote about 100 tokens a second on the real run, so a call cut off at 270 s can leave about
+    27,000 output tokens (about $0.54) out of the tender's total, and the spending limit errs late
+    rather than early. An estimate from the time the call streamed would keep the limit erring
+    early; it needs a decision on the rate to assume, per model.
+19. **Keep Word's automatic numbering when converting a .docx.** `docxXmlToText` reads the text
+    runs, and a clause number Word generates (`w:numPr`, defined in `word/numbering.xml`) is not
+    text, so "1. General Description" arrives as "General Description". Typed numbers ("3.1") come
+    through. On the real run 103 of 241 requirements still carried a reference, but a bid team
+    finds a clause by its number. Needs the numbering definitions read, levels and restarts
+    included, and a heading style's numbering from `word/styles.xml`.
 
 ---
 

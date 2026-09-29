@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import type { TenderDocument, TenderSection, TenderTokens } from '@/types';
 import { PRACTICES, findPlatform } from '@/data/practices';
 import { useApp } from '@/state/AppProvider';
+import { noteTenderRead } from '@/state/useTenderRunner';
 import { tenderDiscard, tenderFit, tenderProbe, tenderUpload, tenderWarm, TenderApiError, type AiProbe } from '@/api/client';
 import {
   addTokens,
@@ -364,6 +365,8 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
       id,
       input: { plat: platform, name: name.trim(), client: client.trim(), due, summary: fit.header.summary, docs, fit: fit.fit, outline, tokens, aiLimit, aiApproved }
     });
+    /* the fit call or the last keep-warm left the tender cached, so extraction can start at full width */
+    noteTenderRead(id, lastReadAt);
     handedOver.current = true;
     router.navigate({ screen: 'tender', platform, tender: id });
     onClose();

@@ -515,6 +515,18 @@ describe('the match step', () => {
     expect(String(content[0]?.text)).not.toMatch(/\bh\b|hours/);
   });
 
+  it('asks for one of two solutions that do the same job, the built one first', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_matches', input: { matches: [] } }) }];
+    await post('match', { catalog, reqs: [{ id: 'R-01', text: 'Digital badges', section: '', priority: 'must' }] });
+    const instruction = String(((sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [])[1]?.text);
+    /* both would land in the estimation, and the same work would be priced twice */
+    expect(instruction).toContain('Where two solutions do the same job, name only the one that fits best');
+    expect(instruction).toContain('preferring status Production (built before) over Estimation (priced, never built)');
+    /* aimed at alternatives only: parts that go together are all still named, or the bid is underpriced */
+    expect(instruction).toContain('Name every solution the requirement needs, including the parts that go together');
+    expect(instruction).not.toMatch(/\bhours\b/);
+  });
+
   it('refuses to match against an empty catalog, and does not call the AI for no requirements', async () => {
     expect((await post('match', { catalog: [], reqs: [{ id: 'R-01', text: 'x', section: '', priority: 'must' }] })).status).toBe(400);
     const none = (await (await post('match', { catalog, reqs: [] })).json()) as { ok: boolean; matches: object };

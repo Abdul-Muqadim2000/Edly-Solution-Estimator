@@ -147,55 +147,6 @@ been run for real and when.
 
 ---
 
-### 8. A real tender through the AI
-
-**Blocked by:** there is no `ANTHROPIC_API_KEY` on this machine. `tests/tenderApi.test.ts` drives
-`/api/tender` against a stubbed `fetch` that answers the way the Messages and Files APIs do,
-including a refusal, a cut-off answer, a 401, a 404 and a 429, and the screens were driven against a
-stand-in API. Neither proves how the model reads a real tender.
-
-**When unblocked:** put a key in `.env`, run one real tender through intake, extraction, matching
-and apply, and check four things. The extraction calls after the fit call should report
-`cacheRead` tokens close to the tender's size in the token line at the top of the tender; if they
-read zero, something is breaking the shared prefix (see the comment at the top of
-`server/ai/prompts.ts`). No single call should come near the 300 s limit; if one does, lower
-`RANGE_PAGES` in `src/domain/tender.ts`. Every quoted passage should be findable on the page it
-cites. And the platform recommendation should be the one a salesperson would have chosen. Build a
-small eval of three or four invented tenders with known requirements before tuning the prompts, so
-a change can be measured rather than eyeballed.
-
-**Now:** a fictional tender with known answers exists and has been run through the real code
-against a stand-in API that bills the way Anthropic's does (2026-09-28): a 45-page ITT, a
-250-row requirements matrix with a hidden sheet and Won't-have rows, and a Word annex, plus a
-115-page variant padded with standard terms and response templates. The stand-in's model answers
-from the known requirements, so it proves the plumbing, the cache layout and the cost arithmetic,
-not how well the real model reads. Its numbers assume 3,000 tokens a PDF page and 60 output
-tokens a second.
-
-The real run should also check what the reading plan, the spreadsheet path and the five-minute
-cache rely on:
-
-- The outline's pages are physical pages, not the numbers printed on them, and every section the
-  fit call marks `skip` really holds nothing to deliver. A wrong skip loses requirements silently.
-- A spreadsheet extraction call's `cacheRead` is small (the converted text only) and a PDF call's
-  is the whole tender, with no cache writes after the fit call. A spreadsheet call that writes
-  instead means the inner cache markers are not being read; that costs cents, but say so.
-- How long a spreadsheet range (60 rows, `SHEET_SPAN`) and a 20-page range take, since both sizes
-  assume the model writes about 60 tokens a second. Raise them if calls finish well inside the limit.
-- The same tender at the default effort (`medium`) and at `EDLY_AI_EFFORT=low`: compare the
-  requirement lists and the output tokens. Thinking is billed as output, and it is most of what extraction costs.
-
-- The keep-warm (`/api/tender?op=warm`, `max_tokens: 0`) is accepted with these tools, the thinking
-  setting and the fallback beta, and reports a `cacheRead` the size of the tender. Then wait six
-  minutes on the fit screen and continue: the first extraction call must read the tender, not write
-  it. Built on 2026-09-28 against the stand-in only; if the API refuses it, each keep-warm fails
-  quietly and the first extraction writes the tender again, which is dearer than the hour-long
-  cache it replaced whenever the person takes over about three minutes.
-- The tender's "AI cost" line against the Anthropic Console's usage for the same calls. The app
-  prices from each reply's usage at the rates in `src/domain/aiPrice.ts` (read on 2026-09-29); if
-  the two disagree by more than a few cents, the rates or the reading of `usage.iterations` after a
-  refusal fallback is wrong, and the spending limit is off by the same amount.
-
 ### 9. Tenders over 4 MB
 
 **Blocked by:** Vercel refuses a function request body over 4.5 MB before the function runs, so a

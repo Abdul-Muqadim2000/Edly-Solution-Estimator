@@ -498,6 +498,30 @@ export function nextKeepWarm(lastReadAt: number, sent: number): number | null {
   return lastReadAt + KEEP_WARM_EVERY_MS;
 }
 
+/** How long a tab counts a cached prefix as still there: the API's five minutes from the start of the last read, less a margin. */
+export const CACHE_FRESH_MS = 4.5 * 60_000;
+
+/**
+ * How many calls that share a cached prefix (the tender's documents, or the catalog) may start now:
+ * all of `parallel` while the prefix is fresh, one while it is cold.
+ *
+ * The first call on a cold prefix writes it to the cache, and a call started beside it cannot read an
+ * entry still being written, so it writes one of its own. On the real API on 2026-09-29, two match
+ * batches started together each wrote the 47,005-token catalog, and three extraction calls resumed
+ * after a pause would each write the whole tender the same way (96,014 tokens, $0.48 each on Opus 5.5).
+ *
+ * `lastReadAt` is when the latest call that read the prefix started, as far as this tab knows. A tab
+ * that knows nothing, after a reload, sends one call first: that costs a call's time, never money.
+ */
+export function callSlots(parallel: number, lastReadAt: number | undefined, now: number): number {
+  const fresh = lastReadAt !== undefined && lastReadAt > 0 && now - lastReadAt < CACHE_FRESH_MS;
+  return fresh ? parallel : Math.min(1, parallel);
+}
+
+/** Whether a call read or wrote the cache, so the prefix it shares is fresh from when it started. */
+export const touchedCache = (tokens: Pick<TenderTokens, 'cacheRead' | 'cacheWrite'> | null | undefined): boolean =>
+  Boolean(tokens && tokens.cacheRead + tokens.cacheWrite > 0);
+
 /** A claim, as the reducer stamps it on a range. */
 export interface Claim {
   at: number;
