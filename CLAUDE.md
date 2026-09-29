@@ -9,11 +9,11 @@ another constraint, so read it before recommending what to build next.
 
 ## What this is
 
-Edly's sales and estimation tool. Sales configures a client solution bundle and gets hours, cost
-and a delivery plan. The estimation desk prices whatever is not in the catalog and sends it back.
-Sales can also start from a tender: an AI reads the RFP, suggests the platform, extracts the
-requirements and matches them to the catalog, and a person approves every step before anything
-reaches an estimation or the desk.
+**Quotient**, Edly's sales and estimation tool. Sales configures a client solution bundle and
+gets hours, cost and a delivery plan. The estimation desk prices whatever is not in the catalog
+and sends it back. Sales can also start from a tender: an AI reads the RFP, suggests the
+platform, extracts the requirements and matches them to the catalog, and a person approves every
+step before anything reaches an estimation or the desk.
 
 **React 18, TypeScript (strict), Vite, Bun, Vercel. Three runtime dependencies: React, React DOM
 and `@anthropic-ai/sdk`.** The SDK is imported only under `server/ai/` and never reaches the
@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 920 tests across twenty-two files.
+`bun run test` runs 931 tests across twenty-two files.
 
 | File | Covers |
 |---|---|
@@ -170,7 +170,7 @@ reference.
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
 | `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
-| `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load |
+| `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load; the favicon, manifest and logo files the page names are all shipped |
 
 ### Coverage
 
@@ -181,7 +181,7 @@ reference.
 | Statements | 97.6% |
 | Lines | 98.6% |
 | Functions | 98.9% |
-| Branches | 87.8% |
+| Branches | 87.9% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -546,7 +546,16 @@ The spreadsheets hold real deal names, client names and pricing.
   them under Node, which refuses a bare `'./schema'`, and the whole API then answers with
   FUNCTION_INVOCATION_FAILED. Nothing local notices; `tests/deploy.test.ts` does.
 - `index.html`: the `<base href>` is load-bearing. Without it a deep link makes every relative URL
-  resolve against the route instead of the mount point, and the catalog sheet 404s.
+  resolve against the route instead of the mount point, and the catalog sheet 404s. The logo paths
+  in `src/data/brand.ts` are relative for the same reason; the favicon links in `index.html` are
+  root-absolute because Vite rewrites those with `base` itself.
+- **The tool is Quotient; what a client sees is Edly.** The working screens carry Quotient's logo
+  and a slim footer. The edly.io header, the hero and the edly.io footer show only while a deal is
+  presented in the builder (`showsSiteChrome` in the reducer, and its tests): never on the hub,
+  which lists every client, the tender screen or the desk. The printed quote and the Excel sheet
+  stay Edly's. Settled on 2026-09-29 when the user found the marketing chrome crowding the builder.
+  `App.tsx` keeps the header and footer in fixed slots, so turning presenting on does not remount
+  the builder and lose its search or open panels.
 - **An un-estimated request round-trips with no hours at all, not `0`.** Zero reads as "estimated
   at nothing" and joins the totals. The same rule holds throughout: `null` means nobody has priced
   it.

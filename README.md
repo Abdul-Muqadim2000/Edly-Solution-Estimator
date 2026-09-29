@@ -1,6 +1,6 @@
-# Edly Solution Estimator
+# Quotient
 
-Sales and estimation tool for Edly's consulting practices. Sales configures a client solution
+Quotient is the sales and estimation tool for Edly's consulting practices. Sales configures a client solution
 bundle and gets hours, cost and a delivery plan; the estimation desk prices whatever isn't in the
 catalog and sends it back.
 

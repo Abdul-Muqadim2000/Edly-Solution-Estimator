@@ -4,6 +4,7 @@ import { useApp } from '@/state/AppProvider';
 import { color, font, shadow } from '@/theme';
 import { Link } from '@/components/ui';
 import { useFocus, useHover } from '@/lib/useHover';
+import { QuotientLogo } from '@/components/Brand';
 
 /** The demo gate. Real auth belongs in front of the deployment — see README. */
 
@@ -31,7 +32,11 @@ function AuthField({
         style={{
           marginTop: 5,
           width: '100%',
-          border: `1px solid ${color.rule}`,
+          /* longhand, because focus changes only the colour: React warns when a rerender drops a
+             longhand that overrode a shorthand, and the border can then render stale */
+          borderWidth: 1,
+          borderStyle: 'solid',
+          borderColor: focus.on ? color.brand : color.rule,
           borderRadius: 9,
           padding: '11px 12px',
           fontSize: 14,
@@ -43,7 +48,7 @@ function AuthField({
           background: color.fieldBg,
           outline: 'none',
           boxSizing: 'border-box',
-          ...(focus.on ? { borderColor: color.brand, background: color.surface, boxShadow: `0 0 0 3px ${color.focusRing}` } : null)
+          ...(focus.on ? { background: color.surface, boxShadow: `0 0 0 3px ${color.focusRing}` } : null)
         }}
       />
     </label>
@@ -115,7 +120,7 @@ export function SignIn(): JSX.Element {
     >
       <div style={{ width: '100%', maxWidth: 432 }}>
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div style={{ fontFamily: font.display, fontWeight: 700, fontSize: 42, letterSpacing: -1, color: color.ink, lineHeight: 1 }}>edly</div>
+          <QuotientLogo height={40} style={{ margin: '0 auto' }} />
           <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 2.2, textTransform: 'uppercase', color: color.brandDeep, marginTop: 8 }}>
             Solutions Workspace · by Arbisoft
           </div>

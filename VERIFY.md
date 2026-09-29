@@ -45,21 +45,26 @@ to chunk across cells.
 Mounts the real `<App />` and walks a full session: sign in → practice → platform → estimation
 desk → tab switches → role swap → create an estimation → parse the catalog workbook → select
 solutions → rate card → assign a role → planner → staffing → presentation mode → back to the hub.
-**29 steps**, with a final check that nothing threw. On 2026-09-26, 26 of the 29 passed on both the
+**31 steps**, with a final check that nothing threw. On 2026-09-26, 26 of the 29 passed on both the
 committed code and the tender-intake branch, and on 2026-09-27 the same 26 passed on `main` and on
 the bundles-and-estimates branch: the desk's "Add to catalog" and "Estimations" tab steps
 and the timed hover probe fail on both, so they predate the tender work and are still to be looked into.
 On 2026-09-29, 25 of the 29 passed on both `main` (ca52a16) and the sales, account and legal
 branch: the two desk steps, "Interactive elements are wired for hover" and "Focus styling applies to
-form fields" fail on both, so the fourth failure predates that branch too.
+form fields" fail on both, so the fourth failure predates that branch too. Later that day the
+Quotient rename moved the edly.io chrome behind presentation mode (29 steps became 31): 27 of the
+31 passed on `feat/quotient-brand`, against 25 of 29 on `main` (800130c), with the same four
+failures on both.
 
-Six of those steps guard the *design and the feel*, not the logic. Two drive real `mouseover`
+Eight of those steps guard the *design and the feel*, not the logic. Two drive real `mouseover`
 and `focus` events and assert the computed style changes — React synthesises `onMouseEnter` from a
 delegated `mouseover`, so a synthetic `mouseenter` is ignored, and the probe retries because the
-first dispatch after a re-render can land before React re-attaches. The other four: the edly.io marketing header and its nav
-tree, the hero with its stat cards and credibility row, the sticky `Bundle Builder` bar, and the
-footer with all four link columns and the legal row. They exist because the first port shipped
-without any of it.
+first dispatch after a re-render can land before React re-attaches. The rest: the builder keeps the
+edly.io chrome off while sales works, the sticky Quotient `Bundle Builder` bar, and in presentation
+mode the edly.io marketing header and its nav tree, the hero with its stat cards and credibility
+row, and the footer with all four link columns and the legal row, then all three gone again when
+presenting stops. The edly.io nav and footer links exist only while presenting, so their hover
+probes run then. The chrome steps exist because the first port shipped without any of it.
 
 Calls to `/api/state` fail by design here — nothing is running behind them. That is itself worth
 watching: the sync pill should go red and say *nothing will be saved*, never fail silently.

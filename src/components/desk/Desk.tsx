@@ -28,7 +28,7 @@ export function Desk(): JSX.Element {
   const catChip = `${allSolutions(catalog).length} solutions · ${catalog.meta.compiled || 'catalog'}`;
 
   return (
-    <div style={{ minHeight: '100vh', background: color.page }}>
+    <div style={{ background: color.page }}>
       <AppHeader sticky>
         <span
           title="Catalog in use"

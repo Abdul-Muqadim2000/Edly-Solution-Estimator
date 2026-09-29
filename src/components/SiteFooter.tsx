@@ -4,9 +4,10 @@ import { useLayout } from '@/lib/useViewport';
 import { useHover } from '@/lib/useHover';
 
 /**
- * The edly.io footer, matching the marketing site. Renders below the sales screens.
+ * The edly.io footer, matching the marketing site. Renders below the builder while a deal is
+ * presented; the working screens end with Quotient's slim `AppFooter` instead.
  *
- * The newsletter field is presentational here — it points at the edly.io signup rather than
+ * The newsletter field is presentational here. It points at the edly.io signup rather than
  * posting anywhere, because this tool has no mailing-list backend.
  */
 
@@ -62,7 +63,7 @@ const COLUMNS: FooterColumn[] = [
 
 const linkStyle = { fontSize: 13, color: color.onDarkQuiet, textDecoration: 'none' } as const;
 
-/** Presentational, like the field beside it — this tool has no mailing-list backend. */
+/** Presentational, like the field beside it: this tool has no mailing-list backend. */
 function SubscribeButton(): JSX.Element {
   const h = useHover();
   return (

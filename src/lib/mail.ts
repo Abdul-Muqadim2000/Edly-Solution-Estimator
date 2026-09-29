@@ -1,5 +1,6 @@
 import type { EstimateRequest } from '@/types';
 import { copyText } from '@/lib/clipboard';
+import { PRODUCT_NAME } from '@/data/brand';
 
 /**
  * Emailing the estimation desk.
@@ -23,7 +24,7 @@ export function singleRequestEmail(request: EstimateRequest): { subject: string;
   const lines = [
     'Hi Edly team,',
     '',
-    'New custom estimate request from the Bundle Builder:',
+    `New custom estimate request from ${PRODUCT_NAME}:`,
     '',
     `${request.id} — ${request.title}`,
     `Details: ${request.details}`

@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize } from 'node:path';
 import ts from 'typescript';
 import { callDeadlineMs } from '../server/ai/anthropic';
+import { BRAND_FILES, PRODUCT_NAME } from '../src/data/brand';
 
 /**
  * `vercel.json`, checked before Vercel sees it. A mistake here fails the whole deployment, and
@@ -123,5 +124,53 @@ describe('API functions under Node', () => {
     /* `import type` from '@/types' is fine, because it is erased; a value import would crash */
     const aliased = graph.loads.filter((load) => /^@(server)?\//.test(load.specifier)).map((load) => `${load.from} -> ${load.specifier}`);
     expect(aliased).toEqual([]);
+  });
+});
+
+/**
+ * The static files the page names, checked against public/. A favicon link or a logo path that
+ * points at nothing fails silently everywhere: the browser shows its blank tab icon, the header
+ * shows a broken image, and no test or build step says a word.
+ */
+
+const indexHtml = readFileSync('index.html', 'utf8');
+
+/** Where a root-absolute URL from index.html lives in the source tree. */
+const publicFile = (url: string): string => join('public', url.replace(/^\//, ''));
+
+describe('index.html and public/', () => {
+  it('names the product in the tab', () => {
+    expect(indexHtml).toMatch(new RegExp(`<title>${PRODUCT_NAME}</title>`));
+  });
+
+  it('links a favicon, a touch icon and a manifest that are all shipped', () => {
+    const links = [...indexHtml.matchAll(/<link rel="(icon|apple-touch-icon|manifest)" href="([^"]+)"/g)].map((match) => ({
+      rel: match[1] ?? '',
+      href: match[2] ?? ''
+    }));
+    expect(links.map((link) => link.rel).sort()).toEqual(['apple-touch-icon', 'icon', 'icon', 'manifest']);
+    for (const link of links) {
+      /* root-absolute, so Vite serves it from public/ and a sub-path build can prefix it */
+      expect(link.href, link.rel).toMatch(/^\//);
+      expect(existsSync(publicFile(link.href)), link.href).toBe(true);
+    }
+  });
+
+  it("ships every icon the manifest lists, which resolve beside the manifest itself", () => {
+    const manifestUrl = /<link rel="manifest" href="([^"]+)"/.exec(indexHtml)?.[1] ?? '';
+    const manifest = JSON.parse(readFileSync(publicFile(manifestUrl), 'utf8')) as { name?: string; icons?: { src: string }[] };
+    expect(manifest.name).toBe(PRODUCT_NAME);
+    expect(manifest.icons?.length).toBeGreaterThan(0);
+    for (const icon of manifest.icons ?? []) {
+      expect(existsSync(join(dirname(publicFile(manifestUrl)), icon.src)), icon.src).toBe(true);
+    }
+  });
+
+  it('ships the logo and mark the working screens show, at relative paths', () => {
+    for (const path of Object.values(BRAND_FILES)) {
+      /* relative, so they resolve against <base href> like the catalog sheet, from any deep link */
+      expect(path, path).not.toMatch(/^\//);
+      expect(existsSync(join('public', path)), path).toBe(true);
+    }
   });
 });

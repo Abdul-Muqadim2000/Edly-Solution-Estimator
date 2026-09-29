@@ -39,9 +39,10 @@ src/
     useTenderRunner.ts  runs a tender's AI calls and dispatches what comes back
   api/client.ts         the only place the app calls the server
   components/
-    SiteHeader.tsx      edly.io marketing header — part of the product, not decoration
-    SiteFooter.tsx      edly.io footer
-    builder/Hero.tsx    hero, stat cards, credibility row
+    Brand.tsx           Quotient's logo, and the slim footer on the working screens
+    SiteHeader.tsx      edly.io marketing header, shown while a deal is presented
+    SiteFooter.tsx      edly.io footer, likewise
+    builder/Hero.tsx    hero, stat cards, credibility row, likewise
     builder/Builder.tsx three-column shell: rail | catalog | dark estimate column
     builder/BundleRail.tsx  the bundle rail (sidebar ≥1020px, wrapping row below) + bundle header
     builder/CatalogTable.tsx  the catalog grid table and its expandable rows
@@ -55,6 +56,7 @@ src/
     salesLegal/         the status and team pieces the tab, the apply step and the panel share
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links
+  data/brand.ts         the product name, Quotient, and its logo files in public/brand/
 server/                 runs in Node, never shipped to the browser
   schema.ts             app state ↔ spreadsheet rows
   store.ts              provider selection
@@ -285,15 +287,19 @@ lost, which is the point.
 `tests/router.test.ts` fails if the two disagree.
 
 **The builder is a three-column app shell**, not a page that scrolls as one. At ≥1320px the grid
-is `280px minmax(0,1fr) 400px` at `calc(100vh - 62px)`, so the rail and the running total stay
-put while the catalog scrolls; 1020–1320px narrows to `238px / 344px`; below 1020px it collapses
+is `280px minmax(0,1fr) 400px`, and the bar and the shell share one frame the height of the
+window, so the shell takes whatever height the bar leaves when it wraps. The rail and the running
+total stay put while the catalog scrolls; 1020–1320px narrows to `238px / 344px`; below 1020px it collapses
 to one column and the rail becomes a wrapping row of chips. The breakpoints live in
 `Builder.tsx` and read from `useViewport()` — inline styles cannot use media queries.
 
-**Branded chrome.** The sales screens render `SiteHeader` above and `SiteFooter` below, and the
-builder opens with `Hero`. This is deliberate: sales screen-share this tool with clients, so it has
-to look like edly.io, not like an internal admin panel. `verify-app.html` asserts all of it —
-if you restructure the shell, keep those four steps green.
+**Branded chrome.** The tool is Quotient: every working screen carries its logo in the header and
+a slim `AppFooter` below. What a client sees is Edly: while a deal is presented in the builder,
+`SiteHeader` goes above it, `Hero` opens it and `SiteFooter` replaces the slim footer, so a
+screen-share looks like edly.io rather than an internal admin panel. `showsSiteChrome` in the
+reducer decides it, and the hub, the tender screen and the desk never show it: the hub lists every
+client, and the other two are internal. `verify-app.html` asserts both states. If you restructure
+the shell, keep those steps green.
 
 ## What is deliberately not here
 

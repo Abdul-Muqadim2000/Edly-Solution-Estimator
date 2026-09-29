@@ -276,20 +276,18 @@
       ? catalogReady.value + ' solutions parsed from the sheet in ' + catalogReady.ms + ' ms'
       : (catalogBanner ? 'load failed — and the UI says so, which is the guard working' : 'catalog never populated within 8 s'));
 
-  /* 6b. the branded chrome: marketing header + hero + stat cards + credibility row */
-  const nav = all('nav a').map((a) => a.textContent.replace(/[▼\s]+$/, '').trim());
-  const hasNav = ['Product', 'Self Hosted', 'Industries', 'Services', 'Resources', 'Pricing'].every((label) => nav.includes(label));
-  const hasCtas = !!byText('a', /^Try for Free$/) && !!byText('a', /^Request a Demo$/);
-  step('Renders the edly.io marketing header', hasNav && hasCtas, hasNav ? nav.slice(0, 6).join(' · ') : 'nav items found: ' + nav.join(', '));
+  /* 6b. the edly.io chrome is for the client: while sales works, the builder is the tool alone.
+     Presenting brings the header, hero and footer back, which step 10 checks. */
+  const navLabels = () => all('nav a').map((a) => a.textContent.replace(/[▼\s]+$/, '').trim());
+  const marketingNav = () => ['Product', 'Self Hosted', 'Industries', 'Services', 'Resources', 'Pricing'].every((label) => navLabels().includes(label));
+  const heroShown = () => !!byText('h1', /Client-proven Open edX solutions/);
+  const edlyFooter = () => all('footer').find((f) => /registered trademarks of edX Inc/.test(f.textContent));
+  const appFooter = () => !!document.querySelector('#stage footer[data-screen-label="App footer"]');
+  step('Keeps the edly.io header, hero and footer off while working', !marketingNav() && !heroShown() && !edlyFooter() && appFooter(),
+    'marketing nav: ' + marketingNav() + ' · hero: ' + heroShown() + ' · edly.io footer: ' + !!edlyFooter() + ' · Quotient footer: ' + appFooter());
 
-  const heroTitle = byText('h1', /Client-proven Open edX solutions/);
-  const hasStats = /sellable bundles/.test(text()) && /core Open edX contributor since/.test(text());
-  const hasTeams = /Built with teams behind/i.test(text()) && /MIT Open Learning/.test(text());
-  step('Renders the hero, stat cards and credibility row', !!heroTitle && hasStats && hasTeams,
-    (heroTitle ? 'headline ✓' : 'headline MISSING') + ' · ' + (hasStats ? 'stat cards ✓' : 'stat cards MISSING') + ' · ' + (hasTeams ? 'teams row ✓' : 'teams row MISSING'));
-
-  const hasBar = /Bundle Builder/i.test(text()) && !!all('input').find((i) => /Search \d+/.test(i.placeholder || ''));
-  step('Renders the sticky bundle-builder bar', hasBar, hasBar ? 'edly | BUNDLE BUILDER | search | role | platform' : 'bar missing');
+  const hasBar = /Bundle Builder/i.test(text()) && !!all('img[alt="Quotient"]').length && !!all('input').find((i) => /Search \d+/.test(i.placeholder || ''));
+  step('Renders the sticky bundle-builder bar', hasBar, hasBar ? 'Quotient | BUNDLE BUILDER | search | role | platform' : 'bar missing');
 
   /* the three-column app shell: bundle rail | catalog | dark estimate panel */
   const rail = all('nav').find((n) => /All estimations/.test(n.innerText));
@@ -303,12 +301,6 @@
     ' · rail rows: ' + railRows +
     ' · aside: ' + (aside ? getComputedStyle(aside).backgroundColor : 'none') +
     ' · viewport ' + window.innerWidth + 'px (' + (narrowRun ? 'narrow: rail is a wrapping row' : 'desktop: three columns') + ')');
-
-  const footer = document.querySelector('#stage footer');
-  const footerCols = footer ? ['Industries', 'Services', 'Resources', 'About'].every((t) => footer.textContent.includes(t)) : false;
-  const footerLegal = footer ? /registered trademarks of edX Inc/.test(footer.textContent) && /Privacy Policy/.test(footer.textContent) : false;
-  step('Renders the edly.io footer', footerCols && footerLegal,
-    footer ? (footerCols ? 'all four link columns' : 'columns MISSING') + ' · ' + (footerLegal ? 'legal row ✓' : 'legal row MISSING') : 'no footer element');
 
   /* 7. select solutions — enough hours that the schedule is above the half-week floor,
      otherwise the staffing assertion below proves nothing */
@@ -362,20 +354,6 @@
     click(all('button').find((b) => b.textContent.trim() === '×')); await wait(400);
   }
 
-  /* 10. present mode */
-  click(byText('button', /Present to client/));
-  await wait(500);
-  const presenting = /● Presenting/.test(text());
-  step('Presentation mode hides the economics', presenting && !/Engineered/.test(text()), presenting ? 'savings and controls hidden' : 'toggle did not engage');
-  click(byText('button', /Presenting/)); await wait(300);
-
-  /* 11. back out */
-  click(byText('button', /All estimations/));
-  await wait(600);
-  step('Returns to the hub with the estimation saved', /Smoke test deal/.test(text()), (text().match(/Smoke test deal/) || [])[0] || '');
-
-  /* 11b. interaction states — React maps onMouseEnter from delegated mouseover, so a synthetic
-     'mouseenter' never reaches it; dispatch 'mouseover' with an outside relatedTarget. */
   /* React synthesises onMouseEnter from a delegated 'mouseover' whose relatedTarget sits outside
      the element — a synthetic 'mouseenter' is ignored. Takes a GETTER, not a node: hovering a nav
      item opens its dropdown, which re-renders the header, and a held reference can go stale. */
@@ -401,10 +379,52 @@
     return { label, ok: false, detail: label + ' ' + prop + ': no change after 4 attempts (' + before + ')' };
   };
 
-  const probes = [
+  /* 10. present mode */
+  click(byText('button', /Present to client/));
+  await wait(500);
+  const presenting = /● Presenting/.test(text());
+  step('Presentation mode hides the economics', presenting && !/Engineered/.test(text()), presenting ? 'savings and controls hidden' : 'toggle did not engage');
+
+  /* what the client sees: the edly.io marketing header, the hero with its stat cards and
+     credibility row, and the edly.io footer */
+  const nav = navLabels();
+  const hasCtas = !!byText('a', /^Try for Free$/) && !!byText('a', /^Request a Demo$/);
+  step('Presenting shows the edly.io marketing header', marketingNav() && hasCtas, marketingNav() ? nav.slice(0, 6).join(' · ') : 'nav items found: ' + nav.join(', '));
+
+  const hasStats = /sellable bundles/.test(text()) && /core Open edX contributor since/.test(text());
+  const hasTeams = /Built with teams behind/i.test(text()) && /MIT Open Learning/.test(text());
+  step('Presenting shows the hero, stat cards and credibility row', heroShown() && hasStats && hasTeams,
+    (heroShown() ? 'headline ✓' : 'headline MISSING') + ' · ' + (hasStats ? 'stat cards ✓' : 'stat cards MISSING') + ' · ' + (hasTeams ? 'teams row ✓' : 'teams row MISSING'));
+
+  const footer = edlyFooter();
+  const footerCols = footer ? ['Industries', 'Services', 'Resources', 'About'].every((t) => footer.textContent.includes(t)) : false;
+  const footerLegal = footer ? /Privacy Policy/.test(footer.textContent) : false;
+  step('Presenting shows the edly.io footer', footerCols && footerLegal && !appFooter(),
+    footer ? (footerCols ? 'all four link columns' : 'columns MISSING') + ' · ' + (footerLegal ? 'legal row ✓' : 'legal row MISSING') : 'no edly.io footer');
+
+  /* the edly.io links exist only while presenting, so their hover states are read here, and the
+     durations are kept as strings: a detached node would report '' and pass for wired */
+  const chromeProbes = [
     await hoverProbe('nav link', () => all('nav a')[0], 'color'),
+    await hoverProbe('footer link', () => { const f = edlyFooter(); return f ? f.querySelector('a') : null; }, 'color')
+  ];
+  const durationOf = (el) => (el ? getComputedStyle(el).transitionDuration : '');
+  const chromeWired = [['nav link', durationOf(all('nav a')[0])], ['footer link', durationOf(edlyFooter() && edlyFooter().querySelector('a'))]];
+
+  click(byText('button', /Presenting/)); await wait(300);
+  step('Stopping presenting takes the edly.io chrome away again', !marketingNav() && !heroShown() && !edlyFooter() && appFooter());
+
+  /* 11. back out */
+  click(byText('button', /All estimations/));
+  await wait(600);
+  step('Returns to the hub with the estimation saved', /Smoke test deal/.test(text()), (text().match(/Smoke test deal/) || [])[0] || '');
+
+  /* 11b. interaction states — React maps onMouseEnter from delegated mouseover, so a synthetic
+     'mouseenter' never reaches it; dispatch 'mouseover' with an outside relatedTarget. */
+  const probes = [
+    chromeProbes[0],
     await hoverProbe('primary button', () => byText('button', /New estimation/i) || byText('button', /Build your bundle/i), 'backgroundColor'),
-    await hoverProbe('footer link', () => all('footer a')[0], 'color'),
+    chromeProbes[1],
     await hoverProbe('estimation card', () => all('div').find((d) => /transform/.test(getComputedStyle(d).transitionProperty) && /Smoke test deal/.test(d.textContent)), 'boxShadow')
   ];
   const firing = probes.filter((p) => p.ok).length;
@@ -412,14 +432,14 @@
   /* Deterministic half: every interactive element must route through a hover-aware primitive,
      which is observable as a declared CSS transition. This cannot flake. */
   const wiredTargets = [
-    ['nav link', all('nav a')[0]],
-    ['button', byText('button', /New estimation/i) || all('button')[0]],
-    ['footer link', all('footer a')[0]],
-    ['card', all('div').find((d) => /transform/.test(getComputedStyle(d).transitionProperty))]
+    chromeWired[0],
+    ['button', durationOf(byText('button', /New estimation/i) || all('button')[0])],
+    chromeWired[1],
+    ['card', durationOf(all('div').find((d) => /transform/.test(getComputedStyle(d).transitionProperty)))]
   ];
-  const wired = wiredTargets.filter(([, el]) => el && getComputedStyle(el).transitionDuration !== '0s');
+  const wired = wiredTargets.filter(([, duration]) => duration && duration !== '0s');
   step('Interactive elements are wired for hover', wired.length === wiredTargets.length,
-    wired.map(([label, el]) => label + ' ' + getComputedStyle(el).transitionDuration.split(',')[0].trim()).join(' · ') ||
+    wired.map(([label, duration]) => label + ' ' + duration.split(',')[0].trim()).join(' · ') ||
       'no transitions found');
 
   /* Advisory half: drive real pointer events. Synthetic mouseover is unreliable late in a long

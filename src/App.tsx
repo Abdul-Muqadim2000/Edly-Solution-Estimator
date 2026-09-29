@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { AppProvider, useApp } from '@/state/AppProvider';
 import { SignIn } from '@/components/SignIn';
 import { SiteHeader } from '@/components/SiteHeader';
@@ -8,8 +9,25 @@ import { Builder } from '@/components/builder/Builder';
 import { Desk } from '@/components/desk/Desk';
 import { TenderWorkspace } from '@/components/tender/TenderWorkspace';
 import { SyncPill } from '@/components/AppHeader';
+import { AppFooter } from '@/components/Brand';
 import { QuoteSheet } from '@/components/QuoteSheet';
+import { showsSiteChrome } from '@/state/reducer';
 import { color } from '@/theme';
+
+/**
+ * A screen with its header and footer, the footer held at the bottom of the window when the screen
+ * is shorter than it. The three slots never move, so switching presenting on or off adds the
+ * edly.io header without remounting the builder under it: its search and open panels survive.
+ */
+function Framed({ header, children, footer }: { header?: ReactNode; children: ReactNode; footer: ReactNode }): JSX.Element {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: color.page }}>
+      {header ?? null}
+      <div style={{ flex: '1 0 auto' }}>{children}</div>
+      {footer}
+    </div>
+  );
+}
 
 /**
  * Which screen shows still follows from state, and deliberately so. The URL is a projection of
@@ -20,11 +38,15 @@ import { color } from '@/theme';
  *   not signed in             → SignIn                          /
  *   no platform chosen        → PracticePicker                  /practices[/:practice]
  *   estimator                 → Desk                            /p/:platform/desk[/…]
- *   sales, no estimation open → SiteHeader + EstimationsHub      /p/:platform
- *   sales, estimation open    → SiteHeader + Builder             /p/:platform/e/:slug[/b/:bundle]
- *   sales, tender open        → SiteHeader + TenderWorkspace     /p/:platform/t/:slug
+ *   sales, no estimation open → EstimationsHub                  /p/:platform
+ *   sales, estimation open    → Builder                         /p/:platform/e/:slug[/b/:bundle]
+ *   sales, tender open        → TenderWorkspace                 /p/:platform/t/:slug
  *
- * Sign-in is a client-side gate, so a deep link is not an access grant — it only decides which
+ * Every screen after sign-in ends with Quotient's own footer, except the builder while a deal is
+ * presented: then the edly.io header sits above it and the edly.io footer below (`showsSiteChrome`),
+ * because that is what the client is watching.
+ *
+ * Sign-in is a client-side gate, so a deep link is not an access grant. It only decides which
  * screen someone who has already signed in lands on. See the README on putting real auth in front.
  */
 function Screens(): JSX.Element {
@@ -34,15 +56,14 @@ function Screens(): JSX.Element {
     return <div style={{ minHeight: '100vh', background: color.page }} />;
   }
   if (!state.auth) return <SignIn />;
-  if (!state.platform) return <PracticePicker />;
-  if (state.auth.role === 'estimator') return <Desk />;
-  /* sales screens carry the edly.io marketing chrome above them — clients see this on a screen-share */
+  if (!state.platform) return <Framed footer={<AppFooter />}><PracticePicker /></Framed>;
+  if (state.auth.role === 'estimator') return <Framed footer={<AppFooter />}><Desk /></Framed>;
+
+  const chrome = showsSiteChrome(state);
   return (
-    <>
-      <SiteHeader />
+    <Framed header={chrome ? <SiteHeader /> : null} footer={chrome ? <SiteFooter /> : <AppFooter />}>
       {state.openTender ? <TenderWorkspace /> : state.openEstimation ? <Builder /> : <EstimationsHub />}
-      <SiteFooter />
-    </>
+    </Framed>
   );
 }
 

@@ -6,6 +6,7 @@ import {
   DEFAULT_DISPLAY,
   effectiveDisplay,
   EMPTY_SNAPSHOT,
+  showsSiteChrome,
   findEstimation,
   INITIAL_STATE,
   openEstimationRecord,
@@ -681,6 +682,50 @@ describe('what the client is allowed to see', () => {
     /* otherwise the toggle appears dead: you flip "show money" and nothing happens */
     expect(next.presenting).toBe(false);
     expect(next.display.money).toBe(true);
+  });
+});
+
+describe('when the edly.io header, hero and footer show', () => {
+  const inBuilder = workspace({ estimations: [estimation('EST-1')], openEstimation: 'EST-1' });
+
+  it('keeps them off while sales works in the builder, so the tool fills the window', () => {
+    expect(showsSiteChrome(inBuilder)).toBe(false);
+  });
+
+  it('shows them once the deal is presented to the client, and drops them when presenting stops', () => {
+    const presenting = reducer(inBuilder, { type: 'togglePresenting' });
+    expect(showsSiteChrome(presenting)).toBe(true);
+    expect(showsSiteChrome(reducer(presenting, { type: 'togglePresenting' }))).toBe(false);
+  });
+
+  it('drops them when a Display switch ends presenting', () => {
+    /* the switch exits presenting, and the client view goes with it rather than lingering half-on */
+    const presenting = reducer(inBuilder, { type: 'togglePresenting' });
+    expect(showsSiteChrome(reducer(presenting, { type: 'setDisplay', patch: { money: true } }))).toBe(false);
+  });
+
+  it('never shows them on the hub, which lists every client, even while presenting', () => {
+    const hub = reducer(workspace({ estimations: [estimation('EST-1')] }), { type: 'togglePresenting' });
+    expect(hub.presenting).toBe(true);
+    expect(showsSiteChrome(hub)).toBe(false);
+  });
+
+  it('never shows them on the tender screen, which is internal', () => {
+    const tender = reducer(workspace({ openTender: 'TND-1' }), { type: 'togglePresenting' });
+    expect(showsSiteChrome(tender)).toBe(false);
+  });
+
+  it('never shows them at the desk, which keeps the deal open behind it', () => {
+    /* ducking into the desk leaves openEstimation set so the pill can return to the deal */
+    const desk = { ...reducer(inBuilder, { type: 'togglePresenting' }), auth: { user: 'admin', role: 'estimator' as const, at: 0 } };
+    expect(desk.openEstimation).toBe('EST-1');
+    expect(showsSiteChrome(desk)).toBe(false);
+  });
+
+  it('never shows them before sign-in or before a platform is chosen', () => {
+    const presenting = reducer(inBuilder, { type: 'togglePresenting' });
+    expect(showsSiteChrome({ ...presenting, auth: null })).toBe(false);
+    expect(showsSiteChrome({ ...presenting, platform: '' })).toBe(false);
   });
 });
 

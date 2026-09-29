@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '@/state/AppProvider';
-import { catalogSourceLabel, openEstimationRecord, salesLegalFor } from '@/state/reducer';
+import { catalogSourceLabel, openEstimationRecord, salesLegalFor, showsSiteChrome } from '@/state/reducer';
 import { ALL_BUNDLES } from '@/lib/router';
 import { allSolutions, bundlesOfKind, kindCounts, solutionKind, type CatalogKind } from '@/domain/catalog';
 import { color, dueInfo, font, radius, tagStyle } from '@/theme';
@@ -10,6 +10,7 @@ import { useLayout } from '@/lib/useViewport';
 import { EDLY_LINKS } from '@/data/nav';
 import { Button, Link, SearchInput } from '@/components/ui';
 import { HeaderPill, UserChip } from '@/components/AppHeader';
+import { QuotientLogo } from '@/components/Brand';
 import { useHover } from '@/lib/useHover';
 import { BundleHeader, BundleRail, railEntries } from '@/components/builder/BundleRail';
 import { CatalogTable, type CatalogRow } from '@/components/builder/CatalogTable';
@@ -26,7 +27,9 @@ import { SheetPanel } from '@/components/builder/SheetPanel';
 import { SummaryPanel } from '@/components/builder/SummaryPanel';
 
 /**
- * The bundle builder: a three-column app shell under the hero.
+ * The bundle builder: a three-column app shell. While a deal is presented, the edly.io header
+ * and the hero sit above it, because that is what the client sees; while sales works, it is the
+ * tool alone and fills the window.
  *
  *   rail (bundles) | catalog table | dark estimate panel
  *
@@ -60,7 +63,14 @@ export function Builder(): JSX.Element {
   const [importOpen, setImportOpen] = useState(false);
   const [requestFlash, setRequestFlash] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
-  const shellRef = useRef<HTMLDivElement | null>(null);
+  const toolRef = useRef<HTMLDivElement | null>(null);
+
+  /* Presenting opens on the hero, which is the pitch, and "Build your bundle" takes the client down
+     to the tool. Stopping needs no scroll: the chrome above goes, and the tool is what is left. */
+  const chrome = showsSiteChrome(state);
+  useEffect(() => {
+    if (chrome) window.scrollTo({ top: 0 });
+  }, [chrome]);
 
   const routeSearch = router.route.q ?? '';
   useEffect(() => {
@@ -157,303 +167,310 @@ export function Builder(): JSX.Element {
 
   return (
     <div style={{ background: color.page }}>
-      <Hero onBuild={() => window.scrollTo({ top: shellRef.current?.offsetTop ?? 0, behavior: 'smooth' })} />
+      {chrome ? <Hero onBuild={() => window.scrollTo({ top: toolRef.current?.offsetTop ?? 0, behavior: 'smooth' })} /> : null}
 
-      <header
-        style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 50,
-          minHeight: HEADER_H,
-          background: color.surface,
-          borderBottom: `1px solid ${color.hairline}`,
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: '10px 18px',
-          padding: '10px 20px'
-        }}
-      >
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 14 }}>
-          <div style={{ fontFamily: font.display, fontWeight: 700, fontSize: 27, letterSpacing: -0.5, color: color.ink, lineHeight: 1 }}>edly</div>
-          <div style={{ width: 1, height: 24, background: color.hairline }} />
-          <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 1.6, textTransform: 'uppercase', color: color.muted }}>Bundle Builder</div>
-          <BackToHub onClick={() => router.navigate({ screen: 'hub', estimation: undefined })} />
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: color.brandDeep,
-              background: color.brandWash,
-              borderRadius: radius.pill,
-              padding: '7px 13px',
-              maxWidth: 230,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            {estChipLabel}
-          </span>
-          {estimation?.tag ? (
-            <span style={{ fontSize: 11, fontWeight: 700, borderRadius: radius.pill, padding: '5px 11px', background: tagStyle(estimation.tag).bg, color: tagStyle(estimation.tag).co }}>
-              {estimation.tag}
-            </span>
-          ) : null}
-          {due ? (
-            <span style={{ fontSize: 11, fontWeight: 700, borderRadius: radius.pill, padding: '5px 11px', background: due.bg, color: due.co }}>{due.label}</span>
-          ) : null}
-        </div>
-
-        <div style={{ flex: '1 1 240px', display: 'flex', justifyContent: 'center' }}>
-          <SearchInput
-            value={search}
-            onChange={setSearch}
-            placeholder={`Search ${everySolution.length} ${platformLabel} solutions…`}
-            style={{ width: '100%', maxWidth: 460, height: 38, padding: '0 18px', fontSize: 13.5, background: color.fieldBg }}
-          />
-        </div>
-
-        <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-          <UserChip>
-            {state.auth?.user ?? ''} · {state.auth?.role === 'estimator' ? 'Estimator' : 'Sales'}
-          </UserChip>
-          <HeaderPill onClick={() => router.navigate({ screen: 'desk', estimation: undefined })}>⇄ Estimation desk</HeaderPill>
-          <HeaderPill danger onClick={() => dispatch({ type: 'signOut' })}>
-            Logout
-          </HeaderPill>
-          <span
-            title="Practice and platform in play — switch from the estimations hub"
-            style={{ fontSize: 11, color: color.brandDeep, background: color.brandWash, borderRadius: radius.pill, padding: '6px 12px', whiteSpace: 'nowrap' }}
-          >
-            {crumb}
-          </span>
-          <HeaderPill
-            title="Catalog source — the master .xlsx this tool reads its solutions and hours from"
-            on={panel === 'catalog'}
-            onClick={() => setPanel(panel === 'catalog' ? '' : 'catalog')}
-          >
-            {state.autoAvail ? '📚 Catalog •' : '📚 Catalog'}
-          </HeaderPill>
-          {panel === 'catalog' ? (
-            <CatalogPanel
-              onClose={() => setPanel('')}
-              onImport={() => {
-                setPanel('');
-                setImportOpen(true);
+      {/* The bar and the shell share one frame the height of the window, so the shell takes what the
+          bar leaves. The bar wraps to a second row whenever its pills do not fit, as at 1440px, and
+          the old fixed guess of 62px ran the shell, and the foot of the running total, past the bottom
+          of the window. Narrow screens scroll as one page instead, with the bar pinned. */}
+      <div ref={toolRef} style={{ display: 'flex', flexDirection: 'column', height: narrow ? undefined : '100vh' }}>
+        <header
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 50,
+            flex: '0 0 auto',
+            minHeight: HEADER_H,
+            background: color.surface,
+            borderBottom: `1px solid ${color.hairline}`,
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '10px 18px',
+            padding: '10px 20px'
+          }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 14 }}>
+            <QuotientLogo height={24} />
+            <div style={{ width: 1, height: 24, background: color.hairline }} />
+            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 1.6, textTransform: 'uppercase', color: color.muted }}>Bundle Builder</div>
+            <BackToHub onClick={() => router.navigate({ screen: 'hub', estimation: undefined })} />
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: color.brandDeep,
+                background: color.brandWash,
+                borderRadius: radius.pill,
+                padding: '7px 13px',
+                maxWidth: 230,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
               }}
-            />
-          ) : null}
-          {!state.presenting ? (
-            <HeaderPill
-              title="Rate card — price senior, DevOps and QA hours separately instead of one blended rate"
-              on={panel === 'rates'}
-              onClick={() => setPanel(panel === 'rates' ? '' : 'rates')}
             >
-              💲 Rates{estimate.assignedH > 0 ? ` · ${hours(estimate.assignedH)} h priced` : ''}
-            </HeaderPill>
-          ) : null}
-          {panel === 'rates' ? <RatesPanel onClose={() => setPanel('')} /> : null}
-          <PresentButton on={state.presenting} onClick={() => dispatch({ type: 'togglePresenting' })} />
-          <HeaderPill on={panel === 'display'} onClick={() => setPanel(panel === 'display' ? '' : 'display')}>
-            ⚙ Display
-          </HeaderPill>
-          {panel === 'display' ? <DisplayPanel onClose={() => setPanel('')} /> : null}
-          {/* hidden while presenting, like Rates: it names the rate the sheet prices at */}
-          {!state.presenting ? (
-            <HeaderPill
-              title="What goes in the downloaded Excel sheet: columns, sheets, notes"
-              on={panel === 'sheet'}
-              onClick={() => setPanel(panel === 'sheet' ? '' : 'sheet')}
-            >
-              Excel sheet
-            </HeaderPill>
-          ) : null}
-          {panel === 'sheet' && !state.presenting ? <SheetPanel onClose={() => setPanel('')} /> : null}
-          {/* hidden while presenting too: "must hold a state security certification" is not for the client */}
-          {!state.presenting ? (
-            <HeaderPill
-              title="What this deal commits Edly to that is not software, for the sales, account and legal teams"
-              on={panel === 'legal'}
-              onClick={() => setPanel(panel === 'legal' ? '' : 'legal')}
-            >
-              Sales &amp; legal{openLegal > 0 ? ` · ${openLegal} open` : ''}
-            </HeaderPill>
-          ) : null}
-        </div>
-      </header>
-
-      <div
-        ref={shellRef}
-        style={{
-          height: layout.shellHeight,
-          display: 'grid',
-          gridTemplateColumns: layout.shellCols,
-          minHeight: 0
-        }}
-      >
-        <BundleRail
-          entries={entries}
-          active={searching ? '' : active || catalog.bundles[0]?.id || ALL}
-          narrow={narrow}
-          metaLine={`${everySolution.length} solutions · ${catalog.bundles.length} bundles · ${hours(catalog.meta.totals.buildHrs ?? 0)} h engineered`}
-          metaFoot={
-            state.presenting
-              ? `Catalog compiled ${catalog.meta.compiled || '—'}`
-              : `Compiled ${catalog.meta.compiled || '—'} · ${catalogSourceLabel(state)}`
-          }
-          estimationLabel={estimation?.name ?? ''}
-          onPick={goBundle}
-          onBack={() => router.navigate({ screen: 'hub', estimation: undefined })}
-        />
-
-        <main style={{ overflowY: layout.paneOverflow, minWidth: 0, padding: layout.mainPad }}>
-          <KindFilter kind={kind} counts={counts} onPick={pickKind} />
-
-          {searching ? (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>Search results</div>
-              <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>
-                {rows.length}
-                {rows.length === SEARCH_LIMIT ? '+' : ''} matches across all bundles{kind ? `, ${kind} only` : ''}
-              </div>
-            </div>
-          ) : null}
-
-          {!searching && active === ALL ? (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>
-                {kind === 'estimates' ? 'All estimates' : kind === 'bundles' ? 'All bundle features' : 'All solutions'}
-              </div>
-              <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>
-                {kind === 'estimates' ? 'Everything the desk has priced, à la carte. Tick any to add it.' : 'Every solution à la carte. Tick any to add it to your bundle.'}
-              </div>
-            </div>
-          ) : null}
-
-          {!searching && shownBundle ? (
-            <BundleHeader
-              bundle={shownBundle}
-              selectedCount={shownBundle.items.filter((item) => state.draft.sel[item.id]).length}
-              stat={bundleStat}
-              onSelectAll={() => dispatch({ type: 'selectMany', ids: shownBundle.items.map((item) => item.id), selected: true })}
-              onClear={() => dispatch({ type: 'selectMany', ids: shownBundle.items.map((item) => item.id), selected: false })}
-              onGoBundle={goBundle}
-            />
-          ) : null}
-
-          <CatalogTable rows={rows} narrow={narrow} showBundleTag={searching || active === ALL} onGoBundle={goBundle}>
-            {rows.length === 0 && !searching && kind ? (
-              <div style={{ padding: 40, textAlign: 'center', fontSize: 13.5, color: color.muted, borderTop: `1px solid ${color.hairlineSoft}`, lineHeight: 1.6 }}>
-                {activeBundle && hiddenInBundle > 0
-                  ? `No ${kind} in ${activeBundle.name}. Show All to see its ${hiddenInBundle} ${kind === 'estimates' ? 'bundle features' : 'estimates'}.`
-                  : kind === 'estimates'
-                    ? 'No estimates in this catalog yet. They arrive when the estimation desk prices a request, or from an estimates workbook.'
-                    : 'No bundle features in this catalog yet. They come from a bundles workbook.'}
-                <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <Button onClick={() => pickKind(null)}>Show all</Button>
-                  {!state.presenting ? <Button onClick={() => setImportOpen(true)}>Import from Excel</Button> : null}
-                </div>
-              </div>
+              {estChipLabel}
+            </span>
+            {estimation?.tag ? (
+              <span style={{ fontSize: 11, fontWeight: 700, borderRadius: radius.pill, padding: '5px 11px', background: tagStyle(estimation.tag).bg, color: tagStyle(estimation.tag).co }}>
+                {estimation.tag}
+              </span>
             ) : null}
-            {rows.length === 0 && (searching || !kind) ? (
-              <div style={{ padding: 40, textAlign: 'center', fontSize: 13.5, color: color.muted, borderTop: `1px solid ${color.hairlineSoft}` }}>
-                No matches in our pre-built catalog — try a broader term like payments, SSO or analytics.
-                <br />
-                Or go custom: Edly builds bespoke Open edX solutions for exactly this.{' '}
-                <Link href={EDLY_LINKS.contact} style={{ color: color.brandDeep, fontWeight: 700 }} hover={{ color: color.red, textDecoration: 'underline' }}>
-                  Contact us
-                </Link>
-                <div style={{ marginTop: 14 }}>
-                  <Button tone="primary" onClick={() => setRequestOpen(true)} style={{ borderRadius: 9, padding: '11px 20px', fontSize: 12.5 }}>
-                    Request an estimate for “{search.trim()}”
-                  </Button>
-                </div>
-              </div>
+            {due ? (
+              <span style={{ fontSize: 11, fontWeight: 700, borderRadius: radius.pill, padding: '5px 11px', background: due.bg, color: due.co }}>{due.label}</span>
             ) : null}
-          </CatalogTable>
-
-          <div
-            style={{
-              maxWidth: 1000,
-              marginTop: 18,
-              background: color.brandWash,
-              border: `1px solid ${color.brandEdgePale}`,
-              borderRadius: radius.lg,
-              padding: '18px 22px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 18,
-              flexWrap: 'wrap'
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 300 }}>
-              <div style={{ fontFamily: font.display, fontSize: 15.5, fontWeight: 600, color: color.brandInk }}>
-                Don’t see what you need? These are only our pre-built solutions.
-              </div>
-              <div style={{ fontSize: 13, color: color.brandInkSoft, lineHeight: 1.55, marginTop: 3 }}>
-                Edly designs and builds fully custom Open edX features, integrations and platforms — anything not in this catalog, we
-                scope and deliver for you.
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Link
-                href={EDLY_LINKS.customSolutions}
-                hover={{ background: color.redDeep, color: color.onSolid }}
-                style={{ background: color.red, color: color.onSolid, borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
-              >
-                Custom development
-              </Link>
-              <Link
-                href={EDLY_LINKS.contact}
-                hover={{ background: color.redWash, color: color.redInk }}
-                style={{ border: `1.5px solid ${color.red}`, color: color.redInk, borderRadius: 8, padding: '9px 16px', fontSize: 12.5, fontWeight: 700 }}
-              >
-                Contact us
-              </Link>
-              <Button
-                onClick={() => setRequestOpen(true)}
-                hover={{ background: color.black }}
-                style={{ background: color.ink, color: color.onSolid, border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
-              >
-                Request an estimate
-              </Button>
-            </div>
           </div>
 
-          {display.notes && !searching && catalog.meta.notes.length > 0 ? (
-            <div style={{ maxWidth: 1000, marginTop: 18, padding: '14px 18px', background: color.surfaceSoft, border: `1px dashed ${color.hairline}`, borderRadius: 12 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.ghostCool, marginBottom: 6 }}>
-                How to read these numbers — internal
-              </div>
-              {catalog.meta.notes.map((note) => (
-                <p key={note} style={{ fontSize: 11.5, color: color.muted, lineHeight: 1.6, margin: '4px 0', textWrap: 'pretty' }}>
-                  {note}
-                </p>
-              ))}
-            </div>
-          ) : null}
-        </main>
+          <div style={{ flex: '1 1 240px', display: 'flex', justifyContent: 'center' }}>
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder={`Search ${everySolution.length} ${platformLabel} solutions…`}
+              style={{ width: '100%', maxWidth: 460, height: 38, padding: '0 18px', fontSize: 13.5, background: color.fieldBg }}
+            />
+          </div>
 
-        <aside
+          <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            <UserChip>
+              {state.auth?.user ?? ''} · {state.auth?.role === 'estimator' ? 'Estimator' : 'Sales'}
+            </UserChip>
+            <HeaderPill onClick={() => router.navigate({ screen: 'desk', estimation: undefined })}>⇄ Estimation desk</HeaderPill>
+            <HeaderPill danger onClick={() => dispatch({ type: 'signOut' })}>
+              Logout
+            </HeaderPill>
+            <span
+              title="Practice and platform in play — switch from the estimations hub"
+              style={{ fontSize: 11, color: color.brandDeep, background: color.brandWash, borderRadius: radius.pill, padding: '6px 12px', whiteSpace: 'nowrap' }}
+            >
+              {crumb}
+            </span>
+            <HeaderPill
+              title="Catalog source — the master .xlsx this tool reads its solutions and hours from"
+              on={panel === 'catalog'}
+              onClick={() => setPanel(panel === 'catalog' ? '' : 'catalog')}
+            >
+              {state.autoAvail ? '📚 Catalog •' : '📚 Catalog'}
+            </HeaderPill>
+            {panel === 'catalog' ? (
+              <CatalogPanel
+                onClose={() => setPanel('')}
+                onImport={() => {
+                  setPanel('');
+                  setImportOpen(true);
+                }}
+              />
+            ) : null}
+            {!state.presenting ? (
+              <HeaderPill
+                title="Rate card — price senior, DevOps and QA hours separately instead of one blended rate"
+                on={panel === 'rates'}
+                onClick={() => setPanel(panel === 'rates' ? '' : 'rates')}
+              >
+                💲 Rates{estimate.assignedH > 0 ? ` · ${hours(estimate.assignedH)} h priced` : ''}
+              </HeaderPill>
+            ) : null}
+            {panel === 'rates' ? <RatesPanel onClose={() => setPanel('')} /> : null}
+            <PresentButton on={state.presenting} onClick={() => dispatch({ type: 'togglePresenting' })} />
+            <HeaderPill on={panel === 'display'} onClick={() => setPanel(panel === 'display' ? '' : 'display')}>
+              ⚙ Display
+            </HeaderPill>
+            {panel === 'display' ? <DisplayPanel onClose={() => setPanel('')} /> : null}
+            {/* hidden while presenting, like Rates: it names the rate the sheet prices at */}
+            {!state.presenting ? (
+              <HeaderPill
+                title="What goes in the downloaded Excel sheet: columns, sheets, notes"
+                on={panel === 'sheet'}
+                onClick={() => setPanel(panel === 'sheet' ? '' : 'sheet')}
+              >
+                Excel sheet
+              </HeaderPill>
+            ) : null}
+            {panel === 'sheet' && !state.presenting ? <SheetPanel onClose={() => setPanel('')} /> : null}
+            {/* hidden while presenting too: "must hold a state security certification" is not for the client */}
+            {!state.presenting ? (
+              <HeaderPill
+                title="What this deal commits Edly to that is not software, for the sales, account and legal teams"
+                on={panel === 'legal'}
+                onClick={() => setPanel(panel === 'legal' ? '' : 'legal')}
+              >
+                Sales &amp; legal{openLegal > 0 ? ` · ${openLegal} open` : ''}
+              </HeaderPill>
+            ) : null}
+          </div>
+        </header>
+
+        <div
           style={{
-            background: color.dark,
-            color: color.onSolid,
-            overflowY: layout.paneOverflow,
-            display: 'flex',
-            flexDirection: 'column',
+            flex: narrow ? undefined : '1 1 0',
+            display: 'grid',
+            gridTemplateColumns: layout.shellCols,
             minHeight: 0
           }}
         >
-          <SummaryPanel
-            onOpenPlanner={() => router.navigate({ plan: true })}
-            onOpenRequest={() => setRequestOpen(true)}
-            requestAdded={requestFlash}
+          <BundleRail
+            entries={entries}
+            active={searching ? '' : active || catalog.bundles[0]?.id || ALL}
+            narrow={narrow}
+            metaLine={`${everySolution.length} solutions · ${catalog.bundles.length} bundles · ${hours(catalog.meta.totals.buildHrs ?? 0)} h engineered`}
+            metaFoot={
+              state.presenting
+                ? `Catalog compiled ${catalog.meta.compiled || '—'}`
+                : `Compiled ${catalog.meta.compiled || '—'} · ${catalogSourceLabel(state)}`
+            }
+            estimationLabel={estimation?.name ?? ''}
+            onPick={goBundle}
+            onBack={() => router.navigate({ screen: 'hub', estimation: undefined })}
           />
-        </aside>
+
+          <main style={{ overflowY: layout.paneOverflow, minWidth: 0, padding: layout.mainPad }}>
+            <KindFilter kind={kind} counts={counts} onPick={pickKind} />
+
+            {searching ? (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>Search results</div>
+                <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>
+                  {rows.length}
+                  {rows.length === SEARCH_LIMIT ? '+' : ''} matches across all bundles{kind ? `, ${kind} only` : ''}
+                </div>
+              </div>
+            ) : null}
+
+            {!searching && active === ALL ? (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontFamily: font.display, fontSize: 21, fontWeight: 600 }}>
+                  {kind === 'estimates' ? 'All estimates' : kind === 'bundles' ? 'All bundle features' : 'All solutions'}
+                </div>
+                <div style={{ fontSize: 13, color: color.muted, marginTop: 2 }}>
+                  {kind === 'estimates' ? 'Everything the desk has priced, à la carte. Tick any to add it.' : 'Every solution à la carte. Tick any to add it to your bundle.'}
+                </div>
+              </div>
+            ) : null}
+
+            {!searching && shownBundle ? (
+              <BundleHeader
+                bundle={shownBundle}
+                selectedCount={shownBundle.items.filter((item) => state.draft.sel[item.id]).length}
+                stat={bundleStat}
+                onSelectAll={() => dispatch({ type: 'selectMany', ids: shownBundle.items.map((item) => item.id), selected: true })}
+                onClear={() => dispatch({ type: 'selectMany', ids: shownBundle.items.map((item) => item.id), selected: false })}
+                onGoBundle={goBundle}
+              />
+            ) : null}
+
+            <CatalogTable rows={rows} narrow={narrow} showBundleTag={searching || active === ALL} onGoBundle={goBundle}>
+              {rows.length === 0 && !searching && kind ? (
+                <div style={{ padding: 40, textAlign: 'center', fontSize: 13.5, color: color.muted, borderTop: `1px solid ${color.hairlineSoft}`, lineHeight: 1.6 }}>
+                  {activeBundle && hiddenInBundle > 0
+                    ? `No ${kind} in ${activeBundle.name}. Show All to see its ${hiddenInBundle} ${kind === 'estimates' ? 'bundle features' : 'estimates'}.`
+                    : kind === 'estimates'
+                      ? 'No estimates in this catalog yet. They arrive when the estimation desk prices a request, or from an estimates workbook.'
+                      : 'No bundle features in this catalog yet. They come from a bundles workbook.'}
+                  <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <Button onClick={() => pickKind(null)}>Show all</Button>
+                    {!state.presenting ? <Button onClick={() => setImportOpen(true)}>Import from Excel</Button> : null}
+                  </div>
+                </div>
+              ) : null}
+              {rows.length === 0 && (searching || !kind) ? (
+                <div style={{ padding: 40, textAlign: 'center', fontSize: 13.5, color: color.muted, borderTop: `1px solid ${color.hairlineSoft}` }}>
+                  No matches in our pre-built catalog — try a broader term like payments, SSO or analytics.
+                  <br />
+                  Or go custom: Edly builds bespoke Open edX solutions for exactly this.{' '}
+                  <Link href={EDLY_LINKS.contact} style={{ color: color.brandDeep, fontWeight: 700 }} hover={{ color: color.red, textDecoration: 'underline' }}>
+                    Contact us
+                  </Link>
+                  <div style={{ marginTop: 14 }}>
+                    <Button tone="primary" onClick={() => setRequestOpen(true)} style={{ borderRadius: 9, padding: '11px 20px', fontSize: 12.5 }}>
+                      Request an estimate for “{search.trim()}”
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </CatalogTable>
+
+            <div
+              style={{
+                maxWidth: 1000,
+                marginTop: 18,
+                background: color.brandWash,
+                border: `1px solid ${color.brandEdgePale}`,
+                borderRadius: radius.lg,
+                padding: '18px 22px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 18,
+                flexWrap: 'wrap'
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 300 }}>
+                <div style={{ fontFamily: font.display, fontSize: 15.5, fontWeight: 600, color: color.brandInk }}>
+                  Don’t see what you need? These are only our pre-built solutions.
+                </div>
+                <div style={{ fontSize: 13, color: color.brandInkSoft, lineHeight: 1.55, marginTop: 3 }}>
+                  Edly designs and builds fully custom Open edX features, integrations and platforms — anything not in this catalog, we
+                  scope and deliver for you.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Link
+                  href={EDLY_LINKS.customSolutions}
+                  hover={{ background: color.redDeep, color: color.onSolid }}
+                  style={{ background: color.red, color: color.onSolid, borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
+                >
+                  Custom development
+                </Link>
+                <Link
+                  href={EDLY_LINKS.contact}
+                  hover={{ background: color.redWash, color: color.redInk }}
+                  style={{ border: `1.5px solid ${color.red}`, color: color.redInk, borderRadius: 8, padding: '9px 16px', fontSize: 12.5, fontWeight: 700 }}
+                >
+                  Contact us
+                </Link>
+                <Button
+                  onClick={() => setRequestOpen(true)}
+                  hover={{ background: color.black }}
+                  style={{ background: color.ink, color: color.onSolid, border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: 12.5, fontWeight: 700 }}
+                >
+                  Request an estimate
+                </Button>
+              </div>
+            </div>
+
+            {display.notes && !searching && catalog.meta.notes.length > 0 ? (
+              <div style={{ maxWidth: 1000, marginTop: 18, padding: '14px 18px', background: color.surfaceSoft, border: `1px dashed ${color.hairline}`, borderRadius: 12 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.ghostCool, marginBottom: 6 }}>
+                  How to read these numbers — internal
+                </div>
+                {catalog.meta.notes.map((note) => (
+                  <p key={note} style={{ fontSize: 11.5, color: color.muted, lineHeight: 1.6, margin: '4px 0', textWrap: 'pretty' }}>
+                    {note}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </main>
+
+          <aside
+            style={{
+              background: color.dark,
+              color: color.onSolid,
+              overflowY: layout.paneOverflow,
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0
+            }}
+          >
+            <SummaryPanel
+              onOpenPlanner={() => router.navigate({ plan: true })}
+              onOpenRequest={() => setRequestOpen(true)}
+              requestAdded={requestFlash}
+            />
+          </aside>
+        </div>
       </div>
 
-      <div style={{ height: 48, background: color.page }} />
+      {/* breathing room above the edly.io footer, whose dark band would otherwise run into the estimate column */}
+      {chrome ? <div style={{ height: 48, background: color.page }} /> : null}
 
       {plannerOpen ? <Planner onClose={() => router.navigate({ plan: undefined })} /> : null}
       {/* a window over the page rather than a dropdown: each item needs room for what the tender says */}
@@ -518,7 +535,7 @@ function PresentButton({ on, onClick }: { on: boolean; onClick: () => void }): J
     <button
       type="button"
       onClick={onClick}
-      title="One click before screen-sharing — hides savings, buffers, internal notes and estimation controls"
+      title="One click before screen-sharing: shows the edly.io header and hero, and hides savings, buffers, internal notes and estimation controls"
       style={{
         border: `1.5px solid ${on ? color.red : color.rule}`,
         cursor: 'pointer',

@@ -45,7 +45,7 @@ export function TenderWorkspace(): JSX.Element {
 
   if (!tender) {
     return (
-      <div style={{ minHeight: 'calc(100vh - 74px)', background: color.page }}>
+      <div style={{ background: color.page }}>
         <AppHeader sticky />
         <main style={{ maxWidth: 880, margin: '0 auto', padding: '40px 24px' }}>
           <Empty title="That tender is not here" body="It may have been deleted, or it belongs to another platform." />
@@ -104,7 +104,7 @@ export function TenderWorkspace(): JSX.Element {
   const current = tender.stage === 'done' ? 'apply' : tender.stage;
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 74px)', background: color.page }}>
+    <div style={{ background: color.page }}>
       <AppHeader sticky />
       <main style={{ maxWidth: 1180, margin: '0 auto', padding: '28px 24px 40px' }}>
         {state.presenting ? (
