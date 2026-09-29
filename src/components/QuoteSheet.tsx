@@ -4,6 +4,7 @@ import { isLiveCatalog, findPlatform } from '@/data/practices';
 import { color, font } from '@/theme';
 import { hours, hours1, longDate, money, rateLabel } from '@/lib/format';
 import { lineNote } from '@/domain/taskBreakdown';
+import { PRODUCT_NAME } from '@/data/brand';
 
 /**
  * The printed quote.
@@ -192,8 +193,8 @@ export function QuoteSheet(): JSX.Element | null {
 
         <p style={{ fontSize: 10.5, color: color.faint, marginTop: 18, lineHeight: 1.65 }}>
           Engineering hours only. Add PM, QA and support overhead per delivery standards unless applied above. Third-party vendor
-          fees are payable by the client and are not included. Prepared with the Edly Bundle Builder · edly.io · Open edX® is a
-          registered trademark of edX Inc. This estimate covers pre-built solutions only; Edly also designs and builds fully
+          fees are payable by the client and are not included. Prepared by Edly (edly.io) with {PRODUCT_NAME}. Open edX® is
+          a registered trademark of edX Inc. This estimate covers pre-built solutions only; Edly also designs and builds fully
           custom Open edX solutions: edly.io/contact-us.
         </p>
       </div>

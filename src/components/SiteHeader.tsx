@@ -4,10 +4,11 @@ import { color, font, radius } from '@/theme';
 import { Link } from '@/components/ui';
 
 /**
- * The edly.io marketing header, sitting above the tool.
+ * The edly.io marketing header, above the builder while a deal is presented.
  *
- * It is part of the product: sales screen-share this, and the client should see the same chrome
- * as the public site. Links open on edly.io in a new tab.
+ * It is for the client: sales screen-share the builder, and the client should see the same chrome
+ * as the public site. While sales works it is off, and Quotient's own header is enough
+ * (`showsSiteChrome`). Links open on edly.io in a new tab.
  */
 export function SiteHeader(): JSX.Element {
   const [open, setOpen] = useState('');

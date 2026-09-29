@@ -26,7 +26,6 @@ export interface Layout {
   narrow: boolean;
   /** Full three-column shell, but tightened. */
   mid: boolean;
-  shellHeight: string;
   shellCols: string;
   paneOverflow: 'visible' | 'auto';
   mainPad: string;
@@ -58,7 +57,6 @@ export function useLayout(): Layout {
     width,
     narrow,
     mid,
-    shellHeight: narrow ? 'auto' : 'calc(100vh - 62px)',
     shellCols: narrow ? 'minmax(0, 1fr)' : mid ? '238px minmax(0, 1fr) 344px' : '280px minmax(0, 1fr) 400px',
     paneOverflow: narrow ? 'visible' : 'auto',
     mainPad: narrow ? '28px 18px 56px' : mid ? '32px 28px 64px' : '40px 44px 72px',

@@ -8,9 +8,10 @@ import { hours } from '@/lib/format';
 import { useLayout } from '@/lib/useViewport';
 
 /**
- * The builder hero.
+ * The builder hero, shown only while a deal is presented (`showsSiteChrome`): it is the pitch,
+ * and sales has the same figures in the rail while working.
  *
- * Open edX keeps its real, approved claims — 2013, 5,000+ upstream contributions, 40M+ learners.
+ * Open edX keeps its real, approved claims (2013, 5,000+ upstream contributions, 40M+ learners).
  * No other platform may borrow them: the benchmark platforms get copy that says the hours are
  * indicative and must be confirmed.
  */
@@ -35,12 +36,12 @@ export function Hero({ onBuild }: { onBuild: () => void }): JSX.Element {
     ? 'Edly has been a core contributor to Open edX since 2013, with 5,000+ upstream contributions and platforms trusted by 40M+ learners. Every bundled solution below was engineered for a real client, and anything marked Estimate is priced but not built yet. Pick what you need and see the effort instantly.'
     : ownSheet
       ? `Loaded from your ${platformName} sheet. Pick what the client needs and see the effort instantly.`
-      : `A benchmark catalog for ${platformName} — typical scopes and hours for this kind of work, here so you can shape a number in the meeting. Confirm anything you quote with the delivery team, or load your own sheet to replace it.`;
+      : `A benchmark catalog for ${platformName}: typical scopes and hours for this kind of work, here so you can shape a number in the meeting. Confirm anything you quote with the delivery team, or load your own sheet to replace it.`;
 
   const stats: { value: string; label: string }[] = [
     { value: String(total), label: live ? 'client-proven solutions' : ownSheet ? 'solutions in your sheet' : 'benchmark solutions' },
     { value: String(bundleCount), label: 'sellable bundles' },
-    { value: `${hours(engineered ?? 0)} h`, label: 'engineering already built — you reuse it' },
+    { value: `${hours(engineered ?? 0)} h`, label: 'engineering already built, yours to reuse' },
     { value: '2013', label: 'core Open edX contributor since' }
   ];
 
@@ -129,13 +130,13 @@ export function Hero({ onBuild }: { onBuild: () => void }): JSX.Element {
                 color: color.brandInk
               }}
             >
-              These bundles are only our pre-built work — don’t see what you need?{' '}
+              These bundles are only our pre-built work. Don’t see what you need?{' '}
               <Link
                 href={EDLY_LINKS.contact}
                 hover={{ color: color.red, textDecoration: 'underline' }}
                 style={{ color: color.red, fontWeight: 700 }}
               >
-                We build fully custom {platformName} solutions — contact us
+                We build fully custom {platformName} solutions: contact us
               </Link>
             </div>
           </div>

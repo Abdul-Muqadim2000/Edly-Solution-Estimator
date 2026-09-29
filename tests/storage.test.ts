@@ -502,6 +502,7 @@ describe('what a read of the store does to a tab', () => {
     lastSynced: 'agreed',
     local: 'agreed',
     localRows: 3,
+    overtaken: false,
     ...overrides
   });
 
@@ -538,6 +539,27 @@ describe('what a read of the store does to a tab', () => {
 
   it('follows a store that really was emptied when this tab holds nothing either', () => {
     expect(pullStep(read({ empty: true, localRows: 0 }))).toBe('update');
+  });
+
+  it('drops a read that one of this tab’s saves overtook, rather than roll the tab back to it', () => {
+    /* The read left before the save and came back after it: it holds the store as it was, the
+       tab and lastSynced both hold the saved change, so it looked like someone else's copy.
+       Applying it removed a desk request filed a second earlier, and the tab's next save then
+       removed it from the store too. */
+    expect(pullStep(read({ incoming: 'before the save', lastSynced: 'saved here', local: 'saved here', overtaken: true }))).toBe('ignore');
+  });
+
+  it('does not call a read its own save overtook a change by someone else', () => {
+    /* the pill would say "changed by someone else, reload to merge" about this tab's own save */
+    expect(pullStep(read({ incoming: 'before the save', lastSynced: 'saved here', local: 'edited since', overtaken: true }))).toBe('ignore');
+  });
+
+  it('still takes another tab’s copy when no save of this tab crossed the read', () => {
+    expect(pullStep(read({ incoming: 'from another tab', overtaken: false }))).toBe('update');
+  });
+
+  it('loads a first read whatever the save counter says, since no save runs before one', () => {
+    expect(pullStep(read({ hydrated: false, lastSynced: '', overtaken: true }))).toBe('hydrate');
   });
 });
 

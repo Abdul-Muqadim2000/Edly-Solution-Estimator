@@ -12,7 +12,8 @@ import { pullStep, unloadPlan } from '@/state/syncPolicy';
  *   1. Never push before a read has succeeded. An empty browser must not be able to overwrite
  *      the spreadsheet just because the network was down at boot.
  *   2. Never overwrite local edits with a background pull. If both sides changed, say so and let
- *      the person reload rather than silently picking a winner.
+ *      the person reload rather than silently picking a winner. A read that one of this tab's own
+ *      saves overtook is dropped: it shows the store from before that save.
  *   3. Never act on one read that says the store is empty. At boot, read again first; later, keep
  *      this tab's rows rather than blank them. See `pullStep` for why.
  */
@@ -76,6 +77,8 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
      solution, or in a new workspace's first seconds, never reached the store. */
   const owed = useRef(false);
   const failures = useRef(0);
+  /* saves this tab has started, so a read can tell whether one crossed it on the way */
+  const saves = useRef(0);
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef(snapshot);
   latest.current = snapshot;
@@ -106,6 +109,7 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
     inFlight.current = true;
     setStatus((s) => ({ ...s, tone: 'busy', message: 'saving…' }));
     try {
+      saves.current += 1;
       const result = await saveState(state, controller.signal);
       lastSynced.current = key;
       failures.current = 0;
@@ -133,6 +137,8 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
   }, [current]);
 
   const pull = useCallback(async (rechecked = false) => {
+    const savesBefore = saves.current;
+    const savingBefore = inFlight.current;
     try {
       const result = await fetchState();
       const store = shortStore(result.label);
@@ -154,7 +160,8 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
         incoming,
         lastSynced: lastSynced.current,
         local: syncKey(local),
-        localRows: countRows(local)
+        localRows: countRows(local),
+        overtaken: savingBefore || saves.current !== savesBefore
       });
 
       if (step === 'recheck') {

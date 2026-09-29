@@ -91,12 +91,12 @@ export function DisplayPanel({ onClose }: { onClose: () => void }): JSX.Element 
           key={row.key}
           row={row}
           on={display[row.key]}
-          /* setDisplay also clears presenting — see the reducer */
+          /* setDisplay also clears presenting: see the reducer */
           onFlip={() => dispatch({ type: 'setDisplay', patch: { [row.key]: !display[row.key] } })}
         />
       ))}
       <div style={{ fontSize: 11, color: color.faint, lineHeight: 1.5, borderTop: `1px solid ${color.hairlineSoft}`, marginTop: 8, padding: '8px 6px 0' }}>
-        “Present to client” overrides these while active; flipping a switch exits presenting.
+        “Present to client” overrides these while active, and adds the edly.io header and hero. Flipping a switch exits presenting.
       </div>
     </Popover>
   );

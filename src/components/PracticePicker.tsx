@@ -174,7 +174,7 @@ export function PracticePicker(): JSX.Element {
 
   if (chosen) {
     return (
-      <div style={{ minHeight: '100vh', background: color.page }}>
+      <div style={{ background: color.page }}>
         <AppHeader />
         <div style={{ maxWidth: 880, margin: '0 auto', padding: '52px 24px 80px' }}>
           <BackLink onClick={() => router.navigate({ screen: 'practices', practice: undefined })}>← All practices</BackLink>
@@ -197,11 +197,11 @@ export function PracticePicker(): JSX.Element {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: color.page }}>
+    <div style={{ background: color.page }}>
       <AppHeader />
       <div style={{ maxWidth: 940, margin: '0 auto', padding: '52px 24px 80px' }}>
         <div style={{ fontFamily: font.display, fontSize: 13, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: color.brandDeep }}>
-          edly · solution estimator
+          Solution estimator
         </div>
         <h1 style={{ fontFamily: font.display, fontSize: 34, fontWeight: 700, letterSpacing: -0.6, margin: '10px 0 0' }}>
           Where are you estimating today?

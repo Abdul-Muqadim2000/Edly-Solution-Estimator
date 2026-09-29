@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Action, AppState } from '@/state/reducer';
 import { openEstimationRecord, openTenderRecord } from '@/state/reducer';
-import { basePath, formatRoute, parseRoute, readAddress, routeHref, withoutSearch, type Route } from '@/lib/router';
+import { basePath, deepLinkReady, formatRoute, parseRoute, readAddress, routeHref, withoutSearch, type Route } from '@/lib/router';
 
 /**
  * The address bar and the reducer, kept in step.
@@ -19,6 +19,7 @@ import { basePath, formatRoute, parseRoute, readAddress, routeHref, withoutSearc
  *     and retried until the list contains it, or until the store has answered and we know it
  *     never will, at which point the route falls back to the hub rather than a blank screen. If
  *     the store never answers at all, `DEEP_LINK_GRACE_MS` stops that becoming a permanent wait.
+ *     The link is also held through the sign-in screen, and applied once someone signs in.
  *
  *  2. **Typing must not fill the history, but the planner must.** Every keystroke in the catalog
  *     search changes the route; pushing each one would make Back useless and trip the browser's
@@ -133,7 +134,8 @@ export function useRouting(state: AppState, dispatch: (action: Action) => void, 
   useEffect(() => {
     const want = pending.current;
     if (!want || !state.ready) return;
-    if (!resolves(state, want) && !storeSettled && !linkExpired) return;
+    /* held through the sign-in screen too, so a shared link opens its deal once someone signs in */
+    if (!deepLinkReady({ signedIn: Boolean(state.auth), found: resolves(state, want), storeSettled, expired: linkExpired })) return;
     pending.current = null;
     setView({ of: want.estimation, parts: viewOf(want) });
     dispatch({ type: 'applyRoute', route: want });

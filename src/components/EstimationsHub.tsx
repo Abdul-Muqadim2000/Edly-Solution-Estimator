@@ -128,7 +128,7 @@ export function EstimationsHub(): JSX.Element {
   };
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 74px)', background: color.page }}>
+    <div style={{ background: color.page }}>
       <AppHeader sticky />
       <main style={{ maxWidth: 1180, margin: '0 auto', padding: '32px 28px 90px' }}>
         {state.catalogError ? (

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ALL_BUNDLES,
   basePath,
+  deepLinkReady,
   formatRoute,
   parseRoute,
   readAddress,
@@ -262,6 +263,41 @@ const workspace = (over: Partial<AppState> = {}): AppState => ({
 
 const apply = (state: AppState, url: string): AppState => reducer(state, { type: 'applyRoute', route: parseRoute(url) });
 const run = (state: AppState, ...actions: Action[]): AppState => actions.reduce(reducer, state);
+
+describe('a link opened before signing in', () => {
+  const held = { signedIn: true, found: true, storeSettled: true, expired: false };
+
+  it('waits for the sign-in, even once the deal has loaded', () => {
+    /* applied before it, the reducer refused the link, the sign-in then opened the practice
+       picker, and a shared deal link never reached anyone who was not signed in already */
+    expect(deepLinkReady({ ...held, signedIn: false })).toBe(false);
+    expect(deepLinkReady({ ...held, signedIn: false, expired: true })).toBe(false);
+  });
+
+  it('opens once signed in and the deal is here', () => {
+    expect(deepLinkReady(held)).toBe(true);
+  });
+
+  it('waits past sign-in while the deal has not arrived and the store has not answered', () => {
+    expect(deepLinkReady({ ...held, found: false, storeSettled: false })).toBe(false);
+  });
+
+  it('stops waiting once the store has answered without it, or the grace period is over', () => {
+    expect(deepLinkReady({ ...held, found: false })).toBe(true);
+    expect(deepLinkReady({ ...held, found: false, storeSettled: false, expired: true })).toBe(true);
+  });
+
+  it('lands on the deal the link names when it is applied after the sign-in', () => {
+    const signedOut = workspace({ auth: null, practice: '', platform: '' });
+    /* what happened before: the link refused while signed out, then the sign-in */
+    expect(apply(signedOut, '/p/openedx/e/nordic-university')).toBe(signedOut);
+    const signedIn = reducer(signedOut, { type: 'signIn', user: 'admin', role: 'sales' });
+    expect(signedIn.platform).toBe('');
+    const opened = apply(signedIn, '/p/openedx/e/nordic-university');
+    expect(opened.platform).toBe('openedx');
+    expect(opened.openEstimation).toBe('EST-2');
+  });
+});
 
 describe('applyRoute', () => {
   it('opens the estimation a link names', () => {

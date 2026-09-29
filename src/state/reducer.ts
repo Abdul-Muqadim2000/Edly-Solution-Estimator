@@ -1517,6 +1517,19 @@ export function effectiveDisplay(state: AppState): DisplayPrefs {
   return state.display;
 }
 
+/**
+ * Whether the edly.io header, hero and footer show. They are for the client, so they appear only
+ * while sales presents a deal in the builder, and every working screen carries Quotient's own
+ * header and footer instead. The hub lists every client's deals and the tender screen is
+ * internal, so neither shows them even while presenting. The desk keeps the deal open behind it,
+ * which is why the role is checked and not only the open estimation.
+ */
+export function showsSiteChrome(state: AppState): boolean {
+  if (!state.presenting || !state.auth || !state.platform) return false;
+  /* the same tests App.tsx uses to pick the builder, so the two cannot disagree about the screen */
+  return state.auth.role !== 'estimator' && !state.openTender && Boolean(state.openEstimation);
+}
+
 /** The slice that belongs in the spreadsheet. */
 export function toPersisted(state: AppState): PersistedState {
   return {

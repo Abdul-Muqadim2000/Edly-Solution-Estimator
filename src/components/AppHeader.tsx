@@ -4,6 +4,7 @@ import { useApp } from '@/state/AppProvider';
 import { color, font, radius, shadow } from '@/theme';
 import { Button, Popover, Row, Spacer, useRowHover } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
+import { QuotientLogo } from '@/components/Brand';
 
 /** The signed-in chrome: brand, platform switcher, role swap, sign out, and the sync pill. */
 
@@ -185,7 +186,7 @@ export function AppHeader({ children, sticky }: { children?: ReactNode; sticky?:
         padding: sticky ? '12px 24px' : '12px 28px'
       }}
     >
-      <div style={{ fontFamily: font.display, fontWeight: 700, fontSize: 26, letterSpacing: -0.5, lineHeight: 1 }}>edly</div>
+      <QuotientLogo height={24} />
       {state.platform ? (
         <>
           <div style={{ width: 1, height: 22, background: color.hairline }} />

@@ -28,9 +28,13 @@ const PANEL = color.darkSoft;
 const EDGE = color.panelEdge;
 const AMBER = color.amberGlow;
 
+/* longhand, like the primitives in ui.tsx: focus swaps only borderColor, and React warns when a
+   rerender drops a longhand that sat on top of the shorthand */
 const darkFieldStyle: CSSProperties = {
   background: INK,
-  border: `1px solid ${EDGE}`,
+  borderWidth: 1,
+  borderStyle: 'solid',
+  borderColor: EDGE,
   borderRadius: 8,
   color: color.onSolid,
   padding: '8px 10px',
