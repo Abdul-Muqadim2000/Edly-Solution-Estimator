@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useApp } from '@/state/AppProvider';
-import { catalogSourceLabel } from '@/state/reducer';
+import { catalogSourceLabel, catalogWorkbooks, currentPlatform } from '@/state/reducer';
 import { allSolutions, kindCounts } from '@/domain/catalog';
+import { importedFiles } from '@/domain/estimateImport';
 import { isLiveCatalog } from '@/data/practices';
 import { plural } from '@/lib/format';
 import { color, font, radius } from '@/theme';
 import { Button, Mono, Popover, Row, useRowHover } from '@/components/ui';
 
-/** Where the catalog came from, and the way in for workbooks of bundles or of estimates. */
-export function CatalogPanel({ onClose, onImport }: { onClose: () => void; onImport: () => void }): JSX.Element {
+/** Where the catalog came from, the way in for workbooks of bundles or of estimates, and the way back out. */
+export function CatalogPanel({ onClose, onImport, onHistory }: { onClose: () => void; onImport: () => void; onHistory: () => void }): JSX.Element {
   const { state, catalog, resetCatalog, reloadCatalog } = useApp();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -21,6 +22,7 @@ export function CatalogPanel({ onClose, onImport }: { onClose: () => void; onImp
   /* offered whenever the copy in play did not come from the served sheet, or a newer one is out */
   const canReadLive = live && (source?.source === 'builtin' || source?.source === 'file' || Boolean(loaded?.meta.loaded) || state.autoAvail);
   const counts = kindCounts(catalog);
+  const imported = importedFiles(state.solutions, state.bundles, currentPlatform(state)).length + catalogWorkbooks(state).files.length;
 
   return (
     <Popover>
@@ -78,6 +80,15 @@ export function CatalogPanel({ onClose, onImport }: { onClose: () => void; onImp
           A bundles workbook of built features, or an estimates sheet of priced work. You see what it would change first.
         </span>
       </button>
+
+      {/* hidden while presenting: the file names can name other clients */}
+      {!state.presenting ? (
+        <Row gap={6} style={{ marginTop: 8 }}>
+          <Button size="sm" onClick={onHistory} title="See every workbook imported here, and delete one" hover={{ borderColor: color.brand, background: color.brandWash }}>
+            {imported > 0 ? `Import history (${imported})` : 'Import history'}
+          </Button>
+        </Row>
+      ) : null}
 
       {error ? (
         <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: color.redInk, background: color.redWash, borderRadius: 8, padding: '8px 10px', lineHeight: 1.5 }}>

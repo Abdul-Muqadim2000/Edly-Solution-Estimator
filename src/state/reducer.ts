@@ -47,7 +47,7 @@ import {
 } from '@/domain/tender';
 import { addTerms, copiedItems, deletable, handItem, patchItem, salesLegalDrafts, salesLegalItems, type ExtractedTerm, type HandItemInput, type SalesLegalPatch } from '@/domain/salesLegal';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
-import { planEstimateImport, type EstimateRow } from '@/domain/estimateImport';
+import { planEstimateImport, removeImported, type EstimateRow } from '@/domain/estimateImport';
 import { nextBundleId } from '@/domain/catalog';
 import type { ImportReview } from '@/domain/importReview';
 import { nextId, today, uniqueSlug } from '@/lib/format';
@@ -861,20 +861,12 @@ export function reducer(state: AppState, action: Action): AppState {
     /* Undoing an import takes its estimates out of every open selection, like removing one does,
        and the bundles its Area column made, unless the desk has since filed something else there. */
     case 'removeImport': {
-      const plat = platOf(state);
-      const mine = (one: { plat: string; imported?: string }): boolean => (one.plat || 'openedx') === plat && one.imported === action.file;
-      const gone = new Set(state.solutions.filter(mine).map((one) => one.id));
-      if (gone.size === 0) return state;
-      const solutions = state.solutions.filter((one) => !gone.has(one.id));
-      const occupied = new Set(solutions.map((one) => one.bundleId));
+      const removal = removeImported(state.solutions, state.bundles, platOf(state), action.file);
+      if (removal.removed.estimates === 0) return state;
+      const kept = new Set(removal.solutions.map((one) => one.id));
       const sel = { ...state.draft.sel };
-      for (const id of gone) delete sel[id];
-      return {
-        ...state,
-        solutions,
-        bundles: state.bundles.filter((bundle) => !(mine(bundle) && !occupied.has(bundle.id))),
-        draft: { ...state.draft, sel }
-      };
+      for (const one of state.solutions) if (!kept.has(one.id)) delete sel[one.id];
+      return { ...state, solutions: removal.solutions, bundles: removal.bundles, draft: { ...state.draft, sel } };
     }
 
     case 'moveSolutions': {
@@ -1441,6 +1433,28 @@ export function baseSourceOf(state: AppState): CatalogSource | null {
   if (loaded) return { source: 'file', ...loaded };
   if (state.loadedCatalogs[plat]) return state.catalogSource;
   return benchmarkCatalog(plat) ? { source: 'file', name: 'the benchmark set' } : null;
+}
+
+/** The master sheet served beside the app. An import added to it records it by this name. */
+export const SERVED_CATALOG_FILE = 'catalog-source.xlsx';
+
+/* What `sourceAfterImport` names the base an import was added to when that base was not a file:
+   going back to it is what removing the imports does, so it is never listed as one. */
+const STANDARD_BASES = new Set([SERVED_CATALOG_FILE, 'the master sheet', 'the benchmark set']);
+
+/**
+ * The bundles workbooks merged into this platform's catalog, oldest first, for the import history.
+ *
+ * Their rows carry no mark of the file they came from, so one cannot be taken out alone; the
+ * history offers the standard catalog back instead, which removes all of them. An empty list
+ * means the catalog in play is the served sheet or the benchmark set.
+ */
+export function catalogWorkbooks(state: AppState): { files: string[]; at: string } {
+  const base = baseSourceOf(state);
+  if (!state.loadedCatalogs[platOf(state)] || base?.source !== 'file') return { files: [], at: '' };
+  const loadedFrom = base.name ?? 'your sheet';
+  const files = [...(STANDARD_BASES.has(loadedFrom) ? [] : [loadedFrom]), ...(base.added ?? [])];
+  return files.length > 0 ? { files, at: base.at ?? '' } : { files: [], at: '' };
 }
 
 /**

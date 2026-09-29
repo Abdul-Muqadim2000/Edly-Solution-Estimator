@@ -20,6 +20,7 @@ import { DisplayPanel } from '@/components/builder/DisplayPanel';
 import { Hero } from '@/components/builder/Hero';
 import { KindFilter } from '@/components/builder/KindFilter';
 import { ImportModal } from '@/components/ImportModal';
+import { ImportHistory } from '@/components/ImportHistory';
 import { Planner } from '@/components/builder/Planner';
 import { RatesPanel } from '@/components/builder/RatesPanel';
 import { RequestModal } from '@/components/builder/RequestModal';
@@ -62,6 +63,7 @@ export function Builder(): JSX.Element {
   const [search, setSearch] = useState(router.route.q ?? '');
   const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display' | 'sheet' | 'legal'>('');
   const [importOpen, setImportOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [requestFlash, setRequestFlash] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   const toolRef = useRef<HTMLDivElement | null>(null);
@@ -266,6 +268,10 @@ export function Builder(): JSX.Element {
                 onImport={() => {
                   setPanel('');
                   setImportOpen(true);
+                }}
+                onHistory={() => {
+                  setPanel('');
+                  setHistoryOpen(true);
                 }}
               />
             ) : null}
@@ -494,6 +500,7 @@ export function Builder(): JSX.Element {
           }}
         />
       ) : null}
+      {historyOpen && !state.presenting ? <ImportHistory onClose={() => setHistoryOpen(false)} /> : null}
       {requestOpen ? (
         <RequestModal
           onClose={() => setRequestOpen(false)}

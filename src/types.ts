@@ -326,6 +326,8 @@ export interface AddedSolution {
   direct?: boolean;
   /** The estimates workbook it was imported from. Absent for anything priced in the app. */
   imported?: string;
+  /** The day an import last wrote it, ISO yyyy-mm-dd. Absent on rows imported before it was kept. */
+  importedOn?: string;
   /** The row's own reference in that workbook. Importing it again updates this estimate. */
   sourceId?: string;
   /** The client it was first estimated for, as the workbook says. */

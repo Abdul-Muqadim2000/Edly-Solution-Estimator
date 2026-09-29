@@ -44,7 +44,7 @@ export const COLUMNS = {
     'integrations', 'requestedBy', 'email', 'org', 'submitted', 'estimateHours', 'repeatHours',
     'catalogId', 'bundleId', 'estimatedBy', 'estimatedOn', 'note', 'tenderId', 'tenderRequirement', 'extraJson'
   ],
-  /* `integrations` and `estimationName` came later, and so did the four columns after `direct`,
+  /* `integrations` and `estimationName` came later, and so did the five columns after `direct`,
      which only an estimate imported from a workbook fills in. All are read by name and default
      when absent, so a sheet written before them still loads.
      `note` is the solution's Notes / Assumptions, its one note. A `limits` column used to sit
@@ -55,7 +55,7 @@ export const COLUMNS = {
   solutions: [
     'id', 'plat', 'bundleId', 'name', 'description', 'firstHours', 'repeatHours', 'form', 'deploy',
     'integrations', 'category', 'subCategory', 'account', 'note', 'fromRequest', 'estimationName',
-    'addedOn', 'direct', 'importedFrom', 'sourceId', 'client', 'estimatedBy'
+    'addedOn', 'direct', 'importedFrom', 'sourceId', 'client', 'estimatedBy', 'importedOn'
   ],
   bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn', 'importedFrom'],
   settings: ['key', 'valueJson'],
@@ -157,7 +157,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       s.repeat !== undefined && s.repeat !== null ? Number(s.repeat) : '',
       str(s.form), str(s.deploy), str(s.integrations), str(s.category), str(s.subCategory), str(s.account),
       str(s.notes), str(s.from), str(s.estName), str(s.estAt), s.direct ? 'yes' : '',
-      str(s.imported), str(s.sourceId), str(s.client), str(s.estBy)
+      str(s.imported), str(s.sourceId), str(s.client), str(s.estBy), str(s.importedOn)
     ]);
   }
   sheets[SHEETS.solutions] = solutions;
@@ -337,6 +337,7 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       if (r.sourceId) out.sourceId = r.sourceId;
       if (r.client) out.client = r.client;
       if (r.estimatedBy) out.estBy = r.estimatedBy;
+      if (r.importedOn) out.importedOn = r.importedOn;
       return out;
     })
     .filter((s) => s.id);
