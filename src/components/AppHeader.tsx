@@ -4,7 +4,9 @@ import { useApp } from '@/state/AppProvider';
 import { color, font, radius, shadow } from '@/theme';
 import { Button, Popover, Row, Spacer, useRowHover } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
-import { QuotientLogo } from '@/components/Brand';
+import { pressable } from '@/lib/pressable';
+import { HomeLogo } from '@/components/Nav';
+import { exactly, LANDING } from '@/lib/router';
 
 /** The signed-in chrome: brand, platform switcher, role swap, sign out, and the sync pill. */
 
@@ -68,11 +70,12 @@ export function HeaderPill({
   );
 }
 
-function SwitchRow({ name, live, on, onPick }: { name: string; live: boolean; on: boolean; onPick: () => void }): JSX.Element {
+/** One row of the switcher. `live` is absent on a row that is not a platform, which then shows no badge. */
+function SwitchRow({ name, live, on, onPick }: { name: string; live?: boolean; on: boolean; onPick: () => void }): JSX.Element {
   const hover = useRowHover({ background: color.surfaceMuted });
   return (
     <div
-      onClick={onPick}
+      {...pressable(onPick)}
       {...hover.bind}
       style={{
         display: 'flex',
@@ -88,9 +91,11 @@ function SwitchRow({ name, live, on, onPick }: { name: string; live: boolean; on
       }}
     >
       <span style={{ flex: 1, fontSize: 12.5, color: on ? color.brandDeep : color.inkSoft }}>{name}</span>
-      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: live ? color.brandDeep : color.amber }}>
-        {live ? 'Live' : 'Sample'}
-      </span>
+      {live === undefined ? null : (
+        <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: live ? color.brandDeep : color.amber }}>
+          {live ? 'Live' : 'Sample'}
+        </span>
+      )}
     </div>
   );
 }
@@ -140,6 +145,17 @@ export function PlatformSwitcher(): JSX.Element | null {
               })}
             </div>
           ))}
+          {/* the way back to the landing page, which this list only ever led away from */}
+          <div style={{ marginTop: 10 }}>
+            <SwitchRow
+              name="All practices ›"
+              on={false}
+              onPick={() => {
+                router.navigate(exactly(LANDING));
+                setOpen(false);
+              }}
+            />
+          </div>
           <div style={{ fontSize: 11, color: color.faint, lineHeight: 1.55, borderTop: `1px solid ${color.hairlineSoft}`, marginTop: 12, paddingTop: 9 }}>
             {state.auth?.role === 'estimator'
               ? 'The desk only shows work for the platform you have open.'
@@ -186,7 +202,7 @@ export function AppHeader({ children, sticky }: { children?: ReactNode; sticky?:
         padding: sticky ? '12px 24px' : '12px 28px'
       }}
     >
-      <QuotientLogo height={24} />
+      <HomeLogo />
       {state.platform ? (
         <>
           <div style={{ width: 1, height: 22, background: color.hairline }} />

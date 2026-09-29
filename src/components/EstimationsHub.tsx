@@ -6,7 +6,10 @@ import { openByEstimation } from '@/domain/salesLegal';
 import { calcEstimate } from '@/domain/estimate';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
 import { hours, money, plural } from '@/lib/format';
-import { findPlatform, isLiveCatalog } from '@/data/practices';
+import { isLiveCatalog } from '@/data/practices';
+import { LANDING, platformTrail } from '@/lib/router';
+import { pressable } from '@/lib/pressable';
+import { BackTo, Breadcrumbs } from '@/components/Nav';
 import { AppHeader } from '@/components/AppHeader';
 import { Banner, Button, Empty, Field, Mono, Row, SearchInput, Select, Spacer, Stat, useRowHover } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
@@ -110,8 +113,6 @@ export function EstimationsHub(): JSX.Element {
   );
   const totalHours = live.reduce((total, estimation) => total + Number(estimation.total ?? 0), 0);
   const sampleCatalog = !isLiveCatalog(state.platform) && !state.loadedCatalogs[state.platform];
-  const platformRef = findPlatform(state.platform);
-  const crumb = platformRef ? `${platformRef.practice.name} / ${platformRef.platform.name}` : '';
 
   const create = (): void => {
     if (!name.trim()) {
@@ -148,9 +149,9 @@ export function EstimationsHub(): JSX.Element {
 
         <Row gap={24} align="flex-end" style={{ rowGap: 18 }}>
           <div style={{ flex: '1 1 340px', minWidth: 0 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.8, textTransform: 'uppercase', color: color.brandDeep }}>
-              {crumb}
-            </div>
+            {/* the way back to every practice, which the hub used to have none of */}
+            <BackTo to={LANDING}>← All practices</BackTo>
+            <Breadcrumbs trail={platformTrail(state.platform, 'sales')} style={{ marginTop: 14 }} />
             <h1 style={{ fontFamily: font.display, fontSize: 32, fontWeight: 700, margin: '8px 0 0', letterSpacing: -0.6 }}>Your estimations</h1>
             <p style={{ fontSize: 13.5, color: color.muted, lineHeight: 1.6, margin: '7px 0 0', maxWidth: 560 }}>
               Each one keeps its own selections, buffers, rate card, custom requests and delivery plan.
@@ -246,7 +247,7 @@ export function EstimationsHub(): JSX.Element {
             return (
               <EstimationCard key={estimation.id} pending={pending} accent={style.co}>
                 <div
-                  onClick={() => router.navigate({ screen: 'builder', estimation: estimation.slug || estimation.id })}
+                  {...pressable(() => router.navigate({ screen: 'builder', estimation: estimation.slug || estimation.id }))}
                   style={{ padding: '18px 20px 14px', cursor: 'pointer' }}
                 >
                   <Row gap={10} align="flex-start" wrap={false}>

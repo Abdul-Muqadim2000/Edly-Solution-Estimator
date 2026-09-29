@@ -3,6 +3,7 @@ import { useApp } from '@/state/AppProvider';
 import { solutionKind } from '@/domain/catalog';
 import { color, font, radius } from '@/theme';
 import { useRowHover } from '@/components/ui';
+import { pressable } from '@/lib/pressable';
 
 /**
  * The bundle rail.
@@ -42,7 +43,7 @@ function RailRow({ entry, on, narrow, onPick }: { entry: RailEntry; on: boolean;
   const hasSelection = entry.selected > 0;
   return (
     <div
-      onClick={onPick}
+      {...pressable(onPick)}
       {...hover.bind}
       style={{
         flex: narrow ? '0 0 auto' : 'none',
@@ -126,7 +127,7 @@ export function BundleRail({
       }}
     >
       <div
-        onClick={onBack}
+        {...pressable(onBack)}
         {...back.bind}
         title="Saved automatically — back to all estimations"
         style={{

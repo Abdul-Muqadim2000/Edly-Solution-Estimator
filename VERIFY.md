@@ -56,6 +56,16 @@ Quotient rename moved the edly.io chrome behind presentation mode (29 steps beca
 31 passed on `feat/quotient-brand`, against 25 of 29 on `main` (800130c), with the same four
 failures on both.
 
+On 2026-09-30 two steps turned out never to have tested what they said. The Estimator card was
+never clicked (its text starts with a hidden tick, "✓Estimator", so `/^Estimator/` found nothing)
+and every run signed in as sales; "Estimator lands on the desk" then passed on the sales hub's
+"⇄ Estimation desk" pill. Both are fixed, and the desk card link reads "Open estimation page ›",
+not "Open ›". That exposed a real bug, an estimator switched to sales on picking a platform,
+fixed on `feat/clickable-navigation`: 29 of 31 pass there, 26 of 31 on `main` (e3ea7b5). The two
+left are the runner's own: the hover probe looks for a card with a transform transition the hub
+cards do not have, and the focus probe reads no ring in a page the runner has not focused (a real
+Tab shows it).
+
 Eight of those steps guard the *design and the feel*, not the logic. Two drive real `mouseover`
 and `focus` events and assert the computed style changes — React synthesises `onMouseEnter` from a
 delegated `mouseover`, so a synthetic `mouseenter` is ignored, and the probe retries because the

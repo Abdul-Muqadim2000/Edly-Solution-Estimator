@@ -145,13 +145,13 @@ reference.
 
 ### The suite
 
-`bun run test` runs 940 tests across twenty-two files.
+`bun run test` runs 952 tests across twenty-two files.
 
 | File | Covers |
 |---|---|
 | `tests/domain.test.ts` | `calcEstimate`, `schedule`, catalog composition and helpers |
 | `tests/reducer.test.ts` | every state transition, selector and label |
-| `tests/router.test.ts` | URL to state and back, both directions, and a link held through sign-in |
+| `tests/router.test.ts` | URL to state and back, both directions, a link held through sign-in, the links between screens and each role's home, keyboard-pressable cards |
 | `tests/schema.test.ts` | state to spreadsheet rows, chunking, round trip, the sync key |
 | `tests/api.test.ts` | `/api/state` end to end, and the empty-payload guard |
 | `tests/handler.test.ts` | the Vercel and web request adapters |
@@ -181,7 +181,7 @@ reference.
 | Statements | 97.6% |
 | Lines | 98.6% |
 | Functions | 98.9% |
-| Branches | 87.9% |
+| Branches | 88.0% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -395,7 +395,9 @@ Read CONTRIBUTING.md. The short version:
 - **Every record carries `plat`, and every list is filtered by it.** Platforms never mix.
 - **Keyboard and contrast are part of done.** Sales screen-shares this tool. Anything clickable is
   reachable by keyboard and shows a visible focus ring, and text keeps a readable contrast in both
-  the light UI and the dark estimate column.
+  the light UI and the dark estimate column. A clickable div spreads `pressable(onPress)` from
+  `src/lib/pressable.ts` (role, tab stop, Enter and Space); a link to another screen is an
+  `AppLink` from `components/Nav.tsx`, a real anchor, so a middle click opens a new tab.
 
 ---
 
@@ -470,7 +472,11 @@ The spreadsheets hold real deal names, client names and pricing.
   shows there. A gap is never refilled, and bundles already numbered CB keep their ids.
 - `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses. A link opened before
   sign-in is held and applied once someone signs in (`deepLinkReady`); applied earlier, the
-  reducer refused it and the sign-in sent a shared deal link to the practice picker.
+  reducer refused it and the sign-in sent a shared deal link to the practice picker. A platform's
+  home depends on the role (`homeOf`): the picker used to ask for the hub whoever was signed in,
+  and a hub route means sales, so an estimator who picked a platform was switched to sales. Links
+  between screens pass `exactly(route)`, because `navigate` and `href` merge over the current
+  route and would otherwise carry a deal or a search into a link elsewhere.
 - **The AI only proposes.** No tool the model is given writes anything; every change to an
   estimation or the desk queue is a reducer action a person's click dispatches. Hours never come
   from the model: matches carry catalog ids, checked against the catalog by the `read*` functions

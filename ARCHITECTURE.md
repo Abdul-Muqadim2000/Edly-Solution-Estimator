@@ -40,6 +40,7 @@ src/
   api/client.ts         the only place the app calls the server
   components/
     Brand.tsx           Quotient's logo, and the slim footer on the working screens
+    Nav.tsx             links between screens: AppLink, Breadcrumbs, the logo home, back links
     SiteHeader.tsx      edly.io marketing header, shown while a deal is presented
     SiteFooter.tsx      edly.io footer, likewise
     builder/Hero.tsx    hero, stat cards, credibility row, likewise

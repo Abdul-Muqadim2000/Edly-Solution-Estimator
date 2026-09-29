@@ -1,5 +1,6 @@
-import type { DeskTab } from '@/types';
+import type { DeskTab, Role } from '@/types';
 import { isCatalogKind, type CatalogKind } from '@/domain/catalog';
+import { findPlatform } from '@/data/practices';
 
 /**
  * The URL, as a value.
@@ -249,4 +250,61 @@ export interface HeldLink {
 export function deepLinkReady(link: HeldLink): boolean {
   if (!link.signedIn) return false;
   return link.found || link.storeSettled || link.expired;
+}
+
+/* ------------------------------------------------------------ getting around */
+
+/** The landing page after sign-in: every practice. Where the logo goes. */
+export const LANDING: Route = { screen: 'practices' };
+
+/**
+ * Where a role lands on a platform: sales on the hub, the estimator on the desk. The picker used
+ * to ask for the hub whoever was signed in, and a hub route means sales, so an estimator who
+ * picked a platform was switched to sales and never reached the desk.
+ */
+export function homeOf(role: Role, platformId: string): Route {
+  return { screen: role === 'estimator' ? 'desk' : 'hub', platform: platformId };
+}
+
+/** One step of a breadcrumb trail. No route means the page you are on, shown as text. */
+export interface Crumb {
+  label: string;
+  route: Route | null;
+}
+
+/**
+ * The trail above a platform's screens: the practice, which opens its list of platforms, then
+ * the platform, which opens its home. `here` names a page below the platform's home; without it
+ * the platform is the page you are on. A platform it does not know gets no links rather than
+ * broken ones.
+ */
+export function platformTrail(platformId: string, role: Role, here?: string): Crumb[] {
+  const ref = findPlatform(platformId);
+  const tail: Crumb[] = here ? [{ label: here, route: null }] : [];
+  if (!ref) return tail;
+  return [
+    { label: ref.practice.name, route: { screen: 'practices', practice: ref.practice.id } },
+    { label: ref.platform.name, route: here ? homeOf(role, ref.platform.id) : null },
+    ...tail
+  ];
+}
+
+/**
+ * A patch that lands on exactly this route. `navigate` and `href` merge a patch over the current
+ * route, which is right for "same deal, other bundle" but wrong for a link elsewhere: a desk link
+ * on a deal's desk page would point at the deal, and a crumb in the builder would keep its search.
+ */
+export function exactly(route: Route): Partial<Route> {
+  return {
+    practice: undefined,
+    platform: undefined,
+    estimation: undefined,
+    tender: undefined,
+    bundle: undefined,
+    plan: undefined,
+    q: undefined,
+    kind: undefined,
+    tab: undefined,
+    ...route
+  };
 }
