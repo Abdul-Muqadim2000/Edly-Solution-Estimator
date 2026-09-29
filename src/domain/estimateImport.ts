@@ -1,4 +1,4 @@
-import type { AddedBundle, AddedSolution } from '@/types';
+import type { AddedBundle, AddedSolution, Estimation, EstimationSnapshot } from '@/types';
 import { CX_BUNDLE_ID, nameKey, nextBundleId, UNASSIGNED_NAME } from '@/domain/catalog';
 import {
   followGroups,
@@ -285,7 +285,9 @@ export function planEstimateImport(input: EstimateImportInput): EstimateImportPl
       from: '',
       estAt: row.estAt || match?.estAt || input.today,
       direct: false,
-      imported: file
+      imported: file,
+      /* the estimate date is the sheet's to give; this is the day the file came in, for the history */
+      importedOn: input.today
     };
     /* set only when present, so a record reads back from the sheet exactly as it was made */
     if (row.sourceId) record.sourceId = row.sourceId;
@@ -366,21 +368,77 @@ export interface ImportedFile {
   bundles: number;
   /** The latest estimate date among them. */
   at: string;
+  /** The last day it was imported, or blank when nothing recorded it. */
+  importedOn: string;
+  /** Estimations on the platform that picked any of its estimates. */
+  used: number;
 }
 
-/** The estimates workbooks imported on a platform, so the desk can see them and undo one. */
-export function importedFiles(solutions: readonly AddedSolution[], bundles: readonly AddedBundle[], platform: string): ImportedFile[] {
+/**
+ * Deleting an estimates import: every estimate it brought on this platform goes, and so do the
+ * bundles its Area column made, unless the desk has since filed other work in one.
+ *
+ * The reducer applies this and the import history words its warning from `removed`, so what a
+ * person is told will go is what goes.
+ */
+export function removeImported(
+  solutions: readonly AddedSolution[],
+  bundles: readonly AddedBundle[],
+  platform: string,
+  file: string
+): { solutions: AddedSolution[]; bundles: AddedBundle[]; removed: { estimates: number; bundles: number } } {
+  const mine = (one: { plat: string; imported?: string }): boolean => (one.plat || 'openedx') === platform && one.imported === file;
+  const kept = solutions.filter((one) => !mine(one));
+  const occupied = new Set(kept.map((one) => one.bundleId));
+  const keptBundles = bundles.filter((bundle) => !(mine(bundle) && !occupied.has(bundle.id)));
+  return {
+    solutions: kept,
+    bundles: keptBundles,
+    removed: { estimates: solutions.length - kept.length, bundles: bundles.length - keptBundles.length }
+  };
+}
+
+/** Only what `importedFiles` reads from an estimation, so a caller can pass the open draft folded in. */
+type PickedIn = Pick<Estimation, 'plat'> & { snap: Pick<EstimationSnapshot, 'sel'> };
+
+/**
+ * The estimates workbooks imported on a platform, so the desk and the import history can see
+ * them and undo one.
+ *
+ * Rows imported before `importedOn` was kept have no day of their own. The bundles such a file's
+ * Area column made were dated when it came in, so the earliest of those stands in; a file that
+ * made none stays undated rather than borrowing the estimate dates, which are the sheet's.
+ */
+export function importedFiles(
+  solutions: readonly AddedSolution[],
+  bundles: readonly AddedBundle[],
+  platform: string,
+  estimations: readonly PickedIn[] = []
+): ImportedFile[] {
   const files = new Map<string, ImportedFile>();
+  const idsOf = new Map<string, string[]>();
   for (const one of solutions) {
     if (!one.imported || (one.plat || 'openedx') !== platform) continue;
-    const entry = files.get(one.imported) ?? { file: one.imported, estimates: 0, bundles: 0, at: '' };
+    const entry = files.get(one.imported) ?? { file: one.imported, estimates: 0, bundles: 0, at: '', importedOn: '', used: 0 };
     entry.estimates += 1;
     if (one.estAt > entry.at) entry.at = one.estAt;
+    if (one.importedOn && one.importedOn > entry.importedOn) entry.importedOn = one.importedOn;
     files.set(one.imported, entry);
+    idsOf.set(one.imported, [...(idsOf.get(one.imported) ?? []), one.id]);
   }
+  const madeOn = new Map<string, string>();
   for (const bundle of bundles) {
     const entry = bundle.imported && (bundle.plat || 'openedx') === platform ? files.get(bundle.imported) : undefined;
-    if (entry) entry.bundles += 1;
+    if (!entry) continue;
+    entry.bundles += 1;
+    const earliest = madeOn.get(entry.file);
+    if (bundle.at && (!earliest || bundle.at < earliest)) madeOn.set(entry.file, bundle.at);
+  }
+  const here = estimations.filter((one) => (one.plat || 'openedx') === platform);
+  for (const entry of files.values()) {
+    if (!entry.importedOn) entry.importedOn = madeOn.get(entry.file) ?? '';
+    const ids = idsOf.get(entry.file) ?? [];
+    entry.used = here.filter((one) => ids.some((id) => one.snap.sel[id] === true)).length;
   }
   return [...files.values()].sort((a, b) => a.file.localeCompare(b.file));
 }

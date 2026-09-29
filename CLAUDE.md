@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 956 tests across twenty-three files.
+`bun run test` runs 969 tests across twenty-three files.
 
 | File | Covers |
 |---|---|
@@ -160,7 +160,7 @@ reference.
 | `tests/providers.test.ts` | Google Sheets, OneDrive, Dropbox, against a stubbed `fetch` |
 | `tests/xlsx.test.ts` | the hand-written `.xlsx` reader and writer |
 | `tests/catalogSheet.test.ts` | the master catalog workbook and hand-edited sheets |
-| `tests/catalogImport.test.ts` | importing a bundles or estimates workbook: which kind a file is, every refusal and warning, the templates, the preview |
+| `tests/catalogImport.test.ts` | importing a bundles or estimates workbook: which kind a file is, every refusal and warning, the templates, the preview, and the import history that deletes one |
 | `tests/importReview.test.ts` | the review before an import saves: groups, approval, renames, redirects, moved and dropped rows, for both kinds |
 | `tests/quoteExport.test.ts` | the branded task-breakdown workbook a client receives |
 | `tests/taskBreakdown.test.ts` | the Excel sheet's deliverables, lines and totals, checked against `calcEstimate` |
@@ -298,8 +298,10 @@ Set these in Vercel under Settings, Environment Variables, redeploy, then confir
 nested state sits in one JSON column per row so the app round-trips losslessly. A tender's
 requirements run past one cell, so its `detailJson` splits across rows keyed `id##2/3`,
 pipe-wrapped like the long settings. An estimate imported from a workbook is an
-`EstimatedSolutions` row with `importedFrom`, `sourceId`, `client` and `estimatedBy` filled in;
-"Remove import" and a second import of the same file both work by those columns.
+`EstimatedSolutions` row with `importedFrom`, `sourceId`, `client`, `estimatedBy` and `importedOn`
+filled in; "Remove import", the import history and a second import of the same file all work by
+those columns. Rows imported before `importedOn` existed have none, and the history dates them by
+the bundles they made.
 
 `SalesAccountLegal` has no JSON column at all: one row per item, scalar columns only, because the
 legal and account teams filter and assign these rows in Google Sheets itself. Its category and
@@ -456,6 +458,17 @@ The spreadsheets hold real deal names, client names and pricing.
   renamed or sent elsewhere; single rows can be moved or dropped. Import stays disabled while any
   group is pending, and the reducer saves only approved rows. `planEstimateImport` and
   `planBundleImport` compute the preview and the result from the same decisions; keep it that way.
+- **The import history deletes by a typed file name, and that is a check, not a lock.** The Catalog
+  panel's Import history (`components/ImportHistory.tsx`) lists every workbook imported on the
+  platform. Deleting one needs its name typed (`confirmsName` in `domain/importHistory.ts`), which
+  stops a slip; `/api/state` is unauthenticated, so it stops nobody who means it, and the window
+  says so. The user chose the typed name over a password on 2026-09-30, and chose to leave the
+  desk's Remove import button without it. An estimates workbook comes out alone, and what the
+  window warns will go is worked out by `removeImported`, the same function the reducer applies,
+  so a bundle the desk has since filed work in is neither removed nor claimed. Bundles workbooks
+  carry no per-row mark, so they come out together, by reading the served sheet again
+  (`catalogWorkbooks` in the reducer lists them). The button is hidden while presenting, since file
+  names can name other clients.
 - **Notes / Assumptions is one entry per solution, and it is written for the client.** It is
   `Solution.notes`, `AddedSolution.notes` and `EstimateRequest.catNotes`, and the spreadsheet keeps
   it in the `note` column of EstimatedSolutions and Requests, the column an older build also reads.

@@ -25,6 +25,7 @@ import {
   salesLegalFor,
   baseSourceOf,
   catalogPin,
+  catalogWorkbooks,
   sourceAfterImport,
   type Action,
   type AppState
@@ -1905,5 +1906,52 @@ describe('an imported catalog stays pinned', () => {
   it('keeps honouring the pins recorded before the catalog carried its own', () => {
     expect(catalogPin({ openedx: served }, { source: 'file', name: 'old.xlsx', hash: 'h-old' }, 'openedx')).toEqual({ pinned: true, hash: 'h-old' });
     expect(catalogPin({}, { source: 'builtin' }, 'openedx').pinned).toBe(true);
+  });
+});
+
+describe('the bundles workbooks the import history lists', () => {
+  const meta = { title: 'Mine', subtitle: '', compiled: '', totals: { features: 0, buildHrs: null, firstHrs: null, repeatHrs: null, saved: null, noEstimate: 0, inDev: 0 }, notes: [] };
+  const loaded = (record: NonNullable<Catalog['meta']['loaded']>): Catalog => ({ meta: { ...meta, loaded: record }, bundles: [] });
+  const served: Catalog = { meta, bundles: [] };
+
+  it('lists the workbooks added to the served sheet, and not the served sheet itself', () => {
+    /* the served sheet is what going back restores, so listing it as an import would offer to delete the catalog */
+    const state = workspace({ loadedCatalogs: { openedx: loaded({ name: 'catalog-source.xlsx', hash: 'h-served', at: '2026-09-28', added: ['Accessibility.xlsx', 'Mobile.xlsx'] }) } });
+    expect(catalogWorkbooks(state)).toEqual({ files: ['Accessibility.xlsx', 'Mobile.xlsx'], at: '2026-09-28' });
+  });
+
+  it('lists a workbook that replaced the catalog, and what was added to it since', () => {
+    const state = workspace({ loadedCatalogs: { openedx: loaded({ name: 'Nordic bundles.xlsx', at: '2026-09-27', added: ['Mobile.xlsx'] }) } });
+    expect(catalogWorkbooks(state).files).toEqual(['Nordic bundles.xlsx', 'Mobile.xlsx']);
+  });
+
+  it('lists none once the served sheet is read again, which is how the history takes them out', () => {
+    const state = run(workspace({ loadedCatalogs: { openedx: loaded({ name: 'catalog-source.xlsx', added: ['Mobile.xlsx'] }) } }), {
+      type: 'setLoadedCatalog',
+      platform: 'openedx',
+      catalog: served,
+      source: { source: 'auto', name: 'https://edly.example/catalog-source.xlsx', hash: 'h-served' }
+    });
+    expect(catalogWorkbooks(state)).toEqual({ files: [], at: '' });
+    /* and the served sheet no longer pinned, so the next visit reads it as usual */
+    expect(catalogPin(state.loadedCatalogs, state.catalogSource, 'openedx').pinned).toBe(false);
+  });
+
+  it('lists what was added to a sample platform, and none once it is back on its benchmark set', () => {
+    const moodle = workspace({ platform: 'moodle', loadedCatalogs: { moodle: loaded({ name: 'the benchmark set', added: ['Moodle extras.xlsx'] }) } });
+    expect(catalogWorkbooks(moodle).files).toEqual(['Moodle extras.xlsx']);
+
+    const reset = reducer(moodle, { type: 'setLoadedCatalog', platform: 'moodle', catalog: null, source: { source: 'builtin' } });
+    expect(catalogWorkbooks(reset).files).toEqual([]);
+  });
+
+  it('reads a catalog imported before the record was kept on it from the workspace source', () => {
+    expect(catalogWorkbooks(workspace({ loadedCatalogs: { openedx: served }, catalogSource: { source: 'file', name: 'Old bundles.xlsx', at: '2026-09-20' } })).files).toEqual(['Old bundles.xlsx']);
+    expect(catalogWorkbooks(workspace({ loadedCatalogs: { openedx: served }, catalogSource: { source: 'auto', name: 'catalog-source.xlsx' } })).files).toEqual([]);
+  });
+
+  it('lists none on a platform with nothing loaded, whatever another platform holds', () => {
+    const state = workspace({ platform: 'moodle', loadedCatalogs: { openedx: loaded({ name: 'Nordic bundles.xlsx' }) } });
+    expect(catalogWorkbooks(state).files).toEqual([]);
   });
 });

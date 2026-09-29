@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import type { Catalog, EstimateResult, Estimation, PersistedState, Schedule } from '@/types';
-import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, catalogPin, catalogReady, commitDraft, effectiveDisplay, openRequests, platformEstimations, platformTotals, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
+import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, catalogPin, catalogReady, commitDraft, effectiveDisplay, openRequests, platformEstimations, platformTotals, SERVED_CATALOG_FILE, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
 import { changedSlices, readStorage, removeStorage, STORAGE_KEYS, writeStorage } from '@/state/keys';
 import { useSync, type SyncApi } from '@/state/useSync';
 import { useRouting, type RouterApi } from '@/state/useRouting';
@@ -23,7 +23,7 @@ import { today, withSlugs } from '@/lib/format';
 
 /* Resolved against the page, so it works at a sub-path as well as at the domain root.
    On Vercel, public/catalog-source.xlsx is served next to index.html. */
-const CATALOG_URL = new URL('catalog-source.xlsx', document.baseURI).toString();
+const CATALOG_URL = new URL(SERVED_CATALOG_FILE, document.baseURI).toString();
 const CATALOG_RETRIES = 3;
 
 export interface AppContextValue {

@@ -19,7 +19,8 @@ import {
   type ImportIssue
 } from '../src/lib/catalogImport';
 import { parseCatalogWorkbook } from '../src/lib/catalogSheet';
-import { importedFiles, planEstimateImport, type EstimateRow } from '../src/domain/estimateImport';
+import { importedFiles, planEstimateImport, removeImported, type EstimateRow } from '../src/domain/estimateImport';
+import { confirmsName } from '../src/domain/importHistory';
 import { readWorkbook, writeWorkbook, type CellValue, type Workbook } from '../src/lib/xlsx';
 
 /**
@@ -674,7 +675,82 @@ describe('the estimates preview', () => {
     const moodle = planEstimateImport({ ...input, platform: 'moodle', file: 'moodle.xlsx', rows: [row(1)] });
     const all = [...plan.solutions, ...moodle.solutions.map((one) => ({ ...one, id: 'CS-09' }))];
 
-    expect(importedFiles(all, plan.bundles, 'openedx')).toEqual([{ file: 'acme.xlsx', estimates: 2, bundles: 1, at: '2026-09-27' }]);
-    expect(importedFiles(all, plan.bundles, 'moodle')).toEqual([{ file: 'moodle.xlsx', estimates: 1, bundles: 0, at: '2026-09-27' }]);
+    expect(importedFiles(all, plan.bundles, 'openedx')).toEqual([{ file: 'acme.xlsx', estimates: 2, bundles: 1, at: '2026-09-27', importedOn: '2026-09-27', used: 0 }]);
+    expect(importedFiles(all, plan.bundles, 'moodle')).toEqual([{ file: 'moodle.xlsx', estimates: 1, bundles: 0, at: '2026-09-27', importedOn: '2026-09-27', used: 0 }]);
+  });
+
+  it('marks each estimate with the day it was imported, whatever date the sheet gives it', () => {
+    const plan = planEstimateImport({ ...input, rows: [row(1), row(2, { estAt: '2026-03-01' })] });
+    expect(plan.added.map((one) => one.importedOn)).toEqual(['2026-09-27', '2026-09-27']);
+
+    /* a second import is the one the history shows, so it moves the day on */
+    const again = planEstimateImport({ ...input, solutions: plan.solutions, today: '2026-09-30', rows: [row(1)] });
+    expect(again.solutions.map((one) => one.importedOn)).toEqual(['2026-09-30', '2026-09-27']);
+  });
+});
+
+describe('the import history', () => {
+  const input = { file: 'acme.xlsx', platform: 'openedx', catalogBundles: [{ id: 'B01', name: 'Commerce & Monetization' }], solutions: [], bundles: [], today: '2026-09-27' };
+  const deal = (plat: string, sel: Record<string, boolean>): { plat: string; snap: { sel: Record<string, boolean> } } => ({ plat, snap: { sel } });
+
+  it('counts the estimations that picked any of a workbook\'s estimates, so a delete says what it takes from them', () => {
+    const plan = planEstimateImport({ ...input, rows: [row(1), row(2), row(3)] });
+    const deals = [
+      deal('openedx', { 'CS-01': true, 'CS-02': true }),
+      deal('openedx', { 'CS-03': true }),
+      /* unticked is not picked, and a Moodle deal cannot hold an Open edX estimate */
+      deal('openedx', { 'CS-01': false }),
+      deal('moodle', { 'CS-01': true }),
+      deal('openedx', { B01: true })
+    ];
+
+    expect(importedFiles(plan.solutions, plan.bundles, 'openedx', deals)[0]?.used).toBe(2);
+  });
+
+  it('dates a workbook imported before import days were kept by the bundles it made, and leaves the rest undated', () => {
+    /* the user's first import on production is one of these: its rows carry no import day */
+    const made = planEstimateImport({ ...input, rows: [row(1, { area: 'Mobile Apps' })] });
+    const older = made.solutions.map(({ importedOn: _dropped, ...one }) => one);
+    const bundles = made.bundles.map((one) => ({ ...one, at: '2026-09-12' }));
+    const plain = planEstimateImport({ ...input, file: 'nordic.xlsx', rows: [row(2)] }).solutions.map(({ importedOn: _dropped, ...one }) => ({ ...one, id: 'CS-09' }));
+
+    expect(importedFiles([...older, ...plain], bundles, 'openedx').map((one) => [one.file, one.importedOn])).toEqual([
+      ['acme.xlsx', '2026-09-12'],
+      ['nordic.xlsx', '']
+    ]);
+  });
+
+  it('says what a delete takes: its estimates, and only the bundles left holding nothing else', () => {
+    const plan = planEstimateImport({ ...input, rows: [row(1, { area: 'Mobile Apps' }), row(2, { area: 'Gamification' })] });
+    /* the desk has since filed its own work under Mobile Apps, so that bundle is no longer the import's alone */
+    const { imported: _file, importedOn: _day, ...priced } = plan.solutions[0]!;
+    const deskWork = { ...priced, id: 'CS-07' };
+    const removal = removeImported([...plan.solutions, deskWork], plan.bundles, 'openedx', 'acme.xlsx');
+
+    expect(removal.removed).toEqual({ estimates: 2, bundles: 1 });
+    expect(removal.solutions.map((one) => one.id)).toEqual(['CS-07']);
+    expect(removal.bundles.map((one) => one.name)).toEqual(['Mobile Apps']);
+  });
+
+  it('leaves the same bundle number on another platform alone', () => {
+    const plan = planEstimateImport({ ...input, rows: [row(1, { area: 'Mobile Apps' })] });
+    const moodleBundle = { ...plan.bundles[0]!, plat: 'moodle' };
+    const removal = removeImported(plan.solutions, [...plan.bundles, moodleBundle], 'openedx', 'acme.xlsx');
+
+    expect(removal.bundles).toEqual([moodleBundle]);
+    expect(removeImported(plan.solutions, plan.bundles, 'openedx', 'nothing.xlsx').removed).toEqual({ estimates: 0, bundles: 0 });
+  });
+
+  it('takes the file name as confirmation, with other capitals or stray spaces', () => {
+    expect(confirmsName('Edly_estimates_filled.xlsx', 'Edly_estimates_filled.xlsx')).toBe(true);
+    expect(confirmsName('  edly_ESTIMATES_filled.xlsx ', 'Edly_estimates_filled.xlsx')).toBe(true);
+  });
+
+  it('refuses part of the name, the name without its extension, or nothing', () => {
+    /* the point is that nobody deletes 400 estimates by pressing Enter on an empty box */
+    expect(confirmsName('', 'Edly_estimates_filled.xlsx')).toBe(false);
+    expect(confirmsName('   ', '   ')).toBe(false);
+    expect(confirmsName('Edly_estimates', 'Edly_estimates_filled.xlsx')).toBe(false);
+    expect(confirmsName('Edly_estimates_filled', 'Edly_estimates_filled.xlsx')).toBe(false);
   });
 });
