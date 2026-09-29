@@ -27,6 +27,11 @@ function TenderCard({ tender, onOpen }: { tender: Tender; onOpen: () => void }):
       onClick={onOpen}
       {...h.bind}
       style={{
+        /* a button centres its content when the grid stretches it to the row's tallest card, which
+           left a short card's text floating mid-card; a column starts it at the top */
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
         textAlign: 'left',
         width: '100%',
         background: color.surface,

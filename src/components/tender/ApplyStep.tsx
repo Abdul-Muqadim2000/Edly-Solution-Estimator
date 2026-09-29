@@ -65,7 +65,22 @@ function DraftRow({ draft, areas, onEdit, onSkip }: { draft: DeskDraft; areas: s
           {open ? (
             <DeferredField multiline label="Details for the estimator" value={draft.details} onCommit={(details) => onEdit({ details })} />
           ) : (
-            <div style={{ fontSize: 12, color: color.muted, lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: 60, overflow: 'hidden' }}>{draft.details}</div>
+            /* whole lines and an ellipsis: a 60px cap on 18px lines sliced the fourth through, and the
+               tops of its letters read as a dotted rule under every card */
+            <div
+              style={{
+                fontSize: 12,
+                color: color.muted,
+                lineHeight: 1.5,
+                whiteSpace: 'pre-line',
+                display: '-webkit-box',
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden'
+              }}
+            >
+              {draft.details}
+            </div>
           )}
           <div>
             <TextButton onClick={() => setOpen((value) => !value)}>{open ? 'Done editing details' : 'Edit the details'}</TextButton>
