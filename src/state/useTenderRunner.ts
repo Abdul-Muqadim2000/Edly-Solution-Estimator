@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Catalog, Tender, TenderRange } from '@/types';
+import type { Catalog, Tender, TenderRange, TenderTokens } from '@/types';
 import type { Action } from '@/state/reducer';
 import { TenderApiError, tenderExtract, tenderMatch } from '@/api/client';
 import {
   aiAllowance,
   aiSpent,
+  callSlots,
   canSpend,
   catalogLines,
   heldByLimit,
@@ -15,6 +16,7 @@ import {
   outOfScopeMatches,
   rangesReading,
   rangesToRun,
+  touchedCache,
   type DocRef
 } from '@/domain/tender';
 
@@ -42,6 +44,21 @@ const claimNow = (): { at: number; by: string } => ({ at: Date.now(), by: THIS_T
 const matchingNow = new Set<string>();
 const listeners = new Set<() => void>();
 const changed = (): void => listeners.forEach((listener) => listener());
+
+/* When the latest call that read each tender's documents, and each platform's catalog, started, so a
+   cold start sends one call first and the rest read what it cached (`callSlots`). This page load's
+   knowledge only: after a reload the first call goes alone, which costs time, not money. */
+const docsReadAt = new Map<string, number>();
+const catalogReadAt = new Map<string, number>();
+
+function noteRead(reads: Map<string, number>, key: string, startedAt: number, tokens: TenderTokens | undefined): void {
+  if (startedAt > 0 && touchedCache(tokens)) reads.set(key, Math.max(reads.get(key) ?? 0, startedAt));
+}
+
+/** The intake read the tender (the fit call, then any keep-warm) at `startedAt`; its extraction may start at full width. */
+export function noteTenderRead(tenderId: string, startedAt: number): void {
+  if (startedAt > 0) docsReadAt.set(tenderId, Math.max(docsReadAt.get(tenderId) ?? 0, startedAt));
+}
 
 const mine = (tenderId: string): Set<string> =>
   new Set([...inFlight].filter((slot) => slot.startsWith(`${tenderId}|`)).map((slot) => slot.slice(tenderId.length + 1)));
@@ -102,7 +119,7 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
     if (!canSpend(tender)) return;
     const now = Date.now();
     const local = mine(tender.id);
-    const keys = rangesToRun(tender.ranges, local, PARALLEL_RANGES, now, THIS_TAB);
+    const keys = rangesToRun(tender.ranges, local, callSlots(PARALLEL_RANGES, docsReadAt.get(tender.id), now), now, THIS_TAB);
 
     if (keys.length === 0) {
       /* another tab holds a claim; nothing changes here when it goes stale, so look again then */
@@ -119,9 +136,13 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
       const slot = `${tender.id}|${key}`;
       inFlight.add(slot);
       tenderExtract(docs, { doc: range.doc, from: range.from, to: range.to })
-        .then(({ found, tokens }) => dispatch({ type: 'rangeDone', id: tender.id, key, found, tokens }))
+        .then(({ found, tokens }) => {
+          noteRead(docsReadAt, tender.id, now, tokens);
+          dispatch({ type: 'rangeDone', id: tender.id, key, found, tokens });
+        })
         .catch((error: unknown) => {
           const failure = error instanceof TenderApiError ? error : null;
+          noteRead(docsReadAt, tender.id, now, failure?.tokens);
           if (failure?.tokens) dispatch({ type: 'addTenderTokens', id: tender.id, tokens: failure.tokens });
           /* too much for one call: two smaller calls, not the same call again */
           if (failure && (failure.code === 'truncated' || failure.code === 'timeout')) dispatch({ type: 'splitRange', id: tender.id, key, claim: claimNow() });
@@ -165,20 +186,25 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
     let spent = aiSpent(tender);
     const allowed = aiAllowance(tender);
     let stopped = false;
-    const worker = async (): Promise<void> => {
-      for (let batch = queue.shift(); batch; batch = queue.shift()) {
+    const worker = async (most = Number.POSITIVE_INFINITY): Promise<void> => {
+      for (let taken = 0; taken < most; taken++) {
+        const batch = queue.shift();
+        if (!batch) break;
         if (spent >= allowed) {
           stopped = true;
           break;
         }
         /* the wording each requirement had when asked, so an answer for since-changed text is dropped */
         const texts = Object.fromEntries(batch.map((req) => [req.id, req.text]));
+        const started = Date.now();
         try {
           const { matches, tokens } = await tenderMatch(lines, batch);
+          noteRead(catalogReadAt, tender.plat, started, tokens);
           spent += Number(tokens.usd) || 0;
           dispatch({ type: 'setMatches', id: tender.id, matches, texts, tokens });
         } catch (error) {
           if (error instanceof TenderApiError && error.tokens) {
+            noteRead(catalogReadAt, tender.plat, started, error.tokens);
             spent += Number(error.tokens.usd) || 0;
             dispatch({ type: 'addTenderTokens', id: tender.id, tokens: error.tokens });
           }
@@ -186,7 +212,9 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
         }
       }
     };
-    void Promise.all(Array.from({ length: Math.min(PARALLEL_MATCHES, queue.length) }, worker)).finally(() => {
+    /* cold, the first batch goes alone: it writes the catalog to the cache, and the others read it */
+    const first = callSlots(PARALLEL_MATCHES, catalogReadAt.get(tender.plat), Date.now()) < PARALLEL_MATCHES ? worker(1) : Promise.resolve();
+    void first.then(() => Promise.all(Array.from({ length: Math.min(PARALLEL_MATCHES, queue.length) }, () => worker()))).finally(() => {
       matchingNow.delete(tender.id);
       if (stopped) setMatchingHeld(true);
       if (failures.length > 0) setMatchError(`Some requirements could not be matched: ${failures[0]}`);
