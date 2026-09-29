@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   catalogReady,
   commitDraft,
@@ -33,6 +33,7 @@ import { TO_UNASSIGNED, toBundle, toNew, type EstimateRow } from '../src/domain/
 import { EMPTY_REVIEW, setGroup, setRow } from '../src/domain/importReview';
 import type { Catalog, EstimateRequest, Estimation, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
 import { NO_TOKENS, type DeskDraft, type ExtractedRequirement, type NewTenderInput } from '../src/domain/tender';
+import { deleteTender } from '../src/state/deleteTender';
 
 /**
  * The reducer is every state transition in the app, and it is pure, so it is tested with plain
@@ -1305,6 +1306,64 @@ describe('tenders', () => {
     const state = run(open, { type: 'deleteTender', id: 'TND-1' });
     expect(state.tenders).toEqual([]);
     expect(state.openTender).toBeNull();
+  });
+
+  it('keeps the estimation and the desk requests made from a tender that is deleted', () => {
+    /* the card's delete says they stay; a deal someone is working on must not vanish with its tender */
+    const applied = run(withTender(), { type: 'applyTender', id: 'TND-1', input: { name: 'Acme deal', client: 'Acme Academy', tag: 'Active', due: '' }, solutionIds: [] });
+    const draft: DeskDraft = { reqId: 'R-01', kind: 'custom', title: 'Custom SSO', details: 'Details', area: 'Assessment', integrations: '', source: '', skip: false, sent: false };
+    const sent = run(applied, { type: 'sendTenderRequests', id: 'TND-1', drafts: [draft], contact: { name: 'Maya', email: 'maya@edly.io', org: 'Edly' } });
+    const state = run(sent, { type: 'deleteTender', id: 'TND-1' });
+    expect(state.tenders).toEqual([]);
+    expect(state.estimations).toEqual(sent.estimations);
+    expect(state.requests).toEqual(sent.requests);
+    expect(state.requests.map((one) => one.tenderReq)).toEqual(['R-01']);
+  });
+
+  describe('deleting one from its card or its screen', () => {
+    afterEach(() => vi.unstubAllGlobals());
+    const now = Date.parse('2026-09-30T00:00:00Z');
+    /* one file still held, one already removed, one past its expiry: only the first is Anthropic's to delete */
+    const docs: TenderDocument[] = [
+      doc,
+      { ...doc, n: 2, name: 'Pricing.xlsx', kind: 'text', fileId: '' },
+      { ...doc, n: 3, name: 'Old annex.pdf', fileId: 'file_3', expiresAt: '2026-09-29T00:00:00Z' }
+    ];
+    const recorder = (): { steps: string[]; dispatch: (action: Action) => void } => {
+      const steps: string[] = [];
+      return { steps, dispatch: (action) => steps.push(action.type === 'deleteTender' ? `delete ${action.id}` : action.type) };
+    };
+
+    it('goes at once, then asks Anthropic to delete only the files it still holds', async () => {
+      const { steps, dispatch } = recorder();
+      vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+        steps.push(`${url} ${String(init.body)}`);
+        return new Response(JSON.stringify({ ok: true, deleted: ['file_1'], failed: [] }));
+      });
+      await deleteTender({ ...tender(withTender()), docs }, dispatch, now);
+      /* the card leaves at the click, not after the round trip */
+      expect(steps).toEqual(['delete TND-1', '/api/tender?op=discard {"fileIds":["file_1"]}']);
+    });
+
+    it('asks Anthropic nothing when no file is held there any more', async () => {
+      const { steps, dispatch } = recorder();
+      vi.stubGlobal('fetch', async () => {
+        steps.push('fetch');
+        return new Response('{}');
+      });
+      await deleteTender({ ...tender(withTender()), docs: docs.slice(1) }, dispatch, now);
+      expect(steps).toEqual(['delete TND-1']);
+    });
+
+    it('is deleted all the same when the files cannot be removed', async () => {
+      /* the files expire on their own; a failed clean-up must not leave a tender nobody can remove */
+      const { steps, dispatch } = recorder();
+      vi.stubGlobal('fetch', async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      await expect(deleteTender({ ...tender(withTender()), docs }, dispatch, now)).resolves.toBeUndefined();
+      expect(steps).toEqual(['delete TND-1']);
+    });
   });
 
   it('closes the tender when an estimation opens, the platform changes or someone signs out', () => {
