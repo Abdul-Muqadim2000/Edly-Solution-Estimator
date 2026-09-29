@@ -15,6 +15,8 @@ import { Banner, Button, Chip, Empty, Field, Mono, Row, Select, Spacer, TextArea
 import { allSolutions } from '@/domain/catalog';
 import { useHover } from '@/lib/useHover';
 import { isLiveCatalog } from '@/data/practices';
+import { platformTrail } from '@/lib/router';
+import { Breadcrumbs } from '@/components/Nav';
 
 /**
  * The estimation desk.
@@ -211,6 +213,8 @@ function DeskTabs(): JSX.Element {
 
   return (
     <>
+      {/* the practice leads back to its platforms; the desk is this platform's home for an estimator */}
+      <Breadcrumbs trail={platformTrail(state.platform, 'estimator')} style={{ marginBottom: 8 }} />
       <h1 style={{ fontFamily: font.display, fontSize: 25, fontWeight: 700, margin: 0, letterSpacing: -0.3 }}>Estimation desk</h1>
       <p style={{ fontSize: 13, color: color.muted, lineHeight: 1.6, margin: '6px 0 0', maxWidth: 660 }}>
         Requests submitted from the sales workspace land here automatically. Work the queue item by item, or open a single client
@@ -587,6 +591,7 @@ function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX
   return (
     <>
       <BackPill onClick={onBack}>← Back to desk</BackPill>
+      <Breadcrumbs trail={platformTrail(state.platform, 'estimator', estimation.name)} style={{ marginTop: 14 }} />
 
       <div style={{ marginTop: 14, background: color.surface, border: `1px solid ${color.hairline}`, borderRadius: radius.lg, padding: '20px 22px' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>

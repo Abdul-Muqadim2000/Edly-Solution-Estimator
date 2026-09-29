@@ -3,7 +3,11 @@ import {
   ALL_BUNDLES,
   basePath,
   deepLinkReady,
+  exactly,
   formatRoute,
+  homeOf,
+  LANDING,
+  platformTrail,
   parseRoute,
   readAddress,
   routeHref,
@@ -263,6 +267,73 @@ const workspace = (over: Partial<AppState> = {}): AppState => ({
 
 const apply = (state: AppState, url: string): AppState => reducer(state, { type: 'applyRoute', route: parseRoute(url) });
 const run = (state: AppState, ...actions: Action[]): AppState => actions.reduce(reducer, state);
+
+describe('getting around', () => {
+  it('sends each role to its own home on a platform', () => {
+    expect(homeOf('sales', 'openedx')).toEqual({ screen: 'hub', platform: 'openedx' });
+    expect(homeOf('estimator', 'openedx')).toEqual({ screen: 'desk', platform: 'openedx' });
+  });
+
+  it('keeps an estimator on the desk when they pick a platform', () => {
+    /* the picker asked for the hub whoever you were, and a hub route means sales, so an estimator
+       who signed in and picked Open edX was switched to sales and never saw the desk */
+    const atPicker = workspace({ auth: { user: 'admin', role: 'estimator', at: 0 }, practice: 'edtech', platform: '' });
+    expect(apply(atPicker, '/p/openedx').auth?.role).toBe('sales');
+    const picked = reducer(atPicker, { type: 'applyRoute', route: homeOf('estimator', 'openedx') });
+    expect(picked.auth?.role).toBe('estimator');
+    expect(routeOfState(picked).screen).toBe('desk');
+  });
+
+  it('lays the trail above the hub as a link to the practice, then the platform you are on', () => {
+    const trail = platformTrail('openedx', 'sales');
+    expect(trail.map((crumb) => crumb.label)).toEqual(['EdTech / LMS', 'Open edX']);
+    expect(trail[0]?.route && formatRoute(trail[0].route)).toBe('/practices/edtech');
+    /* the page you are on is text, not a link to itself */
+    expect(trail[1]?.route).toBeNull();
+  });
+
+  it('links the platform back to its home when there is a page below it', () => {
+    const trail = platformTrail('openedx', 'sales', 'Tender');
+    expect(trail.map((crumb) => crumb.label)).toEqual(['EdTech / LMS', 'Open edX', 'Tender']);
+    expect(trail[1]?.route && formatRoute(trail[1].route)).toBe('/p/openedx');
+    expect(trail[2]?.route).toBeNull();
+    /* at the desk, the platform's home is the desk */
+    const desk = platformTrail('openedx', 'estimator', 'Acme Academy');
+    expect(desk[1]?.route && formatRoute(desk[1].route)).toBe('/p/openedx/desk');
+  });
+
+  it('draws no trail for a platform it does not know, rather than a broken link', () => {
+    expect(platformTrail('nowhere', 'sales')).toEqual([]);
+    expect(platformTrail('nowhere', 'sales', 'Tender')).toEqual([{ label: 'Tender', route: null }]);
+  });
+
+  it('opens the practice a crumb names, on its list of platforms', () => {
+    const route = platformTrail('openedx', 'sales')[0]?.route;
+    expect(route).toBeTruthy();
+    const next = reducer(workspace({ openEstimation: 'EST-1' }), { type: 'applyRoute', route: route! });
+    expect(next.practice).toBe('edtech');
+    expect(next.platform).toBe('');
+    expect(next.openEstimation).toBeNull();
+  });
+
+  it('takes the logo to the landing page, every practice listed, whatever was open', () => {
+    expect(formatRoute(LANDING)).toBe('/practices');
+    const next = reducer(workspace({ openEstimation: 'EST-1' }), { type: 'applyRoute', route: LANDING });
+    expect(next.practice).toBe('');
+    expect(next.platform).toBe('');
+    expect(routeOfState(next)).toEqual({ screen: 'practices' });
+  });
+
+  it('builds a link that carries nothing from the page it sits on', () => {
+    /* router.href and navigate merge a patch over the current route, so a "desk" link on a
+       deal's desk page would otherwise point at that deal, and a crumb in the builder would keep
+       its search */
+    const onDealPage: Route = { screen: 'desk', platform: 'openedx', estimation: 'acme-academy', tab: 'estimations' };
+    expect(formatRoute({ ...onDealPage, ...exactly(homeOf('estimator', 'openedx')) })).toBe('/p/openedx/desk');
+    const inBuilder: Route = { screen: 'builder', platform: 'openedx', estimation: 'acme-academy', bundle: 'B03', q: 'sso', plan: true };
+    expect(formatRoute({ ...inBuilder, ...exactly({ screen: 'practices', practice: 'edtech' }) })).toBe('/practices/edtech');
+  });
+});
 
 describe('a link opened before signing in', () => {
   const held = { signedIn: true, found: true, storeSettled: true, expired: false };

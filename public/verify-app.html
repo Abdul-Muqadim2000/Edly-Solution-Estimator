@@ -216,7 +216,9 @@
   const user = inputs.find((i) => i.type !== 'password');
   const pass = all('input[type=password]')[0];
   if (user && pass) { setValue(user, 'admin'); setValue(pass, 'admin'); }
-  click(byText('div', /^Estimator/));
+  /* the role card's text starts with its hidden tick ("✓Estimator"), so a /^Estimator/ match found
+     nothing, the click went nowhere, and every run signed in as sales */
+  click(all('div').find((d) => d.style.cursor === 'pointer' && /Estimator/.test(d.textContent) && !/Sales person/.test(d.textContent)));
   await wait(200);
   click(byText('button', /Sign in/i));
   await wait(700);
@@ -232,7 +234,10 @@
   await wait(1400);
 
   /* 3. estimator desk */
-  const onDesk = /Estimation desk/i.test(text());
+  /* "Estimation desk" alone also matches the sales hub's swap pill, which hid for months that an
+     estimator picking a platform was switched to sales: check the desk's own tab and the pill an
+     estimator sees instead */
+  const onDesk = /Request queue/i.test(text()) && /Sales workspace/i.test(text());
   step('Estimator lands on the desk, scoped to the platform', onDesk, onDesk ? 'breadcrumb: ' + ((byText('button', /EdTech/) || {}).textContent || '—') : text().slice(0, 140));
 
   click(byText('button', /Add to catalog/));
@@ -241,7 +246,8 @@
 
   click(byText('button', /Estimations/));
   await wait(300);
-  step('Desk “Estimations” tab renders', /No estimations yet|Open ›/.test(text()));
+  /* each card's link reads "Open estimation page ›"; an older "Open ›" never matched it */
+  step('Desk “Estimations” tab renders', /No estimations yet|Open estimation page/.test(text()), text().slice(0, 160).replace(/\n/g, ' / '));
 
   /* 4. swap to sales */
   click(byText('button', /Sales workspace/));

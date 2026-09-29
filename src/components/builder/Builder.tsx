@@ -10,7 +10,8 @@ import { useLayout } from '@/lib/useViewport';
 import { EDLY_LINKS } from '@/data/nav';
 import { Button, Link, SearchInput } from '@/components/ui';
 import { HeaderPill, UserChip } from '@/components/AppHeader';
-import { QuotientLogo } from '@/components/Brand';
+import { AppLink, HomeLogo } from '@/components/Nav';
+import { homeOf } from '@/lib/router';
 import { useHover } from '@/lib/useHover';
 import { BundleHeader, BundleRail, railEntries } from '@/components/builder/BundleRail';
 import { CatalogTable, type CatalogRow } from '@/components/builder/CatalogTable';
@@ -132,7 +133,6 @@ export function Builder(): JSX.Element {
   const activeBundle = active === ALL ? null : (catalog.bundles.find((bundle) => bundle.id === active) ?? catalog.bundles[0] ?? null);
   const platformRef = findPlatform(state.platform);
   const platformLabel = platformRef?.platform.name ?? '';
-  const crumb = platformRef ? `${platformRef.practice.name} / ${platformRef.platform.name}` : '';
 
   const estChipLabel = estimation ? estimation.name + (estimation.client ? ` · ${estimation.client}` : '') : '';
   const openLegal = estimation ? salesLegalFor(state, estimation.id).filter((item) => item.status === 'open').length : 0;
@@ -191,7 +191,7 @@ export function Builder(): JSX.Element {
           }}
         >
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 14 }}>
-            <QuotientLogo height={24} />
+            <HomeLogo />
             <div style={{ width: 1, height: 24, background: color.hairline }} />
             <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 1.6, textTransform: 'uppercase', color: color.muted }}>Bundle Builder</div>
             <BackToHub onClick={() => router.navigate({ screen: 'hub', estimation: undefined })} />
@@ -238,12 +238,21 @@ export function Builder(): JSX.Element {
             <HeaderPill danger onClick={() => dispatch({ type: 'signOut' })}>
               Logout
             </HeaderPill>
-            <span
-              title="Practice and platform in play — switch from the estimations hub"
-              style={{ fontSize: 11, color: color.brandDeep, background: color.brandWash, borderRadius: radius.pill, padding: '6px 12px', whiteSpace: 'nowrap' }}
-            >
-              {crumb}
-            </span>
+            {/* the practice and platform in play, each a way out: the practice to its platforms, the
+                platform to its estimations */}
+            {platformRef ? (
+              <span style={{ fontSize: 11, color: color.brandDeep, background: color.brandWash, borderRadius: radius.pill, padding: '6px 12px', whiteSpace: 'nowrap' }}>
+                <AppLink to={{ screen: 'practices', practice: platformRef.practice.id }} title="This practice’s platforms" hover={{ color: color.ink }}>
+                  {platformRef.practice.name}
+                </AppLink>
+                <span aria-hidden="true" style={{ color: color.ghost, margin: '0 5px' }}>
+                  /
+                </span>
+                <AppLink to={homeOf('sales', platformRef.platform.id)} title="All estimations on this platform" hover={{ color: color.ink }}>
+                  {platformRef.platform.name}
+                </AppLink>
+              </span>
+            ) : null}
             <HeaderPill
               title="Catalog source — the master .xlsx this tool reads its solutions and hours from"
               on={panel === 'catalog'}

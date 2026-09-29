@@ -4,6 +4,7 @@ import { useApp } from '@/state/AppProvider';
 import { color, font, shadow } from '@/theme';
 import { Link } from '@/components/ui';
 import { useFocus, useHover } from '@/lib/useHover';
+import { pressable } from '@/lib/pressable';
 import { QuotientLogo } from '@/components/Brand';
 
 /** The demo gate. Real auth belongs in front of the deployment — see README. */
@@ -60,7 +61,7 @@ function RoleCard({ on, onPick, title, blurb }: { on: boolean; onPick: () => voi
   const edge = on ? color.brand : color.rule;
   return (
     <div
-      onClick={onPick}
+      {...pressable(onPick)}
       style={{ cursor: 'pointer', border: `1.5px solid ${edge}`, background: on ? color.brandWash : color.surface, borderRadius: 12, padding: 12 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>

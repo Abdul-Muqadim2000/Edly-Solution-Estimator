@@ -4,6 +4,8 @@ import { useApp } from '@/state/AppProvider';
 import { color, font, radius, shadow } from '@/theme';
 import { Mono, useRowHover } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
+import { pressable } from '@/lib/pressable';
+import { homeOf } from '@/lib/router';
 import { plural } from '@/lib/format';
 import { AppHeader } from '@/components/AppHeader';
 import { TenderIntake } from '@/components/tender/TenderIntake';
@@ -24,7 +26,7 @@ function PracticeCard({ practice, onPick }: { practice: (typeof PRACTICES)[numbe
   const hover = useRowHover({ borderColor: color.brand, boxShadow: '0 14px 34px rgba(20, 20, 20, 0.09)' });
   return (
     <div
-      onClick={onPick}
+      {...pressable(onPick)}
       {...hover.bind}
       style={{
         background: color.surface,
@@ -57,7 +59,7 @@ function PlatformRow({
   const hover = useRowHover({ borderColor: color.brand, boxShadow: '0 12px 30px rgba(20, 20, 20, 0.08)' });
   return (
     <div
-      onClick={onPick}
+      {...pressable(onPick)}
       {...hover.bind}
       style={{
         background: color.surface,
@@ -107,7 +109,7 @@ function ResumeShortcut({ label, meta, onPick }: { label: string; meta: string; 
   const hover = useRowHover({ borderColor: color.brand, boxShadow: shadow.brand });
   return (
     <div
-      onClick={onPick}
+      {...pressable(onPick)}
       {...hover.bind}
       style={{
         display: 'inline-flex',
@@ -163,6 +165,8 @@ export function PracticePicker(): JSX.Element {
   const { state, router } = useApp();
   const chosen = PRACTICES.find((practice) => practice.id === state.practice) ?? null;
   const last = findPlatform(state.lastPlatform);
+  /* the estimator's home on a platform is the desk; asking for the hub switched them to sales */
+  const role = state.auth?.role ?? 'sales';
   /* before a platform is chosen is exactly when "which platform is this tender for?" is the question */
   const [intake, setIntake] = useState(false);
   const tenderEntry = (
@@ -187,7 +191,7 @@ export function PracticePicker(): JSX.Element {
               <PlatformRow
                 key={platform.id}
                 platform={platform}
-                onPick={() => router.navigate({ screen: 'hub', platform: platform.id })}
+                onPick={() => router.navigate(homeOf(role, platform.id))}
               />
             ))}
           </div>
@@ -214,7 +218,7 @@ export function PracticePicker(): JSX.Element {
           <ResumeShortcut
             label={`${last.practice.name} / ${last.platform.name}`}
             meta={platformMeta(last.platform)}
-            onPick={() => router.navigate({ screen: 'hub', platform: last.platform.id })}
+            onPick={() => router.navigate(homeOf(role, last.platform.id))}
           />
         ) : null}
 

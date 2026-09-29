@@ -6,7 +6,8 @@ import { useTenderRunner } from '@/state/useTenderRunner';
 import { deleteTender } from '@/state/deleteTender';
 import { aiAllowance, aiSpent, aiStep, documentLength, heldDocs, limitQuestion, spendSummary, stageOpen, tenderCounts, tokenSummary } from '@/domain/tender';
 import { copiedItems, goesWithEstimation, salesLegalDrafts } from '@/domain/salesLegal';
-import { findPlatform } from '@/data/practices';
+import { homeOf, platformTrail } from '@/lib/router';
+import { BackTo, Breadcrumbs } from '@/components/Nav';
 import { tenderDiscard } from '@/api/client';
 import { plural } from '@/lib/format';
 import { color, dueInfo, font, radius } from '@/theme';
@@ -56,7 +57,6 @@ export function TenderWorkspace(): JSX.Element {
   }
 
   const counts = tenderCounts(tender);
-  const ref = findPlatform(tender.plat);
   const due = dueInfo(tender.due);
   const held = heldDocs(tender.docs, Date.now());
   const goTo = (stage: TenderStage): void => {
@@ -118,10 +118,8 @@ export function TenderWorkspace(): JSX.Element {
           </Banner>
         ) : (
           <>
-            <TextButton onClick={() => router.navigate({ screen: 'hub' })}>← Estimations</TextButton>
-            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.8, textTransform: 'uppercase', color: color.brandDeep, marginTop: 14 }}>
-              {ref ? `${ref.practice.name} / ${ref.platform.name}` : tender.plat} / Tender
-            </div>
+            <BackTo to={homeOf('sales', tender.plat)}>← Estimations</BackTo>
+            <Breadcrumbs trail={platformTrail(tender.plat, 'sales', 'Tender')} style={{ marginTop: 14 }} />
 
             {editing ? (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginTop: 10, alignItems: 'end' }}>
