@@ -295,7 +295,8 @@ describe('the fit step', () => {
     expect(call?.headers.get('x-api-key')).toBe('sk-ant-test');
 
     const tools = sent.tools as { name: string; strict: boolean }[];
-    expect(tools.map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches']);
+    /* the two sales and legal tools come after the three every tender uses, so those keep their order */
+    expect(tools.map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches', 'report_categories', 'report_terms']);
     expect(tools.every((tool) => tool.strict)).toBe(true);
 
     const content = (sent.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
@@ -537,6 +538,142 @@ describe('the match step', () => {
   it('refuses more requirements than one call should carry', async () => {
     const reqs = Array.from({ length: 61 }, (_, i) => ({ id: `R-${i}`, text: 'x', section: '', priority: 'must' }));
     expect((await post('match', { catalog, reqs })).status).toBe(400);
+  });
+});
+
+describe('sorting out-of-scope items into teams', () => {
+  const items = [
+    { id: 'R-14', text: 'Hold a state cloud security certification for the hosting', section: 'Security', reason: 'A certification, not software.' },
+    { id: 'R-22', text: 'Report quarterly spend to the purchasing office', section: 'Reporting', reason: '' }
+  ];
+  interface SchemaTool {
+    name: string;
+    strict: boolean;
+    input_schema: { properties: Record<string, { items: { properties: Record<string, { enum?: string[] }> } }> };
+  }
+
+  it('sends only the items’ words, no documents and no catalog, and keeps only the teams asked about', async () => {
+    replies = [
+      {
+        sse: stream('tool_use', {
+          name: 'report_categories',
+          input: { items: [{ id: 'R-14', category: 'certification' }, { id: 'R-22', category: 'sales' }, { id: 'R-99', category: 'legal' }] }
+        })
+      }
+    ];
+    const response = await post('sort', { items });
+    const body = (await response.json()) as { categories: Record<string, string>; tokens: { output: number } };
+    expect(response.status).toBe(200);
+    expect(body.categories).toEqual({ 'R-14': 'certification', 'R-22': 'sales' });
+    expect(body.tokens.output).toBe(640);
+
+    const sent = sentMessage();
+    const content = (sent.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
+    /* the tender's documents are the dear part of every other call, and this one has no use for them */
+    expect(content.map((block) => block.type)).toEqual(['text']);
+    const text = String(content[0]?.text);
+    expect(text).toContain('R-14 (Security) Hold a state cloud security certification for the hosting Out of scope because: A certification, not software.');
+    expect(text).toContain('- certification: Certification, for security or compliance certifications');
+    const tool = (sent.tools as SchemaTool[]).find((one) => one.name === 'report_categories');
+    expect(tool?.strict).toBe(true);
+    /* an enum, so the answer can only name a team the app has */
+    expect(tool?.input_schema.properties.items?.items.properties.category?.enum).toEqual(['sales', 'account', 'legal', 'people', 'certification']);
+    expect(sent.fallbacks).toBe('default');
+  });
+
+  it('says a refusal is a refusal and what it cost, and makes no call for no items', async () => {
+    replies = [{ sse: stream('refusal') }];
+    const refused = await post('sort', { items });
+    expect(refused.status).toBe(422);
+    expect(((await refused.json()) as { tokens: { input: number } }).tokens.input).toBe(1200);
+
+    calls = [];
+    const none = await post('sort', { items: [] });
+    expect(none.status).toBe(200);
+    expect(((await none.json()) as { categories: unknown }).categories).toEqual({});
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses more items than one call should carry, and a body that is not a list, before any call', async () => {
+    const many = Array.from({ length: 151 }, (_, i) => ({ id: `R-${i}`, text: 'Something', section: '', reason: '' }));
+    expect((await post('sort', { items: many })).status).toBe(400);
+    expect((await post('sort', { items: 'R-01' })).status).toBe(400);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('reading the key terms', () => {
+  it('reads one document from the cached tender, and narrows each term, its team and its page', async () => {
+    replies = [
+      {
+        sse: stream('tool_use', {
+          name: 'report_terms',
+          input: {
+            terms: [
+              { topic: 'payment', text: 'Invoices are paid within 45 days.', quote: 'within forty-five days', page: 40, ref: '12.3' },
+              { topic: 'insurance', text: 'Cyber cover of $5 million.', quote: '', page: 900, ref: '' },
+              { topic: 'weather', text: 'A topic the model made up.', quote: '', page: 2, ref: '' }
+            ]
+          }
+        })
+      }
+    ];
+    const response = await post('terms', { docs, doc: 1 });
+    const body = (await response.json()) as { found: { topic: string; category: string; page: number; doc: number; ref?: string }[]; tokens: { cacheRead: number } };
+    expect(response.status).toBe(200);
+    expect(body.found.map((one) => [one.topic, one.category, one.page])).toEqual([
+      ['payment', 'sales', 40],
+      ['insurance', 'legal', 0],
+      ['other', 'legal', 2]
+    ]);
+    expect(body.found[0]).toMatchObject({ doc: 1, ref: '12.3' });
+    expect(body.tokens.cacheRead).toBe(90_000);
+
+    const sent = sentMessage();
+    const content = (sent.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
+    expect(content.filter((block) => block.type === 'document').map((block) => [block.title, Boolean(block.cache_control)])).toEqual([
+      ['Document 2: Annex B.docx', true],
+      ['Document 1: Acme RFP.pdf', true]
+    ]);
+    expect(String(content.at(-1)?.text)).toContain('key legal and commercial terms stated in document 1 (Acme RFP.pdf)');
+    const tool = (sent.tools as { name: string; strict: boolean }[]).find((one) => one.name === 'report_terms');
+    expect(tool?.strict).toBe(true);
+  });
+
+  it('sends exactly what an extraction of the same document sends ahead of its instruction, so it reads that cache entry', async () => {
+    /* anything different in the prefix writes the whole tender to the cache again, which is most of what a tender costs */
+    replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [] } }) }, { sse: stream('tool_use', { name: 'report_terms', input: { terms: [] } }) }];
+    await post('extract', { docs, range: { doc: 2, from: 1, to: 3 } });
+    await post('terms', { docs, doc: 2 });
+    const [extract, terms] = calls.filter((one) => one.url.includes('/v1/messages')).map((one) => one.body as Record<string, unknown>);
+    for (const key of ['model', 'system', 'tools', 'thinking', 'output_config']) expect(terms?.[key]).toEqual(extract?.[key]);
+    const ahead = (body: Record<string, unknown> | undefined): unknown[] => ((body?.messages as { content: unknown[] }[])[0]?.content ?? []).slice(0, -1);
+    expect(ahead(terms)).toEqual(ahead(extract));
+    expect(ahead(terms).length).toBeGreaterThan(0);
+  });
+
+  it('reads part of a document after a split, and asks about those pages alone', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_terms', input: { terms: [] } }) }, { sse: stream('tool_use', { name: 'report_terms', input: { terms: [] } }) }];
+    await post('terms', { docs, doc: 1, from: 25, to: 48 });
+    const instruction = (): string => String(((sentMessage().messages as { content: { text?: string }[] }[])[0]?.content ?? []).at(-1)?.text);
+    expect(instruction()).toContain('stated in document 1 (Acme RFP.pdf), pages 25 to 48 inclusive');
+    expect(instruction()).toContain('Other pages and documents are context only');
+    /* the whole document, sent as its own range, is asked about as a whole */
+    calls = [];
+    await post('terms', { docs, doc: 1, from: 1, to: 48 });
+    expect(instruction()).toContain('stated in document 1 (Acme RFP.pdf). Other documents are context only');
+  });
+
+  it('says a refusal is a refusal, and refuses a document the tender does not have without calling', async () => {
+    replies = [{ sse: stream('refusal') }];
+    const refused = await post('terms', { docs, doc: 1 });
+    expect(refused.status).toBe(422);
+    expect(((await refused.json()) as { code: string }).code).toBe('refused');
+
+    calls = [];
+    const missing = await post('terms', { docs, doc: 7 });
+    expect(missing.status).toBe(400);
+    expect(calls).toEqual([]);
   });
 });
 

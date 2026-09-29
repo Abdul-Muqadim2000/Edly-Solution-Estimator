@@ -140,14 +140,17 @@ export function Check({ checked, onChange, label }: { checked: boolean; onChange
   );
 }
 
-/** The tender's own wording, behind a toggle so a long list stays scannable. */
-export function SourceQuote({ source, quote }: { source: string; quote: string }): JSX.Element {
+/**
+ * The tender's own wording, behind a toggle so a long list stays scannable. `label` replaces the
+ * toggle's words, for a row that shows where the item came from on a line of its own.
+ */
+export function SourceQuote({ source, quote, label }: { source: string; quote: string; label?: string }): JSX.Element {
   const [open, setOpen] = useState(false);
-  if (!quote) return <span style={{ fontSize: 11.5, color: color.faint }}>{source}</span>;
+  if (!quote) return label ? <span /> : <span style={{ fontSize: 11.5, color: color.faint }}>{source}</span>;
   return (
     <div style={{ minWidth: 0 }}>
       <TextButton onClick={() => setOpen((value) => !value)} title="What the tender actually says">
-        {open ? 'Hide the tender wording' : `Tender wording, ${source}`}
+        {open ? 'Hide the tender wording' : label ?? `Tender wording, ${source}`}
       </TextButton>
       {open ? (
         <blockquote
@@ -222,6 +225,62 @@ export function StepPill({ n, label, meta, on, done, disabled, onClick }: { n: n
   );
 }
 
+/**
+ * The tab beside the steps. It is not a step and blocks nothing, so it has a count where a step has
+ * its number, and a dashed edge until it is open.
+ */
+export function TabPill({ label, meta, count, on, onClick }: { label: string; meta: string; count: number; on: boolean; onClick: () => void }): JSX.Element {
+  const h = useHover();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      {...h.bind}
+      style={{
+        flex: '1 1 200px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        textAlign: 'left',
+        borderWidth: 1,
+        borderStyle: on ? 'solid' : 'dashed',
+        borderColor: on ? color.brand : h.on ? color.ghost : color.dashRule,
+        background: on ? color.brandWash : color.surface,
+        borderRadius: radius.lg,
+        padding: '12px 16px',
+        cursor: 'pointer',
+        fontFamily: font.body,
+        transition: 'border-color 120ms ease, background 120ms ease'
+      }}
+    >
+      <span
+        style={{
+          minWidth: 28,
+          height: 28,
+          padding: '0 7px',
+          boxSizing: 'border-box',
+          borderRadius: radius.pill,
+          display: 'grid',
+          placeItems: 'center',
+          flex: '0 0 auto',
+          fontFamily: font.display,
+          fontSize: 12.5,
+          fontWeight: 700,
+          background: count > 0 ? color.amberWash : color.surfaceMuted,
+          color: count > 0 ? color.amberInk : color.muted
+        }}
+      >
+        {count}
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', fontFamily: font.display, fontSize: 14, fontWeight: 600, color: color.ink }}>{label}</span>
+        <span style={{ display: 'block', fontSize: 11.5, color: color.muted, marginTop: 2 }}>{meta}</span>
+      </span>
+    </button>
+  );
+}
+
 /** A thin progress bar. */
 export function Progress({ value, total }: { value: number; total: number }): JSX.Element {
   const share = total > 0 ? Math.min(1, value / total) : 0;
@@ -242,13 +301,16 @@ export function DeferredField({
   value,
   onCommit,
   placeholder,
-  multiline
+  multiline,
+  list
 }: {
   label: string;
   value: string;
   onCommit: (value: string) => void;
   placeholder?: string;
   multiline?: boolean;
+  /** Id of a datalist of suggestions. Single-line fields only. */
+  list?: string;
 }): JSX.Element {
   const [draft, setDraft] = useState(value);
   const [editing, setEditing] = useState(false);
@@ -270,7 +332,7 @@ export function DeferredField({
       {multiline ? (
         <TextArea label={label} value={draft} onChange={setDraft} placeholder={placeholder} />
       ) : (
-        <Field label={label} value={draft} onChange={setDraft} placeholder={placeholder} onEnter={commit} />
+        <Field label={label} value={draft} onChange={setDraft} placeholder={placeholder} onEnter={commit} list={list} />
       )}
     </div>
   );

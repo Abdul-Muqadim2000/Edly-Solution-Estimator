@@ -16,10 +16,13 @@ import type {
   RequirementPriority,
   RequirementStatus,
   Role,
+  SalesLegalCategory,
+  SalesLegalItem,
   SheetDetails,
   Tender,
   TenderRange,
   TenderRequirement,
+  TenderTerm,
   TenderTokens
 } from '@/types';
 import type { Route } from '@/lib/router';
@@ -30,7 +33,9 @@ import {
   approvedToGoOn,
   canSpend,
   newTender,
+  planTermReads,
   sectionRanges,
+  splitTermRead,
   sortRequirements,
   splitRange,
   tenderRequests,
@@ -40,6 +45,7 @@ import {
   type ExtractedRequirement,
   type NewTenderInput
 } from '@/domain/tender';
+import { addTerms, copiedItems, deletable, handItem, patchItem, salesLegalDrafts, salesLegalItems, type ExtractedTerm, type HandItemInput, type SalesLegalPatch } from '@/domain/salesLegal';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
 import { planEstimateImport, type EstimateRow } from '@/domain/estimateImport';
 import { nextBundleId } from '@/domain/catalog';
@@ -119,6 +125,8 @@ export interface AppState {
   solutions: AddedSolution[];
   bundles: AddedBundle[];
   tenders: Tender[];
+  /** What each deal commits Edly to that is not software, for the sales, account and legal teams. */
+  salesLegal: SalesLegalItem[];
 
   openEstimation: string | null;
   /** The tender open in its review screen. Never at the same time as an estimation. */
@@ -156,6 +164,7 @@ export const INITIAL_STATE: AppState = {
   solutions: [],
   bundles: [],
   tenders: [],
+  salesLegal: [],
   openEstimation: null,
   openTender: null,
   draft: { ...EMPTY_SNAPSHOT },
@@ -304,7 +313,23 @@ export type Action =
   | { type: 'clearMatches'; id: string; reqIds: string[] }
   | { type: 'applyTender'; id: string; input: NewEstimationInput; solutionIds: string[] }
   | { type: 'sendTenderRequests'; id: string; drafts: DeskDraft[]; contact: DeskContact }
-  | { type: 'forgetTenderFiles'; id: string; fileIds: string[] };
+  | { type: 'forgetTenderFiles'; id: string; fileIds: string[] }
+  /* ---- sales, account and legal. The AI proposes categories and terms; a person keeps or changes them. ---- */
+  /** The tender's items not on its estimation yet, found or accepted after the estimation was created. */
+  | { type: 'addTenderItems'; id: string }
+  /** `copies`: also give a team to items already on the estimation with none, because a person asked for the sort */
+  | { type: 'setCategories'; id: string; categories: Record<string, SalesLegalCategory>; tokens?: Partial<TenderTokens>; copies?: boolean }
+  | { type: 'editTerm'; id: string; termId: string; patch: Partial<Pick<TenderTerm, 'category' | 'skip'>> }
+  /** A person asked for the key terms of a tender created without them. */
+  | { type: 'readTermsNow'; id: string }
+  | { type: 'claimTerms'; id: string; keys: string[]; claim: Claim }
+  | { type: 'termsDone'; id: string; key: string; found: ExtractedTerm[]; tokens?: Partial<TenderTokens> }
+  | { type: 'termsFailed'; id: string; key: string; error: string; tokens?: Partial<TenderTokens> }
+  | { type: 'retryTerms'; id: string; key: string; claim?: Claim }
+  | { type: 'splitTerms'; id: string; key: string; claim?: Claim }
+  | { type: 'addSalesLegal'; estId: string; input: HandItemInput }
+  | { type: 'patchSalesLegal'; ids: string[]; patch: SalesLegalPatch }
+  | { type: 'deleteSalesLegal'; id: string };
 
 const platOf = (state: AppState): string => state.platform || 'openedx';
 
@@ -388,6 +413,25 @@ const handMatch = (): RequirementMatch => ({
 /** A range, taken by a tab: `running`, stamped with when and by whom. Without a claim, left as it is. */
 const withClaim = (range: TenderRange, claim: Claim | undefined): TenderRange =>
   claim ? { ...range, status: 'running', startedAt: claim.at, by: claim.by } : range;
+
+/** The unfinished ranges among `keys`, claimed for a tab; null when none of them is left to claim. */
+function claimAll(ranges: readonly TenderRange[], keys: readonly string[], claim: Claim): TenderRange[] | null {
+  const wanted = new Set(keys);
+  const open = (range: TenderRange): boolean => wanted.has(range.key) && range.status !== 'done' && range.status !== 'failed';
+  return ranges.some(open) ? ranges.map((range) => (open(range) ? withClaim(range, claim) : range)) : null;
+}
+
+/** A range read to the end: done, with what it found, and its claim gone. */
+const finished = (range: TenderRange, found: number): TenderRange => ({ key: range.key, doc: range.doc, from: range.from, to: range.to, status: 'done', found });
+
+/** A failed range queued again, claimed for the tab that asked when it may spend. */
+const requeued = (range: TenderRange, claim: Claim | undefined): TenderRange => withClaim({ key: range.key, doc: range.doc, from: range.from, to: range.to, status: 'pending' }, claim);
+
+/** Copies what the tender has for the sales, account and legal teams that its estimation does not have yet. */
+function withTenderItems(state: AppState, tender: Tender, estimation: Estimation): AppState {
+  const made = salesLegalItems(state.salesLegal, tender, salesLegalDrafts(tender, copiedItems(state.salesLegal, tender.id)), estimation, today());
+  return made.length > 0 ? { ...state, salesLegal: [...state.salesLegal, ...made] } : state;
+}
 
 /** Fields that change what a match says, as opposed to whether it is approved or sent. */
 const MATCH_CONTENT: (keyof RequirementMatch)[] = ['kind', 'solutionIds', 'remainder', 'area', 'integrations'];
@@ -487,6 +531,8 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'deleteEstimation': {
       const estimations = state.estimations.filter((estimation) => estimation.id !== action.id);
       const requests = state.requests.filter((request) => request.estId !== action.id);
+      /* the deal's own list goes with it; a tender re-applied later copies its items again */
+      const salesLegal = state.salesLegal.filter((item) => item.estId !== action.id);
       const wasOpen = state.openEstimation === action.id;
       /* a tender that fed this deal can be applied again; its requests went with the deal */
       const tenders = state.tenders.map((tender) =>
@@ -496,6 +542,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         estimations,
         requests,
+        salesLegal,
         tenders,
         openEstimation: wasOpen ? null : state.openEstimation,
         draft: wasOpen ? { ...EMPTY_SNAPSHOT } : state.draft,
@@ -940,9 +987,7 @@ export function reducer(state: AppState, action: Action): AppState {
           ...tender,
           reqs,
           tokens: addTokens(tender.tokens, action.tokens),
-          ranges: tender.ranges.map((range) =>
-            range.key === action.key ? { key: range.key, doc: range.doc, from: range.from, to: range.to, status: 'done' as const, found: added } : range
-          )
+          ranges: tender.ranges.map((range) => (range.key === action.key ? finished(range, added) : range))
         };
       });
 
@@ -962,10 +1007,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return withTender(state, action.id, (tender) => {
         if (!tender.ranges.some((range) => range.key === action.key && range.status === 'failed')) return tender;
         const claim = canSpend(tender) ? action.claim : undefined;
-        return {
-          ...tender,
-          ranges: tender.ranges.map((range) => (range.key === action.key ? withClaim({ key: range.key, doc: range.doc, from: range.from, to: range.to, status: 'pending' }, claim) : range))
-        };
+        return { ...tender, ranges: tender.ranges.map((range) => (range.key === action.key ? requeued(range, claim) : range)) };
       });
 
     /* One call could not finish the range, so it becomes two. A single page that still cannot
@@ -1085,14 +1127,8 @@ export function reducer(state: AppState, action: Action): AppState {
     /* Before a tab calls the AI for a range it claims it, so no other tab starts the same call. */
     case 'claimRanges':
       return withTender(state, action.id, (tender) => {
-        const keys = new Set(action.keys);
-        if (!tender.ranges.some((range) => keys.has(range.key) && range.status !== 'done' && range.status !== 'failed')) return tender;
-        return {
-          ...tender,
-          ranges: tender.ranges.map((range) =>
-            keys.has(range.key) && range.status !== 'done' && range.status !== 'failed' ? withClaim(range, action.claim) : range
-          )
-        };
+        const ranges = claimAll(tender.ranges, action.keys, action.claim);
+        return ranges ? { ...tender, ranges } : tender;
       });
 
     case 'addTenderTokens':
@@ -1107,7 +1143,11 @@ export function reducer(state: AppState, action: Action): AppState {
         withRequirement(tender, action.reqId, (req) => {
           const base = req.match ?? handMatch();
           const edited = base.edited || MATCH_CONTENT.some((key) => key in action.patch);
-          return { ...req, match: { ...base, ...action.patch, edited } };
+          const match: RequirementMatch = { ...base, ...action.patch, edited };
+          /* Leaving it out was a choice about where it was going. A new kind sends it somewhere else
+             (an item for the legal team turned into custom work goes to the desk), so it is asked again. */
+          if (action.patch.kind !== undefined && action.patch.kind !== base.kind && action.patch.skip === undefined) delete match.skip;
+          return { ...req, match };
         })
       );
 
@@ -1146,7 +1186,9 @@ export function reducer(state: AppState, action: Action): AppState {
         action.input,
         Object.fromEntries(action.solutionIds.map((id) => [id, true]))
       );
-      return withTender({ ...state, estimations: [...state.estimations, estimation] }, action.id, (one) => ({ ...one, estId: estimation.id, stage: 'apply' }));
+      /* the sales, account and legal items go with it, as the apply step says they will */
+      const created = withTenderItems({ ...state, estimations: [...state.estimations, estimation] }, tender, estimation);
+      return withTender(created, action.id, (one) => ({ ...one, estId: estimation.id, stage: 'apply' }));
     }
 
     case 'sendTenderRequests': {
@@ -1166,6 +1208,144 @@ export function reducer(state: AppState, action: Action): AppState {
         if (!tender.docs.some((doc) => doc.fileId && gone.has(doc.fileId))) return tender;
         return { ...tender, docs: tender.docs.map((doc) => (gone.has(doc.fileId) ? { ...doc, fileId: '' } : doc)) };
       });
+
+    /* ------------------------------------------ sales, account and legal */
+
+    case 'addTenderItems': {
+      const tender = state.tenders.find((one) => one.id === action.id);
+      const estimation = tender ? state.estimations.find((one) => one.id === tender.estId) : undefined;
+      if (!tender || !estimation) return state;
+      return withTenderItems(state, tender, estimation);
+    }
+
+    /* The AI's categories land only where nobody has chosen one: a person's choice made while the
+       call was out stands, and a requirement no longer out of scope takes none. An item already
+       copied to the estimation with no team gets one only when a person pressed Sort them, which is
+       how a tender applied before it was sorted still gets its list sorted; the sort that follows
+       matching by itself never writes to the estimation. */
+    case 'setCategories': {
+      const stamp = today();
+      let filled = false;
+      const salesLegal = state.salesLegal.map((item) => {
+        const category = action.categories[item.tenderItem];
+        if (!action.copies || item.tender !== action.id || item.category || !category) return item;
+        filled = true;
+        return { ...item, category, up: stamp };
+      });
+      return withTender(filled ? { ...state, salesLegal } : state, action.id, (tender) => {
+        let sorted = false;
+        const reqs = tender.reqs.map((req) => {
+          const category = action.categories[req.id];
+          if (!category || req.match?.kind !== 'out' || req.match.category) return req;
+          sorted = true;
+          return { ...req, match: { ...req.match, category } };
+        });
+        if (!sorted && !action.tokens) return tender;
+        return { ...tender, reqs: sorted ? reqs : tender.reqs, tokens: addTokens(tender.tokens, action.tokens) };
+      });
+    }
+
+    case 'editTerm':
+      return withTender(state, action.id, (tender) => {
+        const terms = tender.terms ?? [];
+        const term = terms.find((one) => one.id === action.termId);
+        if (!term) return tender;
+        const next: TenderTerm = { ...term, ...(action.patch.category ? { category: action.patch.category } : {}) };
+        if (action.patch.skip === true) next.skip = true;
+        if (action.patch.skip === false) delete next.skip;
+        if (next.category === term.category && next.skip === term.skip) return tender;
+        return { ...tender, terms: terms.map((one) => (one.id === term.id ? next : one)) };
+      });
+
+    /* The same reads the tick at the start would have queued, for a tender made without it. The runner
+       picks them up once the extraction has nothing left to read. */
+    case 'readTermsNow':
+      return withTender(state, action.id, (tender) => {
+        const reads = planTermReads(tender.docs, tender.termReads ?? []);
+        if (tender.readTerms && reads.length === 0) return tender;
+        return { ...tender, readTerms: true, terms: tender.terms ?? [], termReads: [...(tender.termReads ?? []), ...reads] };
+      });
+
+    case 'claimTerms':
+      return withTender(state, action.id, (tender) => {
+        const termReads = claimAll(tender.termReads ?? [], action.keys, action.claim);
+        return termReads ? { ...tender, termReads } : tender;
+      });
+
+    case 'termsDone':
+      return withTender(state, action.id, (tender) => {
+        const reads = tender.termReads ?? [];
+        if (!reads.some((read) => read.key === action.key && read.status !== 'done')) return tender;
+        const { terms, added } = addTerms(tender.terms ?? [], action.found);
+        return {
+          ...tender,
+          terms,
+          tokens: addTokens(tender.tokens, action.tokens),
+          termReads: reads.map((read) => (read.key === action.key ? finished(read, added) : read))
+        };
+      });
+
+    case 'termsFailed':
+      return withTender(state, action.id, (tender) => {
+        const reads = tender.termReads ?? [];
+        if (!reads.some((read) => read.key === action.key)) return tender;
+        return {
+          ...tender,
+          tokens: addTokens(tender.tokens, action.tokens),
+          termReads: reads.map((read) => (read.key === action.key ? { ...read, status: 'failed' as const, error: action.error } : read))
+        };
+      });
+
+    /* One call could not list a document's terms, so its pages are read in two, as a range is. */
+    case 'splitTerms':
+      return withTender(state, action.id, (tender) => {
+        const reads = tender.termReads ?? [];
+        const index = reads.findIndex((read) => read.key === action.key);
+        const read = reads[index];
+        if (!read) return tender;
+        const halves = splitTermRead(read);
+        const claim = canSpend(tender) ? action.claim : undefined;
+        const next = [...reads];
+        if (halves) next.splice(index, 1, ...halves.map((half) => withClaim(half, claim)));
+        else next[index] = { ...read, status: 'failed', error: 'Too much on one page to list its terms in one go. The legal team can read that page in the tender.' };
+        return { ...tender, termReads: next };
+      });
+
+    /* at the limit it queues the read without claiming it, as a Retry of a range does */
+    case 'retryTerms':
+      return withTender(state, action.id, (tender) => {
+        const reads = tender.termReads ?? [];
+        if (!reads.some((read) => read.key === action.key && read.status === 'failed')) return tender;
+        const claim = canSpend(tender) ? action.claim : undefined;
+        return { ...tender, termReads: reads.map((read) => (read.key === action.key ? requeued(read, claim) : read)) };
+      });
+
+    case 'addSalesLegal': {
+      const estimation = state.estimations.find((one) => one.id === action.estId);
+      const item = estimation ? handItem(state.salesLegal, action.input, estimation, today()) : null;
+      return item ? { ...state, salesLegal: [...state.salesLegal, item] } : state;
+    }
+
+    case 'patchSalesLegal': {
+      const ids = new Set(action.ids);
+      const stamp = today();
+      let changed = false;
+      const salesLegal = state.salesLegal.map((item) => {
+        if (!ids.has(item.id)) return item;
+        const next = patchItem(item, action.patch, stamp);
+        if (next !== item) changed = true;
+        return next;
+      });
+      return changed ? { ...state, salesLegal } : state;
+    }
+
+    /* An item typed in by hand, or one whose tender is gone. One from a tender that is still there is
+       marked Not for us instead: deleted, it would be offered to the estimation again as new. */
+    case 'deleteSalesLegal': {
+      const target = state.salesLegal.find((item) => item.id === action.id);
+      if (!target || !deletable(target, new Set(state.tenders.map((tender) => tender.id)))) return state;
+      return { ...state, salesLegal: state.salesLegal.filter((item) => item.id !== action.id) };
+    }
 
     default:
       return state;
@@ -1208,6 +1388,9 @@ export function findTender(state: AppState, slugOrId: string): Tender | null {
   const here = state.tenders.filter((tender) => (tender.plat || 'openedx') === platOf(state));
   return here.find((one) => (one.slug ?? '').toLowerCase() === key) ?? here.find((one) => one.id.toLowerCase() === key) ?? null;
 }
+
+/** One estimation's sales, account and legal items, in the order they were added. */
+export const salesLegalFor = (state: AppState, estimationId: string): SalesLegalItem[] => state.salesLegal.filter((item) => item.estId === estimationId);
 
 /** Requirements of a tender that already have a desk request, so sending twice cannot duplicate one. */
 export function sentRequirementIds(state: AppState, tenderId: string): Set<string> {
@@ -1342,6 +1525,7 @@ export function toPersisted(state: AppState): PersistedState {
     solutions: state.solutions,
     bundles: state.bundles,
     tenders: state.tenders,
+    salesLegal: state.salesLegal,
     settings: {}
   };
 }

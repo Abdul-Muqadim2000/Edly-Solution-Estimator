@@ -21,6 +21,7 @@ import {
   openTenderRecord,
   platformTenders,
   sentRequirementIds,
+  salesLegalFor,
   baseSourceOf,
   catalogPin,
   sourceAfterImport,
@@ -1323,6 +1324,223 @@ describe('tenders', () => {
     expect(findTender(state, '  ')).toBeNull();
     expect(openTenderRecord({ ...state, openTender: 'TND-1' })?.id).toBe('TND-1');
     expect(toPersisted(state).tenders).toHaveLength(2);
+  });
+
+  describe('its sales, account and legal items', () => {
+    const apply: Action = { type: 'applyTender', id: 'TND-1', input: { name: 'Acme deal', client: 'Acme Academy', tag: 'Active', due: '' }, solutionIds: [] };
+    const insurance = { doc: 1, page: 28, topic: 'insurance' as const, text: 'Cyber liability cover of $5 million.', quote: 'not less than $5,000,000', category: 'legal' as const };
+
+    /** R-01 in the catalog, R-02 out of scope and not accepted yet, R-03 out of scope and accepted, and one key term. */
+    const withItems = (): AppState =>
+      run(
+        withTender(),
+        { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01', 'R-02', 'R-03'], status: 'approved' },
+        {
+          type: 'setMatches',
+          id: 'TND-1',
+          matches: {
+            'R-01': aMatch({ approved: true }),
+            'R-02': aMatch({ kind: 'out', solutionIds: [], approved: false }),
+            'R-03': aMatch({ kind: 'out', solutionIds: [], approved: true, category: 'people' })
+          }
+        },
+        { type: 'readTermsNow', id: 'TND-1' },
+        { type: 'termsDone', id: 'TND-1', key: 'terms:1', found: [insurance] }
+      );
+    const reqMatch = (state: AppState, id: string): RequirementMatch | undefined => tender(state).reqs.find((req) => req.id === id)?.match;
+
+    it('go with the estimation when it is created: the accepted ones and the key terms, once', () => {
+      const applied = run(withItems(), apply);
+      const estId = tender(applied).estId;
+      expect(applied.salesLegal.map((one) => [one.id, one.tenderItem, one.kind, one.category, one.estId])).toEqual([
+        ['SL-01', 'R-03', 'obligation', 'people', estId],
+        ['SL-02', 'T-01', 'term', 'legal', estId]
+      ]);
+      expect(applied.salesLegal[0]).toMatchObject({ tender: 'TND-1', source: 'Acme RFP.pdf, p. 4', status: 'open', owner: '' });
+      /* why it is out of scope and where it sits go with it, so the estimation can show them */
+      expect(applied.salesLegal[0]).toMatchObject({ reason: 'Covered', section: 'Scope' });
+      expect(applied.salesLegal[1]).toMatchObject({ kind: 'term', topic: 'insurance' });
+      expect(salesLegalFor(applied, estId)).toHaveLength(2);
+      /* applying twice, or asking for what is new, copies nothing a second time */
+      expect(run(applied, apply)).toBe(applied);
+      expect(run(applied, { type: 'addTenderItems', id: 'TND-1' })).toBe(applied);
+    });
+
+    it('leave out what a person left out, and what nobody has accepted yet', () => {
+      const leftOut = run(withItems(), { type: 'editTerm', id: 'TND-1', termId: 'T-01', patch: { skip: true } }, { type: 'editMatch', id: 'TND-1', reqId: 'R-03', patch: { skip: true } }, apply);
+      expect(leftOut.salesLegal).toEqual([]);
+    });
+
+    it('accepted after the estimation was made, join it without the others being copied again', () => {
+      const applied = run(withItems(), apply);
+      const later = run(applied, { type: 'approveMatches', id: 'TND-1', reqIds: ['R-02'], approved: true }, { type: 'addTenderItems', id: 'TND-1' });
+      expect(later.salesLegal.map((one) => [one.id, one.tenderItem])).toEqual([
+        ['SL-01', 'R-03'],
+        ['SL-02', 'T-01'],
+        ['SL-03', 'R-02']
+      ]);
+      expect(run(later, { type: 'addTenderItems', id: 'TND-1' })).toBe(later);
+      /* before the estimation exists there is nowhere to add them */
+      const early = withItems();
+      expect(run(early, { type: 'addTenderItems', id: 'TND-1' })).toBe(early);
+    });
+
+    it('outlive the tender, and go with their estimation, so a tender applied again copies them again', () => {
+      const applied = run(withItems(), apply);
+      const noTender = run(applied, { type: 'deleteTender', id: 'TND-1' });
+      /* where each came from was frozen when it was copied, so it still reads after the tender is gone */
+      expect(noTender.salesLegal.map((one) => one.source)).toEqual(['Acme RFP.pdf, p. 4', 'Acme RFP.pdf, p. 28']);
+
+      const noDeal = run(applied, { type: 'deleteEstimation', id: tender(applied).estId });
+      expect(noDeal.salesLegal).toEqual([]);
+      expect(run(noDeal, apply).salesLegal.map((one) => one.tenderItem)).toEqual(['R-03', 'T-01']);
+    });
+
+    it('take an owner, a status, a due date and a note, one at a time or several at once', () => {
+      const applied = run(withItems(), apply);
+      const ids = applied.salesLegal.map((one) => one.id);
+      const owned = run(
+        applied,
+        { type: 'patchSalesLegal', ids, patch: { owner: 'Legal' } },
+        { type: 'patchSalesLegal', ids: ['SL-01'], patch: { status: 'handled', due: '2026-10-20', note: 'Checks booked' } }
+      );
+      expect(owned.salesLegal.map((one) => [one.owner, one.status])).toEqual([
+        ['Legal', 'handled'],
+        ['Legal', 'open']
+      ]);
+      expect(owned.salesLegal[0]).toMatchObject({ due: '2026-10-20', note: 'Checks booked' });
+      /* the same value again is not an edit, so it saves nothing */
+      expect(run(owned, { type: 'patchSalesLegal', ids: ['SL-02'], patch: { owner: 'Legal' } })).toBe(owned);
+    });
+
+    it('can be added by hand on any estimation, and only those can be deleted', () => {
+      const input = { text: 'Attend the vendor fair in March', category: 'account' as const, owner: '', due: '', note: '', priority: 'should' as const };
+      const state = workspace({ estimations: [estimation('EST-1')] });
+      const added = run(state, { type: 'addSalesLegal', estId: 'EST-1', input });
+      expect(added.salesLegal[0]).toMatchObject({ id: 'SL-01', estId: 'EST-1', tender: '', tenderItem: '', kind: 'obligation', category: 'account', priority: 'should' });
+      expect(run(added, { type: 'addSalesLegal', estId: 'EST-9', input })).toBe(added);
+      expect(run(added, { type: 'addSalesLegal', estId: 'EST-1', input: { ...input, text: ' ' } })).toBe(added);
+      expect(run(added, { type: 'deleteSalesLegal', id: 'SL-01' }).salesLegal).toEqual([]);
+
+      /* one from a tender is marked Not for us instead: deleted, it would be offered again as new */
+      const applied = run(withItems(), apply);
+      expect(run(applied, { type: 'deleteSalesLegal', id: 'SL-01' })).toBe(applied);
+      /* once the tender is gone nothing can offer it again, so it may go */
+      const orphaned = run(applied, { type: 'deleteTender', id: 'TND-1' }, { type: 'deleteSalesLegal', id: 'SL-01' });
+      expect(orphaned.salesLegal.map((one) => one.id)).toEqual(['SL-02']);
+    });
+
+    it('get the AI’s category only where nobody has chosen one, and the call’s cost is counted', () => {
+      const before = withItems();
+      const sorted = run(before, { type: 'setCategories', id: 'TND-1', categories: { 'R-01': 'account', 'R-02': 'sales', 'R-03': 'legal' }, tokens: { input: 900, output: 60, usd: 0.02 } });
+      expect(reqMatch(sorted, 'R-02')?.category).toBe('sales');
+      /* the person's choice made while the call was out stands */
+      expect(reqMatch(sorted, 'R-03')?.category).toBe('people');
+      /* in the catalog, so not the legal team's */
+      expect(reqMatch(sorted, 'R-01')?.category).toBeUndefined();
+      expect(tender(sorted).tokens.usd - tender(before).tokens.usd).toBeCloseTo(0.02, 10);
+      expect(run(before, { type: 'setCategories', id: 'TND-1', categories: {} })).toBe(before);
+    });
+
+    it('on an estimation made before they were sorted get a team when a person asks, never over one a person chose', () => {
+      const unsorted = run(withItems(), { type: 'approveMatches', id: 'TND-1', reqIds: ['R-02'], approved: true }, apply);
+      /* R-02 went across with no team; SL-01 (R-03) went with the people team the tender had */
+      const moved = run(unsorted, { type: 'patchSalesLegal', ids: ['SL-01'], patch: { category: 'certification' } });
+      const sorted = run(moved, { type: 'setCategories', id: 'TND-1', categories: { 'R-02': 'sales', 'R-03': 'legal' }, copies: true });
+      const byItem = Object.fromEntries(sorted.salesLegal.map((one) => [one.tenderItem, one.category]));
+      expect(byItem).toMatchObject({ 'R-02': 'sales', 'R-03': 'certification' });
+      /* another tender's R-02 is not this one */
+      const other = run(moved, { type: 'setCategories', id: 'TND-9', categories: { 'R-02': 'sales' }, copies: true });
+      expect(other.salesLegal.find((one) => one.tenderItem === 'R-02')?.category).toBe('');
+    });
+
+    it('on an estimation are left alone by the sort that runs with no click after matching', () => {
+      /* the AI only proposes: the estimation's list is the record, and nothing writes to it unasked */
+      const unsorted = run(withItems(), { type: 'approveMatches', id: 'TND-1', reqIds: ['R-02'], approved: true }, apply);
+      const sorted = run(unsorted, { type: 'setCategories', id: 'TND-1', categories: { 'R-02': 'sales' } });
+      expect(sorted.salesLegal.find((one) => one.tenderItem === 'R-02')?.category).toBe('');
+      expect(sorted.salesLegal).toBe(unsorted.salesLegal);
+    });
+
+    it('are asked about again when one changes where it goes', () => {
+      const skipped = run(withItems(), { type: 'editMatch', id: 'TND-1', reqId: 'R-03', patch: { skip: true } });
+      /* left out of the legal team's list, then turned into custom work: it must not vanish from the desk too */
+      const custom = run(skipped, { type: 'editMatch', id: 'TND-1', reqId: 'R-03', patch: { kind: 'custom' } });
+      expect(reqMatch(custom, 'R-03')).toMatchObject({ kind: 'custom' });
+      expect(reqMatch(custom, 'R-03')).not.toHaveProperty('skip');
+      const recategorised = run(skipped, { type: 'editMatch', id: 'TND-1', reqId: 'R-03', patch: { category: 'legal' } });
+      expect(reqMatch(recategorised, 'R-03')).toMatchObject({ skip: true, category: 'legal' });
+    });
+
+    it('include the key terms of a tender made without them, once asked, read once per document', () => {
+      const asked = run(withTender(), { type: 'readTermsNow', id: 'TND-1' });
+      expect(tender(asked)).toMatchObject({ readTerms: true, terms: [], termReads: [{ key: 'terms:1', doc: 1, from: 1, to: 30, status: 'pending' }] });
+      expect(run(asked, { type: 'readTermsNow', id: 'TND-1' })).toBe(asked);
+
+      const claimed = run(asked, { type: 'claimTerms', id: 'TND-1', keys: ['terms:1'], claim: { at: 5, by: 'tab-a' } });
+      expect(tender(claimed).termReads?.[0]).toMatchObject({ status: 'running', startedAt: 5, by: 'tab-a' });
+      const done = run(claimed, { type: 'termsDone', id: 'TND-1', key: 'terms:1', found: [insurance], tokens: { output: 300, usd: 0.07 } });
+      expect(tender(done).terms?.map((one) => one.id)).toEqual(['T-01']);
+      expect(tender(done).termReads?.[0]).toEqual({ key: 'terms:1', doc: 1, from: 1, to: 30, status: 'done', found: 1 });
+      expect(tender(done).tokens.usd).toBeCloseTo(0.07, 10);
+      /* a late answer for the same read, from a tab whose claim went stale, adds nothing */
+      expect(run(done, { type: 'termsDone', id: 'TND-1', key: 'terms:1', found: [insurance] })).toBe(done);
+      expect(run(done, { type: 'claimTerms', id: 'TND-1', keys: ['terms:1'], claim: { at: 9, by: 'tab-b' } })).toBe(done);
+    });
+
+    it('keep what a failed terms read cost, and queue its retry unclaimed at the limit', () => {
+      const asked = run(withTender(), { type: 'readTermsNow', id: 'TND-1' });
+      const failed = run(asked, { type: 'termsFailed', id: 'TND-1', key: 'terms:1', error: 'Too many AI requests at once.', tokens: { usd: 0.01 } });
+      expect(tender(failed).termReads?.[0]).toMatchObject({ status: 'failed', error: 'Too many AI requests at once.' });
+      expect(tender(failed).tokens.usd).toBeCloseTo(0.01, 10);
+
+      const retried = run(failed, { type: 'retryTerms', id: 'TND-1', key: 'terms:1', claim: { at: 9, by: 'tab-a' } });
+      expect(tender(retried).termReads?.[0]).toEqual({ key: 'terms:1', doc: 1, from: 1, to: 30, status: 'running', startedAt: 9, by: 'tab-a' });
+
+      /* no call will start at the limit, and a claim would show the read as under way in every tab */
+      const broke: AppState = { ...failed, tenders: failed.tenders.map((one) => ({ ...one, tokens: { ...one.tokens, usd: 5 } })) };
+      const queued = run(broke, { type: 'retryTerms', id: 'TND-1', key: 'terms:1', claim: { at: 9, by: 'tab-a' } });
+      expect(tender(queued).termReads?.[0]).toEqual({ key: 'terms:1', doc: 1, from: 1, to: 30, status: 'pending' });
+      expect(run(retried, { type: 'retryTerms', id: 'TND-1', key: 'terms:1' })).toBe(retried);
+    });
+
+    it('split a terms read one call could not finish, as a range is, and never plan the document again', () => {
+      const asked = run(withTender(), { type: 'readTermsNow', id: 'TND-1' });
+      const split = run(asked, { type: 'splitTerms', id: 'TND-1', key: 'terms:1', claim: { at: 4, by: 'tab-a' } });
+      expect(tender(split).termReads).toEqual([
+        { key: 'terms:1:1-15', doc: 1, from: 1, to: 15, status: 'running', startedAt: 4, by: 'tab-a' },
+        { key: 'terms:1:16-30', doc: 1, from: 16, to: 30, status: 'running', startedAt: 4, by: 'tab-a' }
+      ]);
+      /* asked again, the document is read already in two parts, not a third time whole */
+      expect(run(split, { type: 'readTermsNow', id: 'TND-1' })).toBe(split);
+      /* halves that finish add their terms once, whatever they share */
+      const done = run(
+        split,
+        { type: 'termsDone', id: 'TND-1', key: 'terms:1:1-15', found: [insurance] },
+        { type: 'termsDone', id: 'TND-1', key: 'terms:1:16-30', found: [insurance, { ...insurance, topic: 'payment', category: 'sales', text: 'Invoices are paid within 30 days.' }] }
+      );
+      expect(tender(done).terms?.map((one) => one.text)).toEqual(['Cyber liability cover of $5 million.', 'Invoices are paid within 30 days.']);
+
+      /* a single page that still cannot finish is left failed with the reason, not split forever */
+      const onePage = { ...asked, tenders: asked.tenders.map((one) => ({ ...one, termReads: [{ key: 'terms:1:7-7', doc: 1, from: 7, to: 7, status: 'running' as const }] })) };
+      const stuck = run(onePage, { type: 'splitTerms', id: 'TND-1', key: 'terms:1:7-7' });
+      expect(tender(stuck).termReads?.[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('Too much on one page') });
+    });
+
+    it('let a person move a key term to another team, or leave it out', () => {
+      const state = withItems();
+      const moved = run(state, { type: 'editTerm', id: 'TND-1', termId: 'T-01', patch: { category: 'sales' } });
+      expect(tender(moved).terms?.[0]?.category).toBe('sales');
+      const out = run(moved, { type: 'editTerm', id: 'TND-1', termId: 'T-01', patch: { skip: true } });
+      expect(tender(out).terms?.[0]?.skip).toBe(true);
+      expect(tender(run(out, { type: 'editTerm', id: 'TND-1', termId: 'T-01', patch: { skip: false } })).terms?.[0]).not.toHaveProperty('skip');
+      expect(run(state, { type: 'editTerm', id: 'TND-1', termId: 'T-01', patch: { category: 'legal' } })).toBe(state);
+      expect(run(state, { type: 'editTerm', id: 'TND-1', termId: 'T-99', patch: { skip: true } })).toBe(state);
+    });
+
+    it('are persisted with the rest of the workspace', () => {
+      expect(toPersisted(run(withItems(), apply)).salesLegal).toHaveLength(2);
+    });
   });
 });
 

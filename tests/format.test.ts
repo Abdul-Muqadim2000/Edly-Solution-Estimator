@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { andList, CURRENCIES, dollars, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
-import { quoteText } from '../src/lib/quoteExport';
+import { quoteText, type QuoteInput } from '../src/lib/quoteExport';
 import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { schedule } from '../src/domain/planner';
-import { DEFAULT_DISPLAY } from '../src/state/reducer';
+import { DEFAULT_DISPLAY, INITIAL_STATE, reducer, type AppState } from '../src/state/reducer';
 import type { Catalog, EstimateRequest, Estimation, Solution } from '../src/types';
 
 /**
@@ -291,6 +291,33 @@ describe('the quote a client receives', () => {
   it('prices a custom item once the desk has returned hours', () => {
     const text = quote(DEFAULT_DISPLAY, [{ ...pending, est: 24 }]);
     expect(text).toContain('Bespoke reporting — 24 h');
+  });
+
+  it('carries nothing from the sales, account and legal list, with every display setting on', () => {
+    /* the quote is pasted into an email to the client; the legal team's list is internal */
+    const secret = 'Hold a state cloud security certification before the contract starts';
+    const workspace: AppState = reducer({ ...INITIAL_STATE, ready: true, estimations: [estimation] }, {
+      type: 'addSalesLegal',
+      estId: 'EST-1',
+      input: { text: secret, category: 'certification', owner: 'Legal', due: '', note: 'Ask the security lead', priority: 'must' }
+    });
+    expect(workspace.salesLegal).toHaveLength(1);
+    const deal = workspace.estimations[0]!;
+    const estimate = calcEstimate(catalog, deal.snap, []);
+    const text = quoteText({
+      estimation: deal,
+      estimate,
+      requests: [],
+      plan: schedule(estimate, [], deal.snap, { blendBuffer: false }),
+      display: { ...DEFAULT_DISPLAY, money: true, notes: true, savings: true },
+      currency: 'USD',
+      platformName: 'Open edX'
+    });
+    expect(text).toContain('Acme Academy');
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain('Ask the security lead');
+    expectTypeOf<QuoteInput>().not.toHaveProperty('salesLegal');
+    expectTypeOf<QuoteInput['estimation']>().not.toHaveProperty('salesLegal');
   });
 
   it('always carries the scope caveat, whatever is hidden', () => {

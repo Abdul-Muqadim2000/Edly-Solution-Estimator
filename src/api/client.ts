@@ -1,5 +1,6 @@
-import type { PersistedState, RequirementMatch, TenderTokens } from '@/types';
+import type { PersistedState, RequirementMatch, SalesLegalCategory, TenderTokens } from '@/types';
 import type { AiErrorCode, CatalogLine, DocRef, ExtractedRequirement, FitResult, MatchInput, PlatformDigest } from '@/domain/tender';
+import type { ExtractedTerm, SortInput } from '@/domain/salesLegal';
 
 /** Typed client for /api/state and /api/tender. The only place the app talks to the server. */
 
@@ -20,7 +21,7 @@ export interface SaveResponse {
   at?: string | null;
   url?: string | null;
   bytes?: number | null;
-  counts?: { estimations: number; requests: number; solutions: number; bundles: number; tenders: number; settings: number };
+  counts?: { estimations: number; requests: number; solutions: number; bundles: number; tenders: number; salesLegal: number; settings: number };
 }
 
 export interface ProbeResponse {
@@ -153,6 +154,16 @@ export function tenderExtract(docs: DocRef[], range: { doc: number; from: number
 
 export function tenderMatch(catalog: CatalogLine[], reqs: MatchInput[]): Promise<{ matches: Record<string, RequirementMatch>; tokens: TenderTokens }> {
   return tenderCall('match', jsonInit({ catalog, reqs }));
+}
+
+/** Which team each out-of-scope item is for. Only the items' words are sent, never the documents. */
+export function tenderSort(items: SortInput[]): Promise<{ categories: Record<string, SalesLegalCategory>; tokens: TenderTokens }> {
+  return tenderCall('sort', jsonInit({ items }));
+}
+
+/** One document's key legal and commercial terms, or those of some of its pages, read from the tender's cached documents. */
+export function tenderTerms(docs: DocRef[], read: { doc: number; from: number; to: number }): Promise<{ found: ExtractedTerm[]; tokens: TenderTokens }> {
+  return tenderCall('terms', jsonInit({ docs, doc: read.doc, from: read.from, to: read.to }));
 }
 
 /** Deletes tender files at Anthropic. Resolves with the ids that are gone. */

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   defaultComments,
   PLAN_WEEK_LIMIT,
@@ -18,6 +18,7 @@ import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { schedule } from '../src/domain/planner';
 import { DEFAULT_SHEET, readSheetPrefs, SHEET_COLUMNS, type SheetPrefs } from '../src/domain/taskBreakdown';
 import { sheetColor } from '../src/theme';
+import { INITIAL_STATE, openEstimationRecord, openRequests, reducer, type Action, type AppState } from '../src/state/reducer';
 import type { Catalog, CurrencyCode, EstimateRequest, EstimationSnapshot, Solution } from '../src/types';
 
 /**
@@ -612,5 +613,58 @@ describe('row heights for wrapped text', () => {
     const long = 'A description long enough to wrap across several lines of a narrow column. '.repeat(3);
     expect(rowHeight([{ value: 'short', width: 40 }], 26)).toBe(26);
     expect(rowHeight([{ value: long, width: 28 }, { value: 'short', width: 40 }])).toBeGreaterThan(60);
+  });
+});
+
+describe('the sales, account and legal list', () => {
+  /* The legal team's words, on a deal that also holds everything the file does print: a line note,
+     a contact, a custom request. Built through the reducer and read the way the Excel sheet panel
+     reads the open deal, so the route is the one a salesperson's download takes. */
+  const secrets = ['Hold a state cloud security certification', 'Cyber liability cover of $5 million', 'Ask the security lead first', 'Quarterly spend report'];
+  const deal: AppState = [
+    { type: 'createEstimation', input: { name: 'Acme Academy', client: 'Acme Inc', tag: 'Active', due: '' } },
+    { type: 'patchDraft', patch: { ...snap, sheet: { contact: 'Jane Rivera', notes: { 'OX-1': 'Runs on the current release.' } } } }
+  ].reduce<AppState>((state, action) => reducer(state, action as Action), { ...INITIAL_STATE, ready: true, auth: { user: 'admin', role: 'sales', at: 0 }, platform: 'openedx' });
+  const estId = deal.openEstimation ?? '';
+  const withItems = [
+    { type: 'addSalesLegal', estId, input: { text: secrets[0], category: 'certification', owner: 'Legal', due: '2026-10-20', note: secrets[2], priority: 'must' } },
+    { type: 'addSalesLegal', estId, input: { text: secrets[1], category: 'legal', owner: '', due: '', note: '', priority: 'must' } },
+    { type: 'addSalesLegal', estId, input: { text: secrets[3], category: 'sales', owner: 'Sales', due: '', note: '', priority: 'should' } }
+  ].reduce<AppState>((state, action) => reducer(state, action as Action), deal);
+
+  it('never reaches the client’s workbook, whatever the deal holds', async () => {
+    expect(withItems.salesLegal).toHaveLength(3);
+    const estimation = openEstimationRecord(withItems)!;
+    const requests = [...openRequests(withItems), request({ est: 24 })];
+    const estimate = calcEstimate(catalog, withItems.draft, requests);
+    const input: SheetInput = {
+      estimation,
+      snap: withItems.draft,
+      estimate,
+      requests,
+      plan: schedule(estimate, requests, withItems.draft, { blendBuffer: false }),
+      bundles: catalog.bundles,
+      /* every column and section on, so nothing is kept out by a tick */
+      prefs: readSheetPrefs({ columns: Object.fromEntries(SHEET_COLUMNS.map((column) => [column.id, true])), sections: Object.fromEntries(Object.keys(DEFAULT_SHEET.sections).map((key) => [key, true])) }),
+      blendBuffer: false,
+      currency: 'USD',
+      platformName: 'Open edX',
+      sample: false,
+      date: '2026-09-29'
+    };
+    const workbook = await readWorkbook(writeWorkbook(taskBreakdownSheets(input)));
+    const text = Object.values(workbook)
+      .flatMap((rows) => rows.map((row) => row.join(' | ')))
+      .join('\n');
+    /* the file is the real one: it carries the deal and its line note */
+    expect(text).toContain('Acme Inc | Project Task Breakdown');
+    expect(text).toContain('Runs on the current release.');
+    for (const words of secrets) expect(text).not.toContain(words);
+  });
+
+  it('has no way in: the workbook is built from inputs that have no place for it', () => {
+    /* checked by the typecheck. A field added to carry the list would fail here before any file is built */
+    expectTypeOf<SheetInput>().not.toHaveProperty('salesLegal');
+    expectTypeOf<SheetInput['snap']>().not.toHaveProperty('salesLegal');
   });
 });

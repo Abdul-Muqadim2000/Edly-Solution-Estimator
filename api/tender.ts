@@ -10,7 +10,10 @@ import {
   readCatalog,
   readDocRefs,
   readMatchInputs,
+  readKeyTerms,
   readPlatforms,
+  readSortInputs,
+  sortItems,
   uploadDocument
 } from '../server/ai/tender.js';
 
@@ -21,6 +24,8 @@ import {
  * POST /api/tender?op=warm      { docs }             keeps the tender's cache alive, nothing answered
  * POST /api/tender?op=extract   { docs, range }      one range's requirements
  * POST /api/tender?op=match     { catalog, reqs }    catalog matches for up to 60 requirements
+ * POST /api/tender?op=sort      { items }            which team each out-of-scope item is for, up to 150
+ * POST /api/tender?op=terms     { docs, doc, from?, to? }  one document's key legal and commercial terms, or some pages'
  * POST /api/tender?op=discard   { fileIds }          deletes tender files at Anthropic
  *
  * Nothing here writes to the store. The browser turns what a person approves into state, and
@@ -93,6 +98,16 @@ export async function handle(request: Request): Promise<Response> {
     if (op === 'match') {
       const { matches, tokens } = await matchRequirements(readCatalog(body.catalog), readMatchInputs(body.reqs));
       return json({ ok: true, matches, tokens });
+    }
+
+    if (op === 'sort') {
+      const { categories, tokens } = await sortItems(readSortInputs(body.items));
+      return json({ ok: true, categories, tokens });
+    }
+
+    if (op === 'terms') {
+      const { found, tokens } = await readKeyTerms(readDocRefs(body.docs), { doc: whole(body.doc), from: Math.max(1, whole(body.from)), to: whole(body.to) });
+      return json({ ok: true, found, tokens });
     }
 
     if (op === 'discard') {

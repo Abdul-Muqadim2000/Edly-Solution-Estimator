@@ -2,6 +2,7 @@ import { discover, exportBytes, loadState, saveState, storeKind, storeLabel } fr
 import { coerceState, countRows, EMPTY_STATE } from '../server/schema.js';
 import { json, universal } from '../server/handler.js';
 import { XLSX_MIME } from '../server/providers/types.js';
+import type { Tender } from '../src/types.js';
 
 /**
  * GET  /api/state              the whole store as JSON
@@ -10,6 +11,21 @@ import { XLSX_MIME } from '../server/providers/types.js';
  * GET  /api/state?format=xlsx  download it as a workbook
  * GET  /api/state?probe=1      which provider is in play, and whether it answers
  */
+
+/** Tenders from a client that does not know about key terms, with the stored ones' terms put back. */
+function keepTerms(incoming: Tender[], stored: readonly Tender[]): Tender[] {
+  const byId = new Map(stored.map((tender) => [tender.id, tender]));
+  return incoming.map((tender) => {
+    const was = byId.get(tender.id);
+    if (!was || tender.readTerms !== undefined || tender.terms !== undefined || tender.termReads !== undefined) return tender;
+    return {
+      ...tender,
+      ...(was.readTerms ? { readTerms: true } : {}),
+      ...(was.terms ? { terms: was.terms } : {}),
+      ...(was.termReads ? { termReads: was.termReads } : {})
+    };
+  });
+}
 
 export async function handle(request: Request): Promise<Response> {
   const url = new URL(request.url, 'http://localhost');
@@ -76,9 +92,22 @@ export async function handle(request: Request): Promise<Response> {
 
       /* A missing collection means "I do not know about this", not "delete it all". A tab still
          running a build from before tenders existed sends no `tenders` key, and reading that as an
-         empty list would wipe every tender on each of its saves. Checked after the guard above, so
-         such a client's empty payload is still refused rather than let through on stored tenders. */
-      if (!Array.isArray((body as Record<string, unknown>).tenders)) incoming.tenders = (await loadState())?.tenders ?? [];
+         empty list would wipe every tender on each of its saves; a tab from before the sales and
+         legal list sends no `salesLegal`, the same way. Checked after the guard above, so such a
+         client's empty payload is still refused rather than let through on stored rows. */
+      const sent = body as Record<string, unknown>;
+      const unknown = { tenders: !Array.isArray(sent.tenders), salesLegal: !Array.isArray(sent.salesLegal) };
+      if (unknown.tenders || unknown.salesLegal) {
+        const stored = await loadState();
+        if (unknown.tenders) incoming.tenders = stored?.tenders ?? [];
+        if (unknown.salesLegal) {
+          incoming.salesLegal = stored?.salesLegal ?? [];
+          /* The same build reads tenders but not their key terms, which came with the list, so each
+             tender it saves would lose them. A build that knows them never takes them away, so
+             keeping the stored ones cannot undo anything a person did. */
+          incoming.tenders = keepTerms(incoming.tenders, stored?.tenders ?? []);
+        }
+      }
 
       const result = await saveState(incoming);
       return json({
@@ -94,6 +123,7 @@ export async function handle(request: Request): Promise<Response> {
           solutions: incoming.solutions.length,
           bundles: incoming.bundles.length,
           tenders: incoming.tenders.length,
+          salesLegal: incoming.salesLegal.length,
           settings: Object.keys(incoming.settings).length
         }
       });

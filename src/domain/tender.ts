@@ -427,6 +427,58 @@ export function sectionRanges(tender: Pick<Tender, 'docs' | 'ranges' | 'outline'
   return runs.flatMap((run) => cutRun(doc.n, run, starts, size));
 }
 
+/**
+ * The key a terms read is claimed under: `terms:1` for the whole of document 1, `terms:1:1-24` for
+ * part of it after a split. Never the key of an extraction range, so neither claim is taken for the
+ * other and no call shares another's slot.
+ */
+export const termReadKey = (doc: number, part?: Pick<TenderRange, 'from' | 'to'>): string =>
+  part ? `terms:${doc}:${part.from}-${part.to === 0 ? 'end' : part.to}` : `terms:${doc}`;
+
+/**
+ * One terms read per document with no terms read yet. The whole document each time: the answer is
+ * short, and the document comes from the cache the extraction left, so cutting it into ranges would
+ * only multiply the calls. A document is split only when one call could not finish (`splitTermRead`).
+ */
+export function planTermReads(docs: readonly Pick<TenderDocument, 'n' | 'pages'>[], already: readonly TenderRange[] = []): TenderRange[] {
+  /* by document, not by key: a document split in two has no `terms:1` read any more, and is planned all the same */
+  const planned = new Set(already.map((read) => read.doc));
+  return docs
+    .filter((doc) => !planned.has(doc.n))
+    .map((doc) => ({ key: termReadKey(doc.n), doc: doc.n, from: 1, to: Math.max(0, doc.pages), status: 'pending' as const }));
+}
+
+/**
+ * A terms read cut in two, for when one call could not list the terms of all it covered, as an
+ * extraction range is. Null for a single page.
+ */
+export function splitTermRead(read: TenderRange): [TenderRange, TenderRange] | null {
+  const halves = splitRange(read);
+  if (!halves) return null;
+  const [first, second] = halves;
+  return [
+    { ...first, key: termReadKey(first.doc, first) },
+    { ...second, key: termReadKey(second.doc, second) }
+  ];
+}
+
+/** Terms reads not finished: waiting, or being read in some tab. */
+export const unreadTerms = (tender: Pick<Tender, 'readTerms' | 'termReads'>): TenderRange[] =>
+  tender.readTerms ? (tender.termReads ?? []).filter((read) => read.status === 'pending' || read.status === 'running') : [];
+
+/** How many documents some terms reads cover, since a split document has more than one. */
+export const documentsIn = (reads: readonly Pick<TenderRange, 'doc'>[]): number => new Set(reads.map((read) => read.doc)).size;
+
+/**
+ * Whether the terms may be read now: they were asked for, a document is still unread for them, and
+ * the extraction has nothing left to read. Requirements come first, and the terms follow while the
+ * cache the extraction kept warm is still there.
+ */
+export function termsWaiting(tender: Pick<Tender, 'readTerms' | 'termReads' | 'ranges'>): boolean {
+  const extracting = tender.ranges.some((range) => range.status === 'pending' || range.status === 'running');
+  return unreadTerms(tender).length > 0 && !extracting;
+}
+
 const pendingRange = (doc: number, from: number, to: number): TenderRange => ({
   key: `${doc}:${from}-${to === 0 ? 'end' : to}`,
   doc,
@@ -806,13 +858,22 @@ export function approvedToGoOn(tender: Spending): number {
  * What is waiting for a person to agree to spend more, in words, or '' when nothing is. Parts being
  * read here right now are not waiting; `matchingHeld` says matching was asked for and stopped.
  */
-export function heldByLimit(tender: Spending & Pick<Tender, 'ranges' | 'reqs'>, inFlight: ReadonlySet<string>, matchingHeld: boolean): string {
+export function heldByLimit(
+  tender: Spending & Pick<Tender, 'ranges' | 'reqs' | 'readTerms' | 'termReads'>,
+  inFlight: ReadonlySet<string>,
+  matchingHeld: boolean,
+  /** Out-of-scope items the sort call was asked for and the limit stopped. */
+  sortingHeld = 0
+): string {
   if (canSpend(tender)) return '';
   const held: string[] = [];
   const unread = tender.ranges.filter((range) => (range.status === 'pending' || range.status === 'running') && !inFlight.has(range.key)).length;
   if (unread > 0) held.push(`${plural(unread, 'part')} of the tender ${unread === 1 ? 'is' : 'are'} not read yet`);
   const unmatched = matchingHeld ? needsMatching(tender).length : 0;
   if (unmatched > 0) held.push(`${plural(unmatched, 'requirement')} ${unmatched === 1 ? 'is' : 'are'} not matched yet`);
+  const terms = documentsIn(unreadTerms(tender).filter((read) => !inFlight.has(read.key)));
+  if (terms > 0) held.push(`the key terms of ${plural(terms, 'document')} are not read yet`);
+  if (sortingHeld > 0) held.push(`${plural(sortingHeld, 'sales and legal item')} ${sortingHeld === 1 ? 'is' : 'are'} not sorted yet`);
   return held.join(', and ');
 }
 
@@ -995,6 +1056,8 @@ export interface NewTenderInput {
   /** What the server allows a tender, from the probe, and what a person agreed to beyond it before the tender was made. */
   aiLimit: number;
   aiApproved: number;
+  /** The person ticked "Also list the key legal and commercial terms" before the tender was read. */
+  readTerms?: boolean;
 }
 
 /** A tender as the fit step leaves it: platform chosen, ranges planned, nothing extracted yet. */
@@ -1023,7 +1086,9 @@ export function newTender(input: NewTenderInput, id: string, existing: readonly 
     sentAt: '',
     tokens: input.tokens,
     aiLimit: input.aiLimit > 0 ? input.aiLimit : DEFAULT_AI_LIMIT,
-    aiApproved: Math.max(0, input.aiApproved)
+    aiApproved: Math.max(0, input.aiApproved),
+    /* absent rather than false when not asked for, the way a tender from before the choice reads */
+    ...(input.readTerms ? { readTerms: true, terms: [], termReads: planTermReads(input.docs) } : {})
   };
 }
 

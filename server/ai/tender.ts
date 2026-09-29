@@ -10,10 +10,23 @@ import {
   type MatchInput,
   type PlatformDigest
 } from '../../src/domain/tender.js';
-import type { RequirementMatch, TenderTokens } from '../../src/types.js';
+import { readCategories, readTerms, type ExtractedTerm, type SortInput } from '../../src/domain/salesLegal.js';
+import type { RequirementMatch, SalesLegalCategory, TenderTokens } from '../../src/types.js';
 import { record, text as str, whole as int } from '../../src/lib/narrow.js';
 import { AiError, aiEffort, aiModel, anthropic, callDeadlineMs, FILE_TTL_SECONDS, TENDER_FILE_PREFIX, toAiError, tokensOf } from './anthropic.js';
-import { catalogText, documentBlocks, extractInstruction, fitInstruction, KEEP_WARM_TEXT, matchInstruction, SYSTEM, TOOLS, type ToolName } from './prompts.js';
+import {
+  catalogText,
+  documentBlocks,
+  extractInstruction,
+  fitInstruction,
+  KEEP_WARM_TEXT,
+  matchInstruction,
+  sortInstruction,
+  SYSTEM,
+  termsInstruction,
+  TOOLS,
+  type ToolName
+} from './prompts.js';
 
 /**
  * The tender operations, each one call to Claude.
@@ -96,6 +109,16 @@ export function readMatchInputs(value: unknown): MatchInput[] {
       };
     })
     .filter((req) => req.id && req.text);
+}
+
+/** Out-of-scope items for the sort call. A tender with more than this is sorted in several calls. */
+export function readSortInputs(value: unknown): SortInput[] {
+  return list(value, 150, 'items')
+    .map((entry) => {
+      const raw = record(entry);
+      return { id: str(raw.id, 40), text: str(raw.text, 800), section: str(raw.section, 160), reason: str(raw.reason, 500) };
+    })
+    .filter((item) => item.id && item.text);
 }
 
 /* ------------------------------------------------------------ one call */
@@ -287,4 +310,35 @@ export async function matchRequirements(
     ),
     tokens
   };
+}
+
+/**
+ * Sorts out-of-scope items into the teams that act on them. Only their words go: no documents and no
+ * catalog, so the call costs cents. What comes back is narrowed to the five teams and the ids asked.
+ */
+export async function sortItems(items: readonly SortInput[]): Promise<{ categories: Record<string, SalesLegalCategory>; tokens: TenderTokens }> {
+  if (items.length === 0) return { categories: {}, tokens: tokensOf(null, aiModel()) };
+  const { input, tokens } = await callTool('report_categories', [{ type: 'text', text: sortInstruction(items) }]);
+  return {
+    categories: readCategories(
+      input,
+      items.map((item) => item.id)
+    ),
+    tokens
+  };
+}
+
+/**
+ * One document's key legal and commercial terms, or those of some of its pages after a split. The documents go first, in the order and with the
+ * cache markers every other call uses, so this reads the tender from the cache the extraction left
+ * and pays in full only for its short answer.
+ */
+export async function readKeyTerms(
+  docs: readonly DocRef[],
+  range: { doc: number; from: number; to: number }
+): Promise<{ found: ExtractedTerm[]; tokens: TenderTokens }> {
+  const doc = docs.find((one) => one.n === range.doc);
+  if (!doc) throw new AiError('bad_request', `There is no document ${range.doc} in this tender.`, 400);
+  const { input, tokens } = await callTool('report_terms', [...documentBlocks(docs, doc.n), { type: 'text', text: termsInstruction(doc, range.from, range.to) }]);
+  return { found: readTerms(input, doc.n, doc.pages), tokens };
 }

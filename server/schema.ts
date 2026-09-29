@@ -6,6 +6,7 @@ import type {
   EstimationSnapshot,
   EstimationTag,
   PersistedState,
+  SalesLegalItem,
   Tender,
   TenderStage
 } from '../src/types.js';
@@ -13,6 +14,7 @@ import type { CellValue, SheetTable, WriteSheets, Workbook } from '../src/lib/xl
 import { joinNotes, withSlugs } from '../src/lib/format.js';
 import { usdOf } from '../src/domain/aiPrice.js';
 import { aiSpent, aiStep, DEFAULT_AI_LIMIT } from '../src/domain/tender.js';
+import { categoryLabel, readCategory, readDay, readStatus, readTopic, statusLabel, topicLabel } from '../src/domain/salesLegal.js';
 
 /**
  * The bridge between app state and spreadsheet rows.
@@ -28,7 +30,8 @@ export const SHEETS = {
   solutions: 'EstimatedSolutions',
   bundles: 'CustomBundles',
   settings: 'Settings',
-  tenders: 'Tenders'
+  tenders: 'Tenders',
+  salesLegal: 'SalesAccountLegal'
 } as const;
 
 export const COLUMNS = {
@@ -62,7 +65,14 @@ export const COLUMNS = {
      because a tender's continuation rows put their part in the last column. */
   tenders: [
     'id', 'plat', 'name', 'slug', 'client', 'due', 'stage', 'created', 'updated', 'requirements', 'approved',
-    'catalog', 'partial', 'custom', 'outOfScope', 'estimationId', 'sentOn', 'aiSpent', 'aiLimit', 'aiApproved', 'detailJson'
+    'catalog', 'partial', 'custom', 'outOfScope', 'estimationId', 'sentOn', 'aiSpent', 'aiLimit', 'aiApproved', 'readTerms', 'detailJson'
+  ],
+  /* The columns a legal or account colleague works in come first, so the sheet reads without
+     scrolling. `estimationName` and `client` are written for them and never read back: the item
+     keeps its deal's id, and a renamed deal shows its new name on the next save. */
+  salesLegal: [
+    'id', 'plat', 'estimationId', 'estimationName', 'client', 'category', 'item', 'status', 'owner', 'due', 'note',
+    'reason', 'kind', 'topic', 'priority', 'source', 'section', 'quote', 'tenderId', 'tenderItem', 'created', 'updated'
   ]
 } as const;
 
@@ -177,7 +187,8 @@ export function stateToSheets(state: PersistedState): WriteSheets {
      `id##2/3` with every other column blank. Parts are pipe-wrapped for the same reason. */
   const tenders = header('tenders');
   for (const t of state.tenders ?? []) {
-    const detail = toJson({ summary: t.summary, docs: t.docs, fit: t.fit, outline: t.outline, ranges: t.ranges, reqs: t.reqs, tokens: t.tokens });
+    /* the terms and their reads are absent from a tender that never asked for them, and stay absent */
+    const detail = toJson({ summary: t.summary, docs: t.docs, fit: t.fit, outline: t.outline, ranges: t.ranges, reqs: t.reqs, tokens: t.tokens, terms: t.terms, termReads: t.termReads });
     const parts = Math.max(1, Math.ceil(detail.length / CELL_LIMIT));
     const part = (i: number): string => (parts === 1 ? detail : wrapChunk(detail.slice(i * CELL_LIMIT, (i + 1) * CELL_LIMIT)));
     const counts = { total: t.reqs.length, approved: 0, catalog: 0, partial: 0, custom: 0, out: 0 };
@@ -189,13 +200,28 @@ export function stateToSheets(state: PersistedState): WriteSheets {
     tenders.push([
       str(t.id), str(t.plat || 'openedx'), str(t.name), str(t.slug), str(t.client), str(t.due), str(t.stage), str(t.at), str(t.up),
       counts.total, counts.approved, counts.catalog, counts.partial, counts.custom, counts.out, str(t.estId), str(t.sentAt),
-      Math.round(aiSpent(t) * 100) / 100, aiStep(t), Math.max(0, Number(t.aiApproved) || 0), part(0)
+      Math.round(aiSpent(t) * 100) / 100, aiStep(t), Math.max(0, Number(t.aiApproved) || 0), t.readTerms ? 'yes' : '', part(0)
     ]);
     for (let i = 1; i < parts; i++) {
       tenders.push([`${str(t.id)}##${i + 1}/${parts}`, ...new Array<string>(COLUMNS.tenders.length - 2).fill(''), part(i)]);
     }
   }
   sheets[SHEETS.tenders] = tenders;
+
+  /* Category and status go in as the words a person reads, and come back from whatever a person
+     typed over them in the sheet: the teams assign and close these rows there. */
+  const deals = new Map((state.estimations ?? []).map((one) => [one.id, one] as const));
+  const salesLegal = header('salesLegal');
+  for (const item of state.salesLegal ?? []) {
+    const deal = deals.get(item.estId);
+    salesLegal.push([
+      str(item.id), str(item.plat || 'openedx'), str(item.estId), str(deal?.name), str(deal?.client),
+      item.category ? categoryLabel(item.category) : '', str(item.text), statusLabel(item.status), str(item.owner), str(item.due), str(item.note),
+      str(item.reason), item.kind === 'term' ? 'term' : 'obligation', item.topic ? topicLabel(item.topic) : '', item.priority === 'should' ? 'should' : 'must',
+      str(item.source), str(item.section), str(item.quote), str(item.tender), str(item.tenderItem), str(item.at), str(item.up)
+    ]);
+  }
+  sheets[SHEETS.salesLegal] = salesLegal;
 
   return sheets;
 }
@@ -359,7 +385,38 @@ export function sheetsToState(workbook: Workbook): PersistedState {
     settings[key] = fromJson(bag.parts.join(''));
   }
 
-  return { estimations, requests, solutions, bundles, settings, tenders: readTenders(workbook[SHEETS.tenders]) };
+  /* read by name and forgiving, because people edit this sheet by hand: a status typed as "done",
+     a date typed the way the sheet displays dates */
+  const salesLegal: SalesLegalItem[] = objects(workbook[SHEETS.salesLegal])
+    .map((r): SalesLegalItem => {
+      const topic = readTopic(r.topic);
+      return {
+      id: r.id ?? '',
+      plat: r.plat || 'openedx',
+      estId: r.estimationId ?? '',
+      tender: r.tenderId ?? '',
+      tenderItem: r.tenderItem ?? '',
+      category: readCategory(r.category),
+      kind: String(r.kind ?? '').trim().toLowerCase() === 'term' ? 'term' : 'obligation',
+      text: r.item ?? '',
+      quote: r.quote ?? '',
+      source: r.source ?? '',
+      section: r.section ?? '',
+      reason: r.reason ?? '',
+      /* set only when present, so an item that is not a term reads back as written */
+      ...(topic ? { topic } : {}),
+      priority: String(r.priority ?? '').trim().toLowerCase() === 'should' ? 'should' : 'must',
+      owner: r.owner ?? '',
+      status: readStatus(r.status),
+      due: readDay(r.due),
+      note: r.note ?? '',
+      at: r.created ?? '',
+      up: r.updated ?? ''
+      };
+    })
+    .filter((item) => item.id);
+
+  return { estimations, requests, solutions, bundles, settings, tenders: readTenders(workbook[SHEETS.tenders]), salesLegal };
 }
 
 const STAGES: TenderStage[] = ['requirements', 'match', 'apply', 'done'];
@@ -372,6 +429,8 @@ interface TenderDetail {
   ranges?: Tender['ranges'];
   reqs?: Tender['reqs'];
   tokens?: Partial<Tender['tokens']>;
+  terms?: Tender['terms'];
+  termReads?: Tender['termReads'];
 }
 
 /**
@@ -430,7 +489,11 @@ function readTenders(table: SheetTable | undefined): Tender[] {
          model since 2026-09-28, so that its limit means something when it is opened again */
       tokens: { ...tokens, usd: typeof tokens.usd === 'number' ? tokens.usd : usdOf(tokens, 'claude-opus-5-5') },
       aiLimit: limit !== null && limit > 0 ? limit : DEFAULT_AI_LIMIT,
-      aiApproved: approved !== null && approved > 0 ? approved : 0
+      aiApproved: approved !== null && approved > 0 ? approved : 0,
+      /* each set only when present, so a tender that never asked for its terms reads back as written */
+      ...(String(row.readTerms ?? '').trim().toLowerCase() === 'yes' ? { readTerms: true } : {}),
+      ...(Array.isArray(detail.terms) ? { terms: detail.terms } : {}),
+      ...(Array.isArray(detail.termReads) ? { termReads: detail.termReads } : {})
     });
   }
   return withSlugs(tenders);
@@ -470,11 +533,11 @@ export function syncKey(state: PersistedState): string {
   return stableJson(storedForm(state));
 }
 
-export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [] };
+export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [], salesLegal: [] };
 
 export function countRows(state: PersistedState | null): number {
   if (!state) return 0;
-  return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length;
+  return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length + state.salesLegal.length;
 }
 
 /** Narrow an untrusted request body to the persisted shape. */
@@ -487,6 +550,7 @@ export function coerceState(body: unknown): PersistedState {
     solutions: array<AddedSolution>(raw.solutions),
     bundles: array<AddedBundle>(raw.bundles),
     tenders: array<Tender>(raw.tenders),
+    salesLegal: array<SalesLegalItem>(raw.salesLegal),
     /* an array is an object, and one here would write numbered junk into the Settings sheet */
     settings:
       raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)
