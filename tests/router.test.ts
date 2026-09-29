@@ -17,7 +17,6 @@ import {
   type Route
 } from '../src/lib/router';
 import { slugify, uniqueSlug, withSlugs } from '../src/lib/format';
-import { pressable } from '../src/lib/pressable';
 import { INITIAL_STATE, reducer, type Action, type AppState } from '../src/state/reducer';
 import { routeOfState } from '../src/state/useRouting';
 import type { Estimation, Tender } from '../src/types';
@@ -333,41 +332,6 @@ describe('getting around', () => {
     expect(formatRoute({ ...onDealPage, ...exactly(homeOf('estimator', 'openedx')) })).toBe('/p/openedx/desk');
     const inBuilder: Route = { screen: 'builder', platform: 'openedx', estimation: 'acme-academy', bundle: 'B03', q: 'sso', plan: true };
     expect(formatRoute({ ...inBuilder, ...exactly({ screen: 'practices', practice: 'edtech' }) })).toBe('/practices/edtech');
-  });
-});
-
-describe('pressing a clickable card from the keyboard', () => {
-  const press = (key: string, fromInside = false) => {
-    let pressed = 0;
-    let prevented = false;
-    const card = {};
-    const handlers = pressable(() => (pressed += 1));
-    handlers.onKeyDown({ key, target: fromInside ? {} : card, currentTarget: card, preventDefault: () => (prevented = true) } as never);
-    return { pressed, prevented };
-  };
-
-  it('is a button in the tab order', () => {
-    const handlers = pressable(() => undefined);
-    expect(handlers.role).toBe('button');
-    expect(handlers.tabIndex).toBe(0);
-  });
-
-  it('presses on Enter and on Space, and stops Space scrolling the page', () => {
-    expect(press('Enter')).toEqual({ pressed: 1, prevented: true });
-    expect(press(' ')).toEqual({ pressed: 1, prevented: true });
-  });
-
-  it('ignores other keys, and keys meant for a field or button inside it', () => {
-    expect(press('a')).toEqual({ pressed: 0, prevented: false });
-    expect(press('Tab')).toEqual({ pressed: 0, prevented: false });
-    /* a hub card holds a status menu and a date field; typing in them must not open the deal */
-    expect(press('Enter', true)).toEqual({ pressed: 0, prevented: false });
-  });
-
-  it('still presses on a click', () => {
-    let pressed = 0;
-    pressable(() => (pressed += 1)).onClick();
-    expect(pressed).toBe(1);
   });
 });
 

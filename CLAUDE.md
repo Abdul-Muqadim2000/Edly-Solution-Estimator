@@ -145,13 +145,14 @@ reference.
 
 ### The suite
 
-`bun run test` runs 952 tests across twenty-two files.
+`bun run test` runs 952 tests across twenty-three files.
 
 | File | Covers |
 |---|---|
 | `tests/domain.test.ts` | `calcEstimate`, `schedule`, catalog composition and helpers |
 | `tests/reducer.test.ts` | every state transition, selector and label |
-| `tests/router.test.ts` | URL to state and back, both directions, a link held through sign-in, the links between screens and each role's home, keyboard-pressable cards |
+| `tests/router.test.ts` | URL to state and back, both directions, a link held through sign-in, the links between screens and each role's home |
+| `tests/pressable.test.ts` | a clickable card or row pressed from the keyboard: Enter and Space press it, keys meant for a field inside it are left alone |
 | `tests/schema.test.ts` | state to spreadsheet rows, chunking, round trip, the sync key |
 | `tests/api.test.ts` | `/api/state` end to end, and the empty-payload guard |
 | `tests/handler.test.ts` | the Vercel and web request adapters |
