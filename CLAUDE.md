@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 931 tests across twenty-two files.
+`bun run test` runs 935 tests across twenty-two files.
 
 | File | Covers |
 |---|---|
@@ -316,7 +316,11 @@ Each of these exists because it failed once. Do not weaken one to make a feature
 1. **Nothing is pushed before a read succeeds** (`useSync.ts`). An empty browser must never be
    able to blank the spreadsheet because the network was down at boot.
 2. **A background pull never overwrites unsaved local edits.** If both sides changed, say so and
-   ask for a reload rather than silently picking a winner.
+   ask for a reload rather than silently picking a winner. Nor is a read applied that one of this
+   tab's own saves overtook (`overtaken` in `pullStep`): it holds the store from before that save,
+   and applying it rolled the tab back, then the tab's next save took the change out of the store.
+   A desk request filed during the 45-second poll was lost that way in the 2026-09-29 walkthrough.
+   `tests/storage.test.ts` covers it.
 3. **A zero-row `PUT` is refused while the store holds rows** (`api/state.ts`, 409). `?force=1`
    clears deliberately. `tests/api.test.ts` covers this. Keep it green.
 4. **A workbook that merely exists is not data.** `state:seed` writes an empty workbook, so

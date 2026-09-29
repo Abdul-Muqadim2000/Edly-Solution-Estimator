@@ -32,6 +32,11 @@ export interface PullInput {
   local: string;
   /** Records this tab holds, settings not counted. */
   localRows: number;
+  /**
+   * A save from this tab was on its way when the read left, or started before it came back, so
+   * the read may show the store from before that save.
+   */
+  overtaken: boolean;
 }
 
 export function pullStep(input: PullInput): PullStep {
@@ -43,6 +48,11 @@ export function pullStep(input: PullInput): PullStep {
        enough. One answer is not enough to act on. */
     return input.rechecked ? 'start-fresh' : 'recheck';
   }
+  /* A read this tab's own save overtook holds the store as it was before that save. Once the save
+     lands, the tab and lastSynced both hold the change, so the old copy looked like someone else's
+     and was applied: the tab rolled back, and its next save took the change out of the store too.
+     Nothing is lost by dropping it; the next read comes in 45 seconds. */
+  if (input.overtaken) return 'ignore';
   if (input.incoming === input.lastSynced) return 'ignore';
   if (input.local !== input.lastSynced) return 'conflict';
   /* An empty store under a tab full of rows is far likelier to be a read that went wrong than a
