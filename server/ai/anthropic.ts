@@ -45,8 +45,8 @@ const EFFORTS: readonly AiEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /**
  * How hard the model thinks, from `EDLY_AI_EFFORT`, `medium` when it is unset or not a level.
- * Thinking is billed as output, the dearest tokens, so this is the first lever on cost once the
- * real run has shown which level still reads tenders well (DEFERRED.md 8).
+ * Thinking is billed as output, the dearest tokens, so this is the first lever on cost once a run
+ * of real tenders at each level shows which still reads them well (CLAUDE.md, Worth adding next 17).
  *
  * Always sent, never left to the API: the API's default differs by model (`medium` on Opus 5.5,
  * `high` on Opus 5), so leaving it out would let a change of model change the thinking unseen.

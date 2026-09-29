@@ -83,6 +83,58 @@ Two notes on reading the results:
   single column with the rail as a wrapping row and no "Std deploy" column — a narrow run is not a
   regression. The preview frame here is usually ~920px, so that is the path you will normally see.
 
+## The tender AI, run for real
+
+Run by hand on 2026-09-29 against the real Anthropic API: Opus 5.5 at `medium` effort, one public
+university-system LMS tender as a Word file (75 parts, 93,510 tokens), matched against the Open edX
+catalog with 413 imported estimates (500 catalog lines, 47,005 tokens). The dev server ran with the
+key, a local pass-through logged each call's usage (never the key or the text), and headless Chrome
+drove the screens. There is no script for it in the repo; it spends money, so it is run on purpose.
+
+| Step | Calls | Time per call | Cost | Cache |
+|---|---|---|---|---|
+| Fit | 1 | 62 s | $0.61 | wrote the tender once (96,014 tokens, five-minute entry) |
+| Keep-warm | 1 | 6 s | $0.02 | read all of it, no output billed |
+| Extraction | 6 | 10 to 118 s | $1.05 | every call read the tender, none wrote it |
+| Matching | 6 | 49 to 66 s | $1.41 | the two first batches both wrote the catalog (fixed since) |
+
+What held:
+
+- The tender's "AI cost" ($3.09) equals every call's usage priced at `src/domain/aiPrice.ts`, to the
+  millionth of a dollar. Opus 5.5 answered every call; no refusal fallback ran.
+- The fit recommended Open edX (medium confidence, with Canvas, Moodle and Blackboard as the
+  alternatives), read the deadline and the client correctly, and planned 51 of 75 parts. It kept
+  the delivery obligations inside the legal terms (data security, incident notice, FERPA,
+  accessibility, the SLA rider) as sections of their own and skipped the rest.
+- 241 requirements: 167 must, 74 should, 11 out of scope, 104 with the tender's own reference.
+  236 quotes are verbatim on the part they cite and the other 5 are the tender's words shortened
+  with "...". Every page cited is inside a range that was read. About a dozen pairs say the same
+  thing twice, because the tender restates its scope in three places; that is what Combine is for.
+- Matching returned only catalog ids; 278 of 319 references point at imported estimates.
+- The keep-warm is accepted with the tools, adaptive thinking and the fallback beta, and it keeps
+  the entry alive: written at 0:00, refreshed at 4:00, still read at 8:30 (a separate $0.02 check).
+- The spending limit ($1 a step for the run) stopped a "Read it too" and matching, asked with the
+  right figures, and went on by a full step. Matching passed the limit by $0.31, the calls running.
+- A call cut off by `EDLY_AI_DEADLINE_MS` (20 s for the test) answers `timeout` with what it read.
+- Free failures, each with the message a person can act on: no key, a key Anthropic rejects, a
+  model the key cannot use, a file deleted at Anthropic (410), and discard refusing a file the app
+  did not upload.
+- Apply, on a copy of the store: the estimation picked the accepted solutions with hours from the
+  catalog, the desk requests carried the tender deadline, and sending deleted the file at Anthropic.
+
+Found and fixed: two match batches started together each wrote the catalog to the cache, about
+$0.23 wasted per tender at this catalog size. The first call on a cold cache now goes alone
+(`callSlots`). And some matches named two solutions that do the same job (the built badge feature
+and an unbuilt badge service together, 340 h for 180 h of work), which the estimation would have
+priced twice. The match instruction now asks for every part a requirement needs but only one of two
+alternatives, the built one first. Checked on the real API with ten of the tender's requirements
+($0.37 for two runs): the five with alternatives each came back with one, and the five whose parts
+go together kept them (migration kept its three steps, notifications its engine, providers and SMS).
+A first wording, "name only the solutions the requirement needs", also dropped needed parts, so
+keep the instruction aimed at alternatives. Found and not fixed, in CLAUDE.md *Worth adding next*: a cut-off call's output is
+not counted (18), and Word's automatic clause numbers are lost in conversion (19). Not yet run for
+real: a PDF tender, a spreadsheet tender, a refusal, a rate limit (17).
+
 ## What these do not cover
 
 - **`tsc --noEmit`.** Babel strips types without checking them. Run `bun run typecheck`.
