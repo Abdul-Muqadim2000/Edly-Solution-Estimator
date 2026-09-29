@@ -62,12 +62,24 @@ export const localProvider: FileProvider = {
     }
   },
 
+  /* Written beside the file and renamed over it, never rewritten in place. A read that landed while
+     the file was truncated and half written parsed as a workbook missing sheets or rows, and a tab
+     that hydrated from that saved it back over everything. A rename swaps the whole file at once, so
+     a read sees the old workbook or the new one. */
   async save(bytes: Uint8Array): Promise<SaveResult> {
-    const { writeFile, mkdir } = await import('node:fs/promises');
-    const dir = localPath().replace(/[^/\\]+$/, '');
+    const { writeFile, mkdir, rename, rm } = await import('node:fs/promises');
+    const path = localPath();
+    const dir = path.replace(/[^/\\]+$/, '');
     if (dir) await mkdir(dir, { recursive: true });
-    await writeFile(localPath(), bytes);
-    return { pathname: localPath() };
+    const draft = `${path}.${process.pid}-${(savesMade += 1)}.tmp`;
+    await writeFile(draft, bytes);
+    try {
+      await rename(draft, path);
+    } catch (error) {
+      await rm(draft, { force: true });
+      throw error;
+    }
+    return { pathname: path };
   },
 
   async discover(): Promise<DiscoveredTarget[]> {
@@ -76,3 +88,5 @@ export const localProvider: FileProvider = {
 };
 
 const localPath = (): string => process.env.EDLY_STATE_PATH ?? './data/edly-state.xlsx';
+/** Numbers each save's temporary file, so two saves in flight never write the same one. */
+let savesMade = 0;

@@ -324,6 +324,10 @@ Each of these exists because it failed once. Do not weaken one to make a feature
    rows the new data no longer reaches. On the client, `pullStep` in `src/state/syncPolicy.ts`
    reads again before a tab believes an empty store at boot, and never applies an empty read over
    rows a tab already holds. `tests/providers.test.ts` and `tests/storage.test.ts` cover both.
+   The local file store had the same fault in another form until 2026-09-29: it truncated the file
+   and rewrote it in place, and a read in between parsed as a workbook missing sheets or rows (271
+   of 644 reads taken during saves). It now writes beside the file and renames over it, so a read
+   sees the old workbook or the new one; `tests/storage.test.ts` races saves against reads.
 
 ### Writing code that survives the move to a real server
 

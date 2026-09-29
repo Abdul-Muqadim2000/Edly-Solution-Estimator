@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -15,7 +15,7 @@ import {
 import { discover, exportBytes, loadState, saveState, storeLabel } from '../server/store';
 import { EMPTY_STATE } from '../server/schema';
 import { readWorkbook } from '../src/lib/xlsx';
-import type { Estimation } from '../src/types';
+import type { AddedSolution, Estimation, PersistedState } from '../src/types';
 import { BEACON_LIMIT, pullStep, unloadPlan, type PullInput } from '../src/state/syncPolicy';
 
 /**
@@ -186,6 +186,53 @@ describe('the store layer', () => {
     const back = await loadState();
 
     expect(back?.estimations[0]).toMatchObject({ id: 'EST-1', name: 'Deal EST-1', total: 40 });
+  });
+
+  it('never lets a read see a file half written, however the reads and writes interleave', async () => {
+    /* Found driving the app on 2026-09-29: the file was truncated and rewritten in place, and a read
+       landing in between parsed, as a workbook with some of its sheets. In 644 reads taken during
+       saves, 271 came back like that: every estimated solution gone, or every tender. A tab that
+       hydrates from one holds the partial copy and saves it back over everything. */
+    const solution = (n: number): AddedSolution => ({
+      id: `CS-${n}`, plat: 'openedx', bundleId: 'B01', name: `Estimate ${n} with a name long enough to fill a row`, desc: 'Described at the length a real row has. '.repeat(4),
+      first: 10, repeat: 4, form: '', deploy: '', integrations: '', category: 'Core', subCategory: '', account: '', notes: '', from: '', estAt: '2026-01-01'
+    });
+    const small: PersistedState = { ...EMPTY_STATE, estimations: [estimation('EST-1')], solutions: Array.from({ length: 400 }, (_, n) => solution(n)) };
+    const large: PersistedState = { ...small, estimations: [estimation('EST-1'), estimation('EST-2')] };
+    await saveState(small);
+
+    let stop = false;
+    let written = 0;
+    const writer = (async () => {
+      while (!stop) {
+        await saveState(written % 2 === 0 ? large : small);
+        written += 1;
+      }
+    })();
+    const partial: string[] = [];
+    const until = Date.now() + 1500;
+    let reads = 0;
+    while (Date.now() < until) {
+      const state = await loadState();
+      reads += 1;
+      const whole = state !== null && state.solutions.length === 400 && (state.estimations.length === 1 || state.estimations.length === 2);
+      if (!whole) partial.push(state === null ? 'empty' : `${state.estimations.length} estimations, ${state.solutions.length} solutions`);
+    }
+    stop = true;
+    await writer;
+
+    expect(written).toBeGreaterThan(5);
+    expect(reads).toBeGreaterThan(5);
+    expect(partial).toEqual([]);
+    /* the file is swapped in whole, and nothing is left beside it */
+    expect(readdirSync(dir)).toEqual(['edly-state.xlsx']);
+  });
+
+  it('fails a save it cannot swap into place, loudly, and leaves no half-written file behind', async () => {
+    /* a directory where the workbook should be: the rename cannot replace it */
+    mkdirSync(join(dir, 'edly-state.xlsx'));
+    await expect(saveState({ ...EMPTY_STATE, estimations: [estimation('EST-1')] })).rejects.toThrow();
+    expect(readdirSync(dir)).toEqual(['edly-state.xlsx']);
   });
 
   it('reports how many bytes it wrote, so a silent no-op is visible', async () => {
