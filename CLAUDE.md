@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 952 tests across twenty-three files.
+`bun run test` runs 956 tests across twenty-three files.
 
 | File | Covers |
 |---|---|
