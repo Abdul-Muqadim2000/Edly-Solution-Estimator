@@ -3,6 +3,7 @@ import type { TenderStage } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openTenderRecord } from '@/state/reducer';
 import { useTenderRunner } from '@/state/useTenderRunner';
+import { deleteTender } from '@/state/deleteTender';
 import { aiAllowance, aiSpent, aiStep, documentLength, heldDocs, limitQuestion, spendSummary, stageOpen, tenderCounts, tokenSummary } from '@/domain/tender';
 import { copiedItems, goesWithEstimation, salesLegalDrafts } from '@/domain/salesLegal';
 import { findPlatform } from '@/data/practices';
@@ -85,9 +86,8 @@ export function TenderWorkspace(): JSX.Element {
     }
   };
 
-  const remove = async (): Promise<void> => {
-    if (held.length > 0) await tenderDiscard(held.map((doc) => doc.fileId)).catch(() => []);
-    dispatch({ type: 'deleteTender', id: tender.id });
+  const remove = (): void => {
+    void deleteTender(tender, dispatch, Date.now());
     router.navigate({ screen: 'hub' });
   };
 
@@ -171,7 +171,7 @@ export function TenderWorkspace(): JSX.Element {
                 tone={confirmDelete ? color.redInk : color.muted}
                 title="Delete this tender and its files at Anthropic. Estimations and requests made from it stay."
                 onClick={() => {
-                  if (confirmDelete) void remove();
+                  if (confirmDelete) remove();
                   else {
                     setConfirmDelete(true);
                     window.setTimeout(() => setConfirmDelete(false), 4000);
