@@ -1,19 +1,21 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { TenderStage } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openTenderRecord } from '@/state/reducer';
 import { useTenderRunner } from '@/state/useTenderRunner';
 import { aiAllowance, aiSpent, aiStep, documentLength, heldDocs, limitQuestion, spendSummary, stageOpen, tenderCounts, tokenSummary } from '@/domain/tender';
+import { copiedItems, goesWithEstimation, salesLegalDrafts } from '@/domain/salesLegal';
 import { findPlatform } from '@/data/practices';
 import { tenderDiscard } from '@/api/client';
 import { plural } from '@/lib/format';
 import { color, dueInfo, font, radius } from '@/theme';
 import { AppHeader } from '@/components/AppHeader';
 import { Banner, Button, Empty, Field, Mono, Row, Spacer } from '@/components/ui';
-import { DeferredField, StepPill, TextButton } from '@/components/tender/parts';
+import { DeferredField, StepPill, TabPill, TextButton } from '@/components/tender/parts';
 import { RequirementsStep } from '@/components/tender/RequirementsStep';
 import { MatchStep } from '@/components/tender/MatchStep';
 import { ApplyStep } from '@/components/tender/ApplyStep';
+import { SalesLegalTab } from '@/components/tender/SalesLegalTab';
 
 /**
  * One tender, from requirements to desk requests, in three steps a person moves through.
@@ -31,7 +33,12 @@ const expiryLabel = (iso: string): string => {
 export function TenderWorkspace(): JSX.Element {
   const { state, dispatch, router, catalog } = useApp();
   const tender = openTenderRecord(state);
-  const runner = useTenderRunner(tender, catalog, dispatch);
+  const tenderId = tender?.id ?? '';
+  /* memoised, so the runner's sort is not rebuilt on every render */
+  const copiedHere = useMemo(() => state.salesLegal.filter((item) => item.tender === tenderId), [state.salesLegal, tenderId]);
+  const runner = useTenderRunner(tender, catalog, dispatch, copiedHere);
+  /* the Sales, account and legal tab is not a step, so it lives here rather than in the tender's stage */
+  const [view, setView] = useState<'steps' | 'legal'>('steps');
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [filesNote, setFilesNote] = useState('');
@@ -52,9 +59,21 @@ export function TenderWorkspace(): JSX.Element {
   const due = dueInfo(tender.due);
   const held = heldDocs(tender.docs, Date.now());
   const goTo = (stage: TenderStage): void => {
+    setView('steps');
     dispatch({ type: 'patchTender', id: tender.id, patch: { stage } });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  const legalDrafts = salesLegalDrafts(tender, copiedItems(copiedHere, tender.id));
+  const legalMeta =
+    runner.readingTerms > 0
+      ? 'Reading the key terms…'
+      : runner.sorting
+        ? 'Sorting into teams…'
+        : legalDrafts.length === 0
+          ? 'Nothing out of scope yet'
+          : tender.estId
+            ? `${plural(copiedHere.length, 'item')} on the estimation`
+            : `${plural(legalDrafts.filter(goesWithEstimation).length, 'item')} to go with the estimation`;
 
   const removeFiles = async (): Promise<void> => {
     try {
@@ -186,17 +205,21 @@ export function TenderWorkspace(): JSX.Element {
                   n={index + 1}
                   label={step.label}
                   meta={step.meta}
-                  on={current === step.stage}
                   done={order.indexOf(current) > index || (step.stage === 'apply' && Boolean(tender.sentAt))}
                   disabled={!stageOpen(tender, step.stage)}
                   onClick={() => goTo(step.stage)}
+                  on={view === 'steps' && current === step.stage}
                 />
               ))}
+              <TabPill label="Sales, account and legal" meta={legalMeta} count={legalDrafts.length} on={view === 'legal'} onClick={() => setView(view === 'legal' ? 'steps' : 'legal')} />
             </nav>
 
-            {current === 'requirements' ? <RequirementsStep tender={tender} runner={runner} dispatch={dispatch} onContinue={() => goTo('match')} /> : null}
-            {current === 'match' ? <MatchStep tender={tender} runner={runner} catalog={catalog} dispatch={dispatch} onContinue={() => goTo('apply')} /> : null}
-            {current === 'apply' ? <ApplyStep tender={tender} state={state} catalog={catalog} dispatch={dispatch} router={router} /> : null}
+            {view === 'legal' ? <SalesLegalTab tender={tender} state={state} runner={runner} dispatch={dispatch} router={router} /> : null}
+            {view === 'steps' && current === 'requirements' ? <RequirementsStep tender={tender} runner={runner} dispatch={dispatch} onContinue={() => goTo('match')} /> : null}
+            {view === 'steps' && current === 'match' ? <MatchStep tender={tender} runner={runner} catalog={catalog} dispatch={dispatch} onContinue={() => goTo('apply')} /> : null}
+            {view === 'steps' && current === 'apply' ? (
+              <ApplyStep tender={tender} state={state} catalog={catalog} dispatch={dispatch} router={router} onShowLegal={() => setView('legal')} />
+            ) : null}
           </>
         )}
       </main>

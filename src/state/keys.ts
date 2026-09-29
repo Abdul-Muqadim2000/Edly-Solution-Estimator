@@ -1,12 +1,14 @@
 /** Browser storage keys. The sync bridge mirrors all of these except `auth`. */
 export const STORAGE_KEYS = {
-  /** Estimations, requests, desk additions, custom bundles, tenders. */
+  /** Estimations, requests, desk additions, custom bundles, tenders, the sales and legal list. */
   estimations: 'edly-estimations-v2',
   requests: 'edly-requests-v2',
   solutions: 'edly-solutions-v2',
   bundles: 'edly-bundles-v2',
   /** Tenders in review, with their extracted requirements and decisions. */
   tenders: 'edly-tenders-v1',
+  /** What each deal commits Edly to that is not software, for the sales, account and legal teams. */
+  salesLegal: 'edly-sales-legal-v1',
   /** Working snapshot of the open estimation, plus display preferences. */
   workspace: 'edly-workspace-v2',
   /** Which estimation is open. */
@@ -29,7 +31,8 @@ export const SYNCED_DATA_KEYS = [
   STORAGE_KEYS.requests,
   STORAGE_KEYS.solutions,
   STORAGE_KEYS.bundles,
-  STORAGE_KEYS.tenders
+  STORAGE_KEYS.tenders,
+  STORAGE_KEYS.salesLegal
 ] as const;
 
 /** Keys stored in the workbook's Settings sheet. */

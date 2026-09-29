@@ -4,6 +4,7 @@ import type { Action, AppState } from '@/state/reducer';
 import { sentRequirementIds } from '@/state/reducer';
 import type { RouterApi } from '@/state/useRouting';
 import { catalogHours, deskDrafts, heldDocs, SOMETHING_NEW, tenderCounts, tenderRequests, tenderSelection, type DeskDraft } from '@/domain/tender';
+import { categoryLabel, copiedItems, goesWithEstimation, salesLegalDrafts, topicLabel, type SalesLegalDraft } from '@/domain/salesLegal';
 import { allSolutions } from '@/domain/catalog';
 import { hours, plural, today } from '@/lib/format';
 import { mailRequests } from '@/lib/mail';
@@ -11,10 +12,12 @@ import { tenderDiscard } from '@/api/client';
 import { color, font, radius, shadow } from '@/theme';
 import { Banner, Button, Field, Mono, Row, Select, Spacer } from '@/components/ui';
 import { Check, DeferredField, KindChip, TextButton } from '@/components/tender/parts';
+import { keepAction } from '@/components/salesLegal/parts';
 
 /**
  * Step 3: the two writes, each behind its own button. The estimation is created first with the
- * accepted catalog solutions picked; the desk requests go second, because they attach to it.
+ * accepted catalog solutions picked, and the sales, account and legal items go with it; the desk
+ * requests go second, because they attach to it.
  */
 
 const TAGS: EstimationTag[] = ['Active', 'Urgent', 'On hold', 'Closed'];
@@ -73,18 +76,46 @@ function DraftRow({ draft, areas, onEdit, onSkip }: { draft: DeskDraft; areas: s
   );
 }
 
+/** One sales, account or legal item as the apply step lists it: kept or left out, and what it is. */
+function LegalRow({ draft, onKeep }: { draft: SalesLegalDraft; onKeep?: (keep: boolean) => void }): JSX.Element {
+  const off = draft.skip && !draft.copied;
+  return (
+    <Row gap={10} align="flex-start" wrap={false} style={{ padding: '8px 12px', border: `1px solid ${color.hairline}`, borderRadius: radius.md, background: off ? color.surfaceSoft : color.surface }}>
+      {onKeep ? (
+        <div style={{ paddingTop: 1 }}>
+          <Check checked={!draft.skip} onChange={onKeep} label={`Keep ${draft.key} for the estimation`} />
+        </div>
+      ) : null}
+      <Mono size={11} tone={color.brandDeep} style={{ paddingTop: 2 }}>
+        {draft.key}
+      </Mono>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, lineHeight: 1.5, color: off ? color.muted : color.ink }}>{draft.text}</div>
+        {draft.reason ? <div style={{ fontSize: 12, color: color.muted, lineHeight: 1.45, marginTop: 2 }}>{draft.reason}</div> : null}
+        <div style={{ fontSize: 11.5, color: color.faint, marginTop: 2 }}>
+          {[categoryLabel(draft.category), draft.topic ? topicLabel(draft.topic) : '', draft.source].filter(Boolean).join(', ')}
+        </div>
+      </div>
+      {off ? <span style={{ fontSize: 11, fontWeight: 700, color: color.muted, whiteSpace: 'nowrap' }}>Left out</span> : null}
+    </Row>
+  );
+}
+
 export function ApplyStep({
   tender,
   state,
   catalog,
   dispatch,
-  router
+  router,
+  onShowLegal
 }: {
   tender: Tender;
   state: AppState;
   catalog: Catalog;
   dispatch: (action: Action) => void;
   router: RouterApi;
+  /** Opens the Sales, account and legal tab, where items are accepted and put in teams. */
+  onShowLegal: () => void;
 }): JSX.Element {
   const estimation = state.estimations.find((one) => one.id === tender.estId) ?? null;
   const [name, setName] = useState(tender.name);
@@ -105,6 +136,13 @@ export function ApplyStep({
   const drafts = deskDrafts(tender, catalog, sentRequirementIds(state, tender.id));
   const toSend = drafts.filter((draft) => !draft.skip && !draft.sent);
   const areas = [...catalog.bundles.map((bundle) => bundle.name), SOMETHING_NEW];
+  const copied = copiedItems(state.salesLegal, tender.id);
+  const legal = salesLegalDrafts(tender, copied);
+  const legalGoing = legal.filter(goesWithEstimation);
+  /* before the estimation exists, the rows a person can still tick in or out; after, only what is new */
+  const legalOffered = legal.filter((draft) => draft.accepted && !draft.copied);
+  const legalWaiting = legal.filter((draft) => !draft.accepted && !draft.copied).length;
+  const keepLegal = (draft: SalesLegalDraft, keep: boolean): void => dispatch(keepAction(tender.id, draft, keep));
 
   const editDraft = (reqId: string, patch: DeskDraftEdit): void => {
     const req = tender.reqs.find((one) => one.id === reqId);
@@ -133,8 +171,9 @@ export function ApplyStep({
     dispatch({ type: 'sendTenderRequests', id: tender.id, drafts, contact });
 
     const held = heldDocs(tender.docs, Date.now()).map((doc) => doc.fileId);
-    /* parts not yet read can only be read from the files, so those stay until someone removes them */
-    const unread = tender.ranges.some((range) => range.status !== 'done');
+    /* parts not yet read, and key terms asked for and not read, can only be read from the files, so
+       those stay until someone removes them */
+    const unread = tender.ranges.some((range) => range.status !== 'done') || (tender.readTerms === true && (tender.termReads ?? []).some((read) => read.status !== 'done'));
     let removed = '';
     if (held.length > 0 && unread) {
       removed = ' The tender files stay at Anthropic because some parts were not read; remove them at the top when you are done.';
@@ -177,6 +216,7 @@ export function ApplyStep({
               ) : (
                 'No accepted match picks a catalog solution, so the estimation starts empty and the desk requests below carry the work.'
               )}
+              {legalGoing.length > 0 ? ` It also takes ${plural(legalGoing.length, 'sales, account and legal item')}, listed in step 3 below.` : ''}
             </p>
             {unaccepted > 0 ? (
               <div style={{ marginBottom: 12 }}>
@@ -244,6 +284,62 @@ export function ApplyStep({
             <Banner tone="good">Requests went to the desk on {tender.sentAt}.</Banner>
           </div>
         ) : null}
+      </Section>
+
+      <Section n={3} title={estimation ? 'Sales, account and legal' : `Sales, account and legal: ${plural(legalGoing.length, 'item')} go${legalGoing.length === 1 ? 'es' : ''} with the estimation`}>
+        {legal.length === 0 ? (
+          <p style={{ fontSize: 13, color: color.muted, margin: 0 }}>Nothing accepted in this tender is out of scope, and no key terms were read, so there is nothing for these teams.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {estimation ? (
+              <Row gap={10}>
+                <span style={{ fontSize: 13, color: color.body, lineHeight: 1.6 }}>
+                  {copied.size > 0 ? (
+                    <>
+                      {plural(copied.size, 'item')} went with <strong>{estimation.name}</strong>. Owners, status and due dates are set there, under Sales &amp; legal in
+                      the builder.
+                    </>
+                  ) : (
+                    <>
+                      None went with <strong>{estimation.name}</strong>.
+                    </>
+                  )}
+                </span>
+                <Spacer />
+                <Button tone="brand" onClick={() => router.navigate({ screen: 'builder', estimation: estimation.slug || estimation.id })}>
+                  Open them in the builder ›
+                </Button>
+              </Row>
+            ) : (
+              <p style={{ fontSize: 13, color: color.body, lineHeight: 1.6, margin: 0 }}>
+                What the tender commits Edly to that is not software, for the sales, account and legal teams to own. None of it is priced or shown to the client.
+                Untick any the teams do not need to see.
+              </p>
+            )}
+            {legalOffered.length > 0 ? (
+              <>
+                {estimation ? <p style={{ fontSize: 12.5, color: color.body, margin: '4px 0 0' }}>Accepted since the estimation was created:</p> : null}
+                {legalOffered.map((draft) => (
+                  <LegalRow key={draft.key} draft={draft} onKeep={(keep) => keepLegal(draft, keep)} />
+                ))}
+                {estimation && legalGoing.length > 0 ? (
+                  <div>
+                    <Button tone="primary" onClick={() => dispatch({ type: 'addTenderItems', id: tender.id })}>
+                      Add {plural(legalGoing.length, 'item')} to the estimation
+                    </Button>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            <Row gap={10}>
+              <span style={{ fontSize: 12, color: color.muted }}>
+                {legalWaiting > 0 ? `${plural(legalWaiting, 'more item')} ${legalWaiting === 1 ? 'is' : 'are'} not accepted yet and stay${legalWaiting === 1 ? 's' : ''} behind. ` : ''}
+                Teams are chosen, and more accepted, on the Sales, account and legal tab.
+              </span>
+              <TextButton onClick={onShowLegal}>Open the tab</TextButton>
+            </Row>
+          </div>
+        )}
       </Section>
     </div>
   );

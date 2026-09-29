@@ -449,8 +449,10 @@ export interface RequirementMatch {
   /** A person changed what the AI proposed. */
   edited?: boolean;
   draft?: DeskDraftEdit;
-  /** Leave this one out of the desk requests. */
+  /** Leave this one out: of the desk requests, or for an out-of-scope match, of the estimation's sales and legal list. */
   skip?: boolean;
+  /** For an out-of-scope match: which team needs to know. The AI proposes it and a person can change it. */
+  category?: SalesLegalCategory;
 }
 
 export interface TenderRequirement {
@@ -521,6 +523,92 @@ export interface Tender {
   aiLimit: number;
   /** Dollars a person agreed to spend beyond `aiLimit`, each time the tender reached what it was allowed. */
   aiApproved: number;
+  /**
+   * A person asked for the key legal and commercial terms to be listed for the legal team: ticked
+   * when the tender was created, or asked for later with "Read the terms now". Missing means no.
+   */
+  readTerms?: boolean;
+  /** The key terms, once read. Missing on a tender that never asked for them. */
+  terms?: TenderTerm[];
+  /** One read per document, claimed by a tab the way an extraction range is. */
+  termReads?: TenderRange[];
+}
+
+/** What a key legal or commercial term is about. */
+export type TermTopic =
+  | 'insurance'
+  | 'liability'
+  | 'indemnity'
+  | 'payment'
+  | 'ip'
+  | 'warranty'
+  | 'termination'
+  | 'renewal'
+  | 'service-credits'
+  | 'law'
+  | 'other';
+
+/** A key legal or commercial term, read from a tender for the legal team. Never priced, never shown to the client. */
+export interface TenderTerm {
+  id: string;
+  doc: number;
+  /** Physical page in a PDF, or part in converted text. 0 when unknown. */
+  page: number;
+  ref?: string;
+  topic: TermTopic;
+  /** The term in one sentence, with any amount, cap or period the tender gives. */
+  text: string;
+  quote: string;
+  category: SalesLegalCategory;
+  /** Left out of the estimation's sales and legal list. */
+  skip?: boolean;
+}
+
+/* ------------------------------------------------- sales, account and legal */
+
+/** Which team an item is for. The five groups the first real tender's out-of-scope items fell into. */
+export type SalesLegalCategory = 'sales' | 'account' | 'legal' | 'people' | 'certification';
+
+/** `not-ours`: it turned out not to apply to Edly on this deal. */
+export type SalesLegalStatus = 'open' | 'handled' | 'not-ours';
+
+/**
+ * Something a deal commits Edly to that is not software: a report the client wants each quarter, a
+ * certification the bid depends on, a clause on insurance. Kept for the sales, account and legal
+ * teams, one per row in its own sheet so they can filter and assign them, and never in anything the
+ * client receives.
+ */
+export interface SalesLegalItem {
+  id: string;
+  plat: string;
+  estId: string;
+  /** The tender it came from, and the requirement (R-14) or term (T-03) within it. Both blank when added by hand. */
+  tender: string;
+  tenderItem: string;
+  /** Blank until someone sorts it. */
+  category: SalesLegalCategory | '';
+  /** `obligation`: a requirement that is not software work. `term`: a key legal or commercial term. */
+  kind: 'obligation' | 'term';
+  text: string;
+  /** The tender's own wording. */
+  quote: string;
+  /** Where in the tender it came from, frozen when it was copied, so it outlives the tender. */
+  source: string;
+  /** The heading it sits under in the tender. Blank for a term or an item typed by hand. */
+  section: string;
+  /** Why it is on this list: the matcher's reason it is not software work. Blank for a term or an item typed by hand. */
+  reason: string;
+  /** What a key term is about. Missing for anything that is not a term. */
+  topic?: TermTopic;
+  priority: RequirementPriority;
+  /** Sales, Account, Legal, Delivery, or a person's name. Blank until someone takes it. */
+  owner: string;
+  status: SalesLegalStatus;
+  /** yyyy-mm-dd, or blank. */
+  due: string;
+  note: string;
+  at: string;
+  up: string;
 }
 
 /* --------------------------------------------------------------- persistence */
@@ -532,6 +620,7 @@ export interface PersistedState {
   solutions: AddedSolution[];
   bundles: AddedBundle[];
   tenders: Tender[];
+  salesLegal: SalesLegalItem[];
   /** UI preferences and per-platform loaded catalogs, keyed by storage key. */
   settings: Record<string, unknown>;
 }

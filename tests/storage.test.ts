@@ -105,6 +105,12 @@ describe('browser storage', () => {
     expect(ALL_SYNCED_KEYS).toEqual([...SYNCED_DATA_KEYS, ...SYNCED_SETTING_KEYS]);
   });
 
+  it('syncs the sales and legal list with the other records, not with the settings', () => {
+    /* in the settings it would be one JSON cell per workspace, which the teams could not filter */
+    expect(SYNCED_DATA_KEYS).toContain(STORAGE_KEYS.salesLegal);
+    expect(SYNCED_SETTING_KEYS as readonly string[]).not.toContain(STORAGE_KEYS.salesLegal);
+  });
+
   it('gives every key a distinct name', () => {
     const names = Object.values(STORAGE_KEYS);
     expect(new Set(names).size).toBe(names.length);
@@ -245,8 +251,9 @@ describe('the store layer', () => {
     const bytes = await exportBytes();
     const workbook = await readWorkbook(bytes);
 
-    /* an empty download still has to open in Excel, with its six sheets and their headers */
-    expect(Object.keys(workbook)).toEqual(['Estimations', 'Requests', 'EstimatedSolutions', 'CustomBundles', 'Settings', 'Tenders']);
+    /* an empty download still has to open in Excel, with its seven sheets and their headers */
+    expect(Object.keys(workbook)).toEqual(['Estimations', 'Requests', 'EstimatedSolutions', 'CustomBundles', 'Settings', 'Tenders', 'SalesAccountLegal']);
+    expect(workbook.SalesAccountLegal?.[0]).toContain('owner');
     expect(workbook.Estimations?.[0]).toContain('id');
   });
 
@@ -352,6 +359,32 @@ describe('the store layer over a sheets provider', () => {
     const state = await load();
     expect(state?.estimations[0]).toMatchObject({ id: 'EST-1', name: 'Acme Academy', total: 40 });
     expect(state?.estimations[0]?.snap.sel).toEqual({ 'OX-1': true });
+  });
+
+  it('reads a sheet holding only sales and legal rows as data, the way the file stores do', async () => {
+    /* every provider has to answer `populated` alike; a live sheet holding only the legal team's
+       assignments read as empty would be hydrated over by the next empty browser */
+    const { loadState: load } = await import('../server/store');
+    replies = [
+      auth,
+      { json: { sheets: [{ properties: { title: 'SalesAccountLegal' } }] } },
+      {
+        json: {
+          valueRanges: [
+            {
+              values: [
+                ['id', 'plat', 'estimationId', 'category', 'item', 'status', 'owner', 'due'],
+                /* as a person left it in Google Sheets: words, and the date as the sheet displays it */
+                ['SL-01', 'openedx', 'EST-1', 'Certification', 'Hold the state cloud certification', 'Handled', 'Legal', '10/20/2026']
+              ]
+            }
+          ]
+        }
+      }
+    ];
+
+    const state = await load();
+    expect(state?.salesLegal[0]).toMatchObject({ id: 'SL-01', category: 'certification', status: 'handled', owner: 'Legal', due: '2026-10-20' });
   });
 
   it('writes rows rather than a file, and reports no byte count', async () => {

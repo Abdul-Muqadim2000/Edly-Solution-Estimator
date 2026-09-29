@@ -9,6 +9,7 @@ import { color, radius } from '@/theme';
 import { Banner, Button, Empty, Mono, Row, Select, Spacer, Stat } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
 import { Check, ConfidenceChip, DeferredField, FilterPill, KIND_LABEL, PriorityToggle, rowEdge, SourceQuote, TextButton } from '@/components/tender/parts';
+import { categoryOptions } from '@/components/salesLegal/parts';
 
 /**
  * Step 2: how the catalog covers each approved requirement. The AI proposes a kind and the
@@ -91,7 +92,18 @@ const MatchRow = memo(function MatchRow({
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <Row gap={8}>
               <Select value={match.kind} options={KIND_OPTIONS} onChange={(kind) => set({ kind })} hint="How the catalog covers it" style={{ padding: '6px 8px', fontSize: 12.5 }} />
+              {/* not Edly's software work, but someone's: it goes on the Sales, account and legal list */}
+              {match.kind === 'out' ? (
+                <Select
+                  value={match.category ?? ''}
+                  options={categoryOptions(match.category ?? '')}
+                  onChange={(category) => category && set({ category })}
+                  hint="Which team needs to know. It goes on the Sales, account and legal list"
+                  style={{ padding: '6px 8px', fontSize: 12.5 }}
+                />
+              ) : null}
               {match.edited ? <span style={{ fontSize: 10.5, color: color.violet, fontWeight: 700 }}>changed by you</span> : <ConfidenceChip value={match.confidence} />}
+              {match.kind === 'out' ? <span style={{ fontSize: 11.5, color: color.muted }}>for the Sales, account and legal list</span> : null}
             </Row>
 
             {covered ? (

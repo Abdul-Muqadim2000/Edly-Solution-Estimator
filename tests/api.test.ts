@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { handle } from '../api/state';
 import { storeKind } from '../server/store';
 import { coerceState, countRows, EMPTY_STATE } from '../server/schema';
-import type { Estimation, PersistedState, Tender } from '../src/types';
+import type { Estimation, PersistedState, SalesLegalItem, Tender } from '../src/types';
 
 /**
  * The endpoint, driven end to end against a real spreadsheet in a temp directory.
@@ -59,6 +59,29 @@ const estimation = (id: string, over: Partial<Estimation> = {}): Estimation => (
 });
 
 const state = (over: Partial<PersistedState> = {}): PersistedState => ({ ...EMPTY_STATE, ...over });
+
+const item = (id: string, over: Partial<SalesLegalItem> = {}): SalesLegalItem => ({
+  id,
+  plat: 'openedx',
+  estId: 'EST-1',
+  tender: 'TND-1',
+  tenderItem: 'R-07',
+  category: 'legal',
+  kind: 'obligation',
+  text: 'Notify the university of a data breach within one business day.',
+  quote: 'Contractor shall notify the University within one (1) business day.',
+  source: 'Nordic RFP.docx, part 12',
+  section: 'Data security',
+  reason: 'A contractual notice duty, not software.',
+  priority: 'must',
+  owner: 'Legal',
+  status: 'open',
+  due: '',
+  note: '',
+  at: '2026-01-01',
+  up: '2026-01-01',
+  ...over
+});
 
 const tender = (id: string): Tender => ({
   id,
@@ -145,7 +168,7 @@ describe('PUT /api/state', () => {
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.counts).toMatchObject({ estimations: 2, requests: 0, solutions: 0, bundles: 0, tenders: 0, settings: 1 });
+    expect(body.counts).toMatchObject({ estimations: 2, requests: 0, solutions: 0, bundles: 0, tenders: 0, salesLegal: 0, settings: 1 });
   });
 
   it('replaces rather than merges, so a deletion actually deletes', async () => {
@@ -260,6 +283,86 @@ describe('the empty-payload guard', () => {
     const body = (await (await get()).json()) as { empty: boolean; state: PersistedState };
     expect(body.empty).toBe(false);
     expect(body.state.tenders[0]?.reqs[0]?.text).toBe('Single sign-on through Azure AD');
+    expect((await put(EMPTY_STATE)).status).toBe(409);
+  });
+
+  it('keeps the sales and legal list when a client built before it saves without it', async () => {
+    /* the same trap as the tenders: a tab on the old bundle would otherwise delete every item the
+       legal team had assigned, each time it saved */
+    await put(state({ estimations: [estimation('EST-1')], salesLegal: [item('SL-01'), item('SL-02', { status: 'handled' })] }));
+    const { salesLegal: _dropped, ...older } = state({ estimations: [estimation('EST-1'), estimation('EST-2')] });
+    expect((await put(older)).status).toBe(200);
+
+    const body = (await (await get()).json()) as { state: PersistedState };
+    expect(body.state.estimations).toHaveLength(2);
+    expect(body.state.salesLegal.map((one) => [one.id, one.status])).toEqual([
+      ['SL-01', 'open'],
+      ['SL-02', 'handled']
+    ]);
+  });
+
+  it('keeps both when a client built before tenders saves without either', async () => {
+    await put(state({ estimations: [estimation('EST-1')], tenders: [tender('TND-1')], salesLegal: [item('SL-01')] }));
+    const { tenders: _tenders, salesLegal: _items, ...oldest } = state({ estimations: [estimation('EST-1')] });
+    expect((await put(oldest)).status).toBe(200);
+    const body = (await (await get()).json()) as { state: PersistedState };
+    expect(body.state.tenders.map((one) => one.id)).toEqual(['TND-1']);
+    expect(body.state.salesLegal.map((one) => one.id)).toEqual(['SL-01']);
+  });
+
+  it('keeps a tender’s key terms when a client built before them saves the tender', async () => {
+    /* that build reads a tender but not its terms, which came with the list, so every tender it
+       saved would lose them: the field-level form of the same rule */
+    const asked: Tender = {
+      ...tender('TND-1'),
+      readTerms: true,
+      terms: [{ id: 'T-01', doc: 1, page: 40, topic: 'payment', text: 'Invoices are paid within 45 days.', quote: '', category: 'sales' }],
+      termReads: [{ key: 'terms:1', doc: 1, from: 1, to: 48, status: 'done', found: 1 }]
+    };
+    await put(state({ estimations: [estimation('EST-1')], tenders: [asked, tender('TND-2')] }));
+    const { salesLegal: _items, ...older } = state({ estimations: [estimation('EST-1')], tenders: [{ ...tender('TND-1'), name: 'Renamed in the old tab' }, tender('TND-2')] });
+    expect((await put(older)).status).toBe(200);
+
+    const body = (await (await get()).json()) as { state: PersistedState };
+    const back = body.state.tenders.find((one) => one.id === 'TND-1');
+    expect(back?.name).toBe('Renamed in the old tab');
+    expect(back).toMatchObject({ readTerms: true, terms: asked.terms, termReads: asked.termReads });
+    /* a tender that never asked for terms gains none */
+    expect(body.state.tenders.find((one) => one.id === 'TND-2')).not.toHaveProperty('readTerms');
+  });
+
+  it('lets a current client clear nothing it did not mean to: its tenders are taken as sent', async () => {
+    const asked: Tender = { ...tender('TND-1'), readTerms: true, terms: [], termReads: [] };
+    await put(state({ estimations: [estimation('EST-1')], tenders: [asked], salesLegal: [item('SL-01')] }));
+    await put(state({ estimations: [estimation('EST-1')], tenders: [asked], salesLegal: [] }));
+    const body = (await (await get()).json()) as { state: PersistedState };
+    expect(body.state.salesLegal).toEqual([]);
+    expect(body.state.tenders[0]).toMatchObject({ readTerms: true, terms: [] });
+  });
+
+  it('still refuses an empty payload from such a client, rather than letting the stored list excuse it', async () => {
+    await put(state({ estimations: [estimation('EST-1')], salesLegal: [item('SL-01')] }));
+    const { salesLegal: _dropped, ...emptyOlder } = EMPTY_STATE;
+    expect((await put(emptyOlder)).status).toBe(409);
+  });
+
+  it('clears the list when a client sends an empty one on purpose', async () => {
+    await put(state({ estimations: [estimation('EST-1')], salesLegal: [item('SL-01')] }));
+    await put(state({ estimations: [estimation('EST-1')], salesLegal: [] }));
+    const body = (await (await get()).json()) as { state: PersistedState };
+    expect(body.state.salesLegal).toEqual([]);
+  });
+
+  it('guards a store that holds only sales and legal items, and reports it as holding data', async () => {
+    /* `populated` has to count them, or a store holding only these reads as empty and the next
+       boot hydrates an empty browser over it */
+    const response = await put(state({ salesLegal: [item('SL-01')] }));
+    expect(((await response.json()) as { counts: Record<string, number> }).counts).toMatchObject({ salesLegal: 1 });
+
+    const body = (await (await get()).json()) as { empty: boolean; state: PersistedState };
+    expect(body.empty).toBe(false);
+    expect(body.state.salesLegal[0]?.text).toBe('Notify the university of a data breach within one business day.');
+    expect(((await (await get('?probe=1')).json()) as { hasData: boolean }).hasData).toBe(true);
     expect((await put(EMPTY_STATE)).status).toBe(409);
   });
 });

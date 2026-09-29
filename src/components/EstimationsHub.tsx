@@ -2,9 +2,10 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { EstimationTag } from '@/types';
 import { useApp, usePlatformEstimations } from '@/state/AppProvider';
 import { requestsFor } from '@/state/reducer';
+import { openByEstimation } from '@/domain/salesLegal';
 import { calcEstimate } from '@/domain/estimate';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
-import { hours, money } from '@/lib/format';
+import { hours, money, plural } from '@/lib/format';
 import { findPlatform, isLiveCatalog } from '@/data/practices';
 import { AppHeader } from '@/components/AppHeader';
 import { Banner, Button, Empty, Field, Mono, Row, SearchInput, Select, Spacer, Stat, useRowHover } from '@/components/ui';
@@ -100,6 +101,8 @@ export function EstimationsHub(): JSX.Element {
     });
   }, [estimations, filter, query, state]);
 
+  /* one pass for every card, rather than a filter of the whole list per card */
+  const openLegal = useMemo(() => openByEstimation(state.salesLegal), [state.salesLegal]);
   const live = estimations.filter((estimation) => estimation.tag !== 'Closed');
   const pendingCount = estimations.reduce(
     (total, estimation) => total + requestsFor(state, estimation.id).filter((request) => !request.manual && !(Number(request.est) > 0)).length,
@@ -238,6 +241,7 @@ export function EstimationsHub(): JSX.Element {
             const due = dueInfo(estimation.due);
             const numbers = calcEstimate(catalog, estimation.snap, requests);
             const asking = confirmDelete === estimation.id;
+            const legalOpen = openLegal.get(estimation.id) ?? 0;
 
             return (
               <EstimationCard key={estimation.id} pending={pending} accent={style.co}>
@@ -351,6 +355,15 @@ export function EstimationsHub(): JSX.Element {
                 {pending > 0 ? (
                   <div style={{ background: color.amberWash, borderTop: `1px solid ${color.amberEdgeSoft}`, padding: '8px 20px', fontSize: 11, fontWeight: 700, color: color.amberInk }}>
                     {pending} awaiting estimate
+                  </div>
+                ) : null}
+                {/* internal, like the builder's panel, so it goes while presenting */}
+                {legalOpen > 0 && !state.presenting ? (
+                  <div
+                    title="Open the estimation, then Sales & legal, to assign them"
+                    style={{ background: color.surfaceSoft, borderTop: `1px solid ${color.hairlineSoft}`, padding: '8px 20px', fontSize: 11, fontWeight: 700, color: color.inkSoft }}
+                  >
+                    {plural(legalOpen, 'open sales and legal item')}
                   </div>
                 ) : null}
               </EstimationCard>

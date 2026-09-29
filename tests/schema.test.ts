@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
 import { coerceState, COLUMNS, countRows, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
-import type { Catalog, PersistedState, Tender, TenderRequirement } from '../src/types';
+import type { Catalog, PersistedState, SalesLegalItem, Tender, TenderRequirement } from '../src/types';
 import { DEFAULT_SHEET, readSheetPrefs } from '../src/domain/taskBreakdown';
 
 /**
@@ -249,8 +249,79 @@ function sample(): PersistedState {
       },
       'edly-loaded-catalogs-v2': { openedx: catalog, moodle: catalog }
     },
-    tenders: [tender()]
+    tenders: [tender()],
+    salesLegal: salesLegal()
   };
+}
+
+/** One of each: a tender's out-of-scope requirement, a key term, and an item typed in by hand on another deal. */
+function salesLegal(): SalesLegalItem[] {
+  return [
+    {
+      id: 'SL-01',
+      plat: 'openedx',
+      estId: 'EST-1',
+      tender: 'TND-1',
+      tenderItem: 'R-18',
+      category: 'certification',
+      kind: 'obligation',
+      text: 'Hold a state cloud security certification before the contract starts.',
+      quote: 'The Contractor shall maintain the certification for the duration of the contract.',
+      source: 'Acme RFP.pdf, p. 5',
+      section: '7.3 Security and compliance',
+      reason: 'A certification the supplier must hold, not software delivery.',
+      priority: 'must',
+      owner: 'Legal',
+      status: 'open',
+      due: '2026-10-20',
+      note: 'Ask the security lead whether ours covers hosting.\nRenewal falls in March.',
+      at: '2026-09-21',
+      up: '2026-09-22'
+    },
+    {
+      id: 'SL-02',
+      plat: 'openedx',
+      estId: 'EST-1',
+      tender: 'TND-1',
+      tenderItem: 'T-01',
+      category: 'sales',
+      kind: 'term',
+      text: 'Invoices are paid within 45 days of receipt.',
+      quote: 'Payment shall be made within forty-five (45) days of receipt of a correct invoice.',
+      source: 'Acme RFP.pdf, p. 40, 12.3',
+      section: '',
+      reason: '',
+      topic: 'payment',
+      priority: 'must',
+      owner: '',
+      status: 'handled',
+      due: '',
+      note: '',
+      at: '2026-09-21',
+      up: '2026-09-21'
+    },
+    {
+      id: 'SL-03',
+      plat: 'moodle',
+      estId: 'EST-2',
+      tender: '',
+      tenderItem: '',
+      category: '',
+      kind: 'obligation',
+      text: 'Quarterly business review with the provost office.',
+      quote: '',
+      source: '',
+      section: '',
+      reason: '',
+      priority: 'should',
+      owner: 'Sara',
+      status: 'not-ours',
+      due: '',
+      note: '',
+      at: '2026-09-18',
+      up: '2026-09-19'
+    }
+  ];
 }
 
 /** A tender with enough requirements that its detail runs well past one cell. */
@@ -637,6 +708,9 @@ describe('the sync key', () => {
     const priced = state.requests[0];
     /* the desk left the notes blank: '' here, and no cell at all in the sheet */
     if (priced) priced.catNotes = '';
+    const item = state.salesLegal[1];
+    /* a note typed into a textarea, with the newline the reader will trim */
+    if (item) item.note = 'Finance confirmed the terms\n';
     const custom = state.solutions[0];
     /* set the way `submitEstimate` sets them for a desk-priced request */
     if (custom) Object.assign(custom, { integrations: 'Proctorio', estName: 'Acme Corporate Academy' });
@@ -701,20 +775,29 @@ describe('the sync key', () => {
     const removed = heldByTheBrowser();
     removed.bundles = [];
     expect(syncKey(removed)).not.toBe(base);
+
+    /* an owner taken or an item closed has to reach the sheet, where the teams read it */
+    const assigned = heldByTheBrowser();
+    const open = assigned.salesLegal[0];
+    if (open) open.owner = 'Account';
+    expect(syncKey(assigned)).not.toBe(base);
   });
 });
 
 describe('coerceState', () => {
   it('narrows anything to the persisted shape', () => {
-    expect(coerceState(null)).toEqual({ estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [] });
+    expect(coerceState(null)).toEqual({ estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [], salesLegal: [] });
     expect(coerceState({ estimations: 'nope', settings: 7 }).estimations).toEqual([]);
     expect(coerceState({ settings: { a: 1 } }).settings).toEqual({ a: 1 });
     expect(coerceState({ tenders: 'nope' }).tenders).toEqual([]);
+    expect(coerceState({ salesLegal: 'nope' }).salesLegal).toEqual([]);
   });
 
-  it('counts rows for the empty-payload guard, tenders included', () => {
+  it('counts rows for the empty-payload guard, tenders and the sales and legal list included', () => {
     expect(countRows(null)).toBe(0);
-    expect(countRows(sample())).toBe(2 + 3 + 2 + 1 + 1);
+    expect(countRows(sample())).toBe(2 + 3 + 2 + 1 + 1 + 3);
+    /* a store holding only these is holding someone's work, so the guard must see it */
+    expect(countRows({ ...sample(), estimations: [], requests: [], solutions: [], bundles: [], tenders: [] })).toBe(3);
   });
 });
 
@@ -854,5 +937,106 @@ describe('tenders', () => {
     const back = sheetsToState(await readWorkbook(writeWorkbook(sheets)));
     expect(back.tenders[0]?.stage).toBe('requirements');
     expect(back.tenders[0]?.slug).toBe('acme-academy-lms-tender');
+  });
+
+  it('keeps the key terms a person asked for, the choice itself, and how far their reading got', async () => {
+    const asked: Tender = {
+      ...tender(2),
+      readTerms: true,
+      terms: [
+        { id: 'T-01', doc: 1, page: 40, ref: '12.3', topic: 'payment', text: 'Invoices are paid within 45 days of receipt.', quote: 'Payment shall be made within 45 days.', category: 'sales' },
+        { id: 'T-02', doc: 1, page: 41, topic: 'insurance', text: 'Cyber liability cover of $5 million.', quote: 'Cyber liability of not less than $5,000,000.', category: 'legal', skip: true }
+      ],
+      termReads: [{ key: 'terms:1', doc: 1, from: 1, to: 48, status: 'done', found: 2 }]
+    };
+    /* a lost tick reads the terms again on reload, or never; a lost read list pays for them twice */
+    const back = await roundTrip({ ...sample(), tenders: [asked] });
+    expect(back.tenders[0]).toEqual(asked);
+
+    const rows = stateToSheets({ ...sample(), tenders: [asked] })[SHEETS.tenders] ?? [];
+    const header = rows[0] ?? [];
+    expect(rows[1]?.[header.indexOf('readTerms')]).toBe('yes');
+    /* the continuation rows put their part in the last column, so the new column sits before it */
+    expect(header[header.length - 1]).toBe('detailJson');
+  });
+
+  it('reads a tender that never asked for its terms with no trace of them, as it was written', async () => {
+    /* `readTerms: false` or an empty list would make every older tender look edited on the first read */
+    const back = await roundTrip(sample());
+    expect(back.tenders[0]).not.toHaveProperty('readTerms');
+    expect(back.tenders[0]).not.toHaveProperty('terms');
+    expect(back.tenders[0]).not.toHaveProperty('termReads');
+  });
+});
+
+describe('the sales, account and legal sheet', () => {
+  it('keeps every item whole: where it came from, who has it, where it stands', async () => {
+    const back = await roundTrip(sample());
+    expect(back.salesLegal).toEqual(salesLegal());
+  });
+
+  it('writes one readable row per item, with the deal named and the category and status in words', () => {
+    const rows = stateToSheets(sample())[SHEETS.salesLegal] ?? [];
+    const header = (rows[0] ?? []).map(String);
+    const cell = (row: number, name: string): unknown => rows[row]?.[header.indexOf(name)];
+    expect(rows).toHaveLength(4);
+    /* the columns a colleague filters on lead, so the sheet reads without scrolling sideways */
+    expect(header.slice(0, 11)).toEqual(['id', 'plat', 'estimationId', 'estimationName', 'client', 'category', 'item', 'status', 'owner', 'due', 'note']);
+    expect(cell(1, 'estimationName')).toBe('Acme Corporate Academy');
+    expect(cell(1, 'client')).toBe('Acme Ltd');
+    expect(cell(1, 'category')).toBe('Certification');
+    expect(cell(1, 'status')).toBe('Open');
+    expect(cell(2, 'category')).toBe('Sales and commercial');
+    expect(cell(2, 'status')).toBe('Handled');
+    expect(cell(3, 'category')).toBe('');
+    expect(cell(3, 'status')).toBe('Not for us');
+    /* why it is there and where it sits, so the sheet reads without the tender beside it */
+    expect(cell(1, 'reason')).toBe('A certification the supplier must hold, not software delivery.');
+    expect(cell(1, 'section')).toBe('7.3 Security and compliance');
+    expect(cell(2, 'topic')).toBe('Payment and invoicing');
+  });
+
+  it('reads a sheet written before the reason, section and topic columns, with those blank', async () => {
+    /* exactly the columns the first build of this sheet wrote */
+    const header = ['id', 'plat', 'estimationId', 'category', 'item', 'status', 'owner', 'due', 'note', 'kind', 'priority', 'source', 'quote', 'tenderId', 'tenderItem', 'created', 'updated'];
+    const row = ['SL-01', 'openedx', 'EST-1', 'Legal and compliance', 'Notify a breach within a day', 'Open', 'Legal', '', '', 'term', 'must', 'RFP.docx, 9.6', '', 'TND-1', 'T-02', '2026-09-29', '2026-09-29'];
+    const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.salesLegal]: [header, row] }))).salesLegal;
+    expect(back[0]).toMatchObject({ id: 'SL-01', section: '', reason: '', kind: 'term', owner: 'Legal' });
+    expect(back[0]).not.toHaveProperty('topic');
+  });
+
+  it('shows a renamed deal under its new name, because only the id is kept on the item', async () => {
+    const renamed = sample();
+    const deal = renamed.estimations[0];
+    if (deal) deal.name = 'Acme Global Academy';
+    const rows = stateToSheets(renamed)[SHEETS.salesLegal] ?? [];
+    expect(rows[1]?.[(rows[0] ?? []).indexOf('estimationName')]).toBe('Acme Global Academy');
+    const back = await roundTrip(renamed);
+    expect(back.salesLegal[0]).not.toHaveProperty('estimationName');
+  });
+
+  it('reads what a person typed over the sheet: a status in their own words, a category, a date as the sheet shows it', async () => {
+    /* the legal and account teams assign and close these rows in Google Sheets itself */
+    const header = [...COLUMNS.salesLegal];
+    const row = (id: string, values: Record<string, string>): string[] => header.map((name) => (name === 'id' ? id : values[name] ?? ''));
+    const typed = {
+      [SHEETS.salesLegal]: [
+        header,
+        row('SL-01', { estimationId: 'EST-1', item: 'Background checks for on-site staff', category: 'people and staffing', status: 'done', due: '10/12/2026', owner: 'Delivery' }),
+        row('SL-02', { estimationId: 'EST-1', item: 'Breach notice within a day', category: 'Legal', status: 'NOT FOR US', due: '46315' }),
+        row('SL-03', { estimationId: 'EST-1', item: 'Spend report', category: 'something else', status: 'waiting on finance', due: 'next week', priority: 'Should', kind: 'Term' })
+      ]
+    };
+    const back = sheetsToState(await readWorkbook(writeWorkbook(typed))).salesLegal;
+    expect(back[0]).toMatchObject({ category: 'people', status: 'handled', due: '2026-10-12', owner: 'Delivery' });
+    /* Excel keeps a typed date as a day count, and that is what the reader hands back */
+    expect(back[1]).toMatchObject({ category: 'legal', status: 'not-ours', due: '2026-10-20' });
+    /* what cannot be read is open, unsorted and undated, never guessed at */
+    expect(back[2]).toMatchObject({ category: '', status: 'open', due: '', priority: 'should', kind: 'term' });
+  });
+
+  it('reads a workbook written before the sheet existed as holding none', async () => {
+    const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.estimations]: [[...COLUMNS.estimations]] })));
+    expect(back.salesLegal).toEqual([]);
   });
 });

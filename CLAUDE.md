@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 848 tests across twenty-one files.
+`bun run test` runs 920 tests across twenty-two files.
 
 | File | Covers |
 |---|---|
@@ -169,6 +169,7 @@ reference.
 | `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, desk drafts, what calls cost and the spending limit |
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
+| `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
 | `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load |
 
 ### Coverage
@@ -177,10 +178,10 @@ reference.
 
 | | |
 |---|---|
-| Statements | 97.4% |
-| Lines | 98.5% |
-| Functions | 98.7% |
-| Branches | 87.4% |
+| Statements | 97.6% |
+| Lines | 98.6% |
+| Functions | 98.9% |
+| Branches | 87.8% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -289,15 +290,24 @@ Set these in Vercel under Settings, Environment Variables, redeploy, then confir
 `bun run store:probe` or `GET /api/state?probe=1`. Never commit a key. `.env` is gitignored and
 `.env.example` is the template, so add a block there for anything new.
 
-### The six sheets
+### The seven sheets
 
-`Estimations`, `Requests`, `EstimatedSolutions`, `CustomBundles`, `Settings`, `Tenders`. Scalar
-columns stay readable so a human can scan the sheet in Excel, and nested state sits in one JSON
-column per row so the app round-trips losslessly. A tender's requirements run past one cell, so
-its `detailJson` splits across rows keyed `id##2/3`, pipe-wrapped like the long settings. An
-estimate imported from a workbook is an `EstimatedSolutions` row with `importedFrom`, `sourceId`,
-`client` and `estimatedBy` filled in; "Remove import" and a second import of the same file both
-work by those columns.
+`Estimations`, `Requests`, `EstimatedSolutions`, `CustomBundles`, `Settings`, `Tenders`,
+`SalesAccountLegal`. Scalar columns stay readable so a human can scan the sheet in Excel, and
+nested state sits in one JSON column per row so the app round-trips losslessly. A tender's
+requirements run past one cell, so its `detailJson` splits across rows keyed `id##2/3`,
+pipe-wrapped like the long settings. An estimate imported from a workbook is an
+`EstimatedSolutions` row with `importedFrom`, `sourceId`, `client` and `estimatedBy` filled in;
+"Remove import" and a second import of the same file both work by those columns.
+
+`SalesAccountLegal` has no JSON column at all: one row per item, scalar columns only, because the
+legal and account teams filter and assign these rows in Google Sheets itself. Its category and
+status are written as words and read back from whatever a person typed there ("done", "Legal", a
+date as the sheet displays it); `readCategory`, `readStatus` and `readDay` in
+`src/domain/salesLegal.ts` do that reading. `estimationName` and `client` are written for those
+readers and never read back. Each row carries what the match step showed, so an item reads without
+the tender: the matcher's `reason`, the tender `section` it sits under, the `source` and `quote`,
+and a key term's `topic`.
 
 ### Six data-safety rules that are not negotiable
 
@@ -315,8 +325,11 @@ Each of these exists because it failed once. Do not weaken one to make a feature
    identically: see `populated()` in `server/store.ts`.
 5. **A missing collection means "keep what is stored", not "delete it".** A tab still running a
    build from before a collection existed sends no key for it; `api/state.ts` keeps the stored
-   tenders in that case, after the empty-payload guard has run. Do the same for any collection
-   added later. `tests/api.test.ts` covers it.
+   tenders and the stored sales and legal list in that case, after the empty-payload guard has
+   run. Do the same for any collection added later. The same holds for fields: a tab from before
+   the sales and legal list reads tenders but not their key terms, so from such a tab (it sends no
+   `salesLegal`) each tender keeps its stored `readTerms`, `terms` and `termReads`.
+   `tests/api.test.ts` covers both.
 6. **A save never passes through an empty sheet, and one "empty" read is never acted on.** The
    Google Sheets provider used to clear every tab and then write it, two requests apart; a read in
    between saw an empty workbook, and the tab that read it saved its own few rows over
@@ -488,7 +501,37 @@ The spreadsheets hold real deal names, client names and pricing.
   paperwork, are left out by the extraction prompt; `outOfScope` is for work that is not software
   but costs money (hardware, staff on site, vetting). Settled on 2026-09-28 when the user asked for
   the legal clauses to be dealt with, to spare the review list and the output tokens; a future
-  compliance matrix that needs them would read the tender again.
+  compliance matrix that needs them would read the tender again. Since 2026-09-29 a person can
+  tick "Also list the key legal and commercial terms" at the start of a tender (off by default):
+  one `op=terms` call per document then lists them, after the extraction and from its cache. The
+  extraction prompt did not change, so a tender without the tick costs exactly what it did.
+- **Sales, account and legal items never reach anything client-facing.** Not the Excel sheet, not
+  the printed quote, not the plain-text quote; the builder hides the Sales & legal pill and panel
+  while presenting, and the hub hides its count. `SheetInput` and `QuoteInput` have no field that
+  could carry them, and `tests/quoteExport.test.ts` and `tests/format.test.ts` assert that at the
+  type level as well as by building the files. The user answered "never" (plan decision 7).
+- **Before the estimation, a tender's items live on the tender; after, on the estimation.** An
+  out-of-scope item is a requirement with an `out` match, its team on `match.category` and its
+  leave-out on `match.skip`; a key term is a `TenderTerm`. Creating the estimation copies what is
+  accepted and kept (`salesLegalItems` in `src/domain/salesLegal.ts`) into the `salesLegal`
+  collection, and from then on that is the record: owner, status, due date and note live there.
+  `copiedItems` keeps a second copy from ever being made; an item from a tender is marked Not for
+  us rather than deleted, because a deleted one would be offered again as new. Changing a match's
+  kind clears its `skip`: leaving it out was a choice about where it was going.
+- **The sort runs by itself only after this tab ran matching, and then never writes to an
+  estimation.** Opening a tender matched before the sort existed spends nothing; its tab has a
+  Sort them button, and only that click may give a team to items already copied to the estimation
+  with none (`needsSorting(..., 'unsorted')`, `setCategories` with `copies`). The automatic sort
+  leaves every copy alone, because the estimation's list is the record and the AI does not write to
+  it unasked. The sort sends the items' words and the matcher's reasons, never the documents or
+  the catalog, so it costs cents and shares no cached prefix. It passes `canSpend` like every other
+  call, and a team a person chose, on the tender or on the estimation, is never replaced.
+- **Key terms wait for the extraction to finish** (`termsWaiting` in `src/domain/tender.ts`), then
+  read each document through the same `documentBlocks` the extraction used, so they read its cache.
+  `tests/tenderApi.test.ts` compares the two requests. Their reads are claimed like ranges and
+  split like ranges when one call cannot finish (`splitTermRead`), under `terms:` keys no range can
+  have, and they share the extraction's call budget. The tender files are not deleted after the
+  desk requests while a terms read is unfinished.
 - **Skipping is safe only because it errs towards reading.** `readFit` skips a section only on an
   explicit `true`; `readRuns` reads a page any unskipped section claims, a page no section claims,
   and a page of margin either side of a skipped stretch (not in spreadsheets, whose sheets start
@@ -521,7 +564,8 @@ The spreadsheets hold real deal names, client names and pricing.
   `ANTHROPIC_API_KEY` is set on a public deployment (DEFERRED.md 4).
 - **The tender AI has been run against the real API once, on one Word tender** (2026-09-29,
   VERIFY.md). PDF and spreadsheet tenders have only met the stand-in (Worth adding next 17), and
-  PDFs are limited to 4 MB until uploads are staged (DEFERRED.md 9).
+  PDFs are limited to 4 MB until uploads are staged (DEFERRED.md 9). The sort and the key-terms
+  calls have only met a stand-in too (Worth adding next 20).
 - **The per-tender AI limit is a check in the browser, not a cap.** A caller going straight to
   `/api/tender` skips it (DEFERRED.md 11). The cap that holds is a monthly spend limit on the
   Anthropic Console workspace that owns the key.
@@ -654,6 +698,13 @@ everything else waiting on a server, are in DEFERRED.md.
     through. On the real run 103 of 241 requirements still carried a reference, but a bid team
     finds a clause by its number. Needs the numbering definitions read, levels and restarts
     included, and a heading style's numbering from `word/styles.xml`.
+20. **Run the sort and the key-terms calls for real, on `TND-multa391`.** Built on 2026-09-29 and
+    driven end to end against a stand-in only. One `op=sort` call over its 50 out-of-scope items
+    (about $0.05) checks the teams against the table in `docs/plans/sales-account-legal.md` (sales
+    about 13, account about 10, legal 18, people 6, certification 3), and one `op=terms` call on its
+    Word document (about $0.10 while its cache is warm) measures what a terms read really costs and
+    whether it reads the tender from the cache. Both spend real money, so they need a yes first; the
+    tender's files are at Anthropic until 2026-10-01.
 
 ---
 

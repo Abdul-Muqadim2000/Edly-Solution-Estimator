@@ -47,6 +47,25 @@ const platformName = (id: string): string => {
 
 const sizeLabel = (bytes: number): string => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
+/**
+ * The choice to have the key legal and commercial terms listed. Off by default: without it a tender
+ * costs exactly what it did before, because the extraction leaves those terms out either way.
+ */
+function TermsChoice({ on, onChange, docs }: { on: boolean; onChange: (on: boolean) => void; docs: number }): JSX.Element {
+  return (
+    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5, color: color.body, lineHeight: 1.55, cursor: 'pointer' }}>
+      <span style={{ paddingTop: 2 }}>
+        <Check checked={on} onChange={onChange} label="Also list the key legal and commercial terms for the legal team" />
+      </span>
+      <span>
+        <strong style={{ color: color.ink }}>Also list the key legal and commercial terms for the legal team</strong> (about $0.10 more
+        {docs > 1 ? ' for each document' : ''}). Insurance, liability, payment, IP, termination and the like are then read after the requirements and join the
+        tender&apos;s Sales, account and legal tab. They are never priced.
+      </span>
+    </label>
+  );
+}
+
 /** One platform the person can pick, recommended or not. */
 function PlatformChoice({ id, picked, recommended, reasons, onPick }: { id: string; picked: boolean; recommended: boolean; reasons: string[]; onPick: () => void }): JSX.Element {
   const h = useHover();
@@ -176,6 +195,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
   const [client, setClient] = useState('');
   const [due, setDue] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [readTerms, setReadTerms] = useState(false);
 
   const uploaded = useRef<string[]>([]);
   const handedOver = useRef(false);
@@ -363,7 +383,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
     dispatch({
       type: 'createTender',
       id,
-      input: { plat: platform, name: name.trim(), client: client.trim(), due, summary: fit.header.summary, docs, fit: fit.fit, outline, tokens, aiLimit, aiApproved }
+      input: { plat: platform, name: name.trim(), client: client.trim(), due, summary: fit.header.summary, docs, fit: fit.fit, outline, tokens, aiLimit, aiApproved, readTerms }
     });
     /* the fit call or the last keep-warm left the tender cached, so extraction can start at full width */
     noteTenderRead(id, lastReadAt);
@@ -455,6 +475,8 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
                 ))}
               </div>
             ) : null}
+
+            <TermsChoice on={readTerms} onChange={setReadTerms} docs={files.length} />
 
             <div style={{ fontSize: 11.5, color: color.faint, lineHeight: 1.55 }}>
               The files go to Anthropic&apos;s API for this analysis and nowhere else. They are deleted there when you finish with the tender,
@@ -571,6 +593,9 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
                 </ul>
               </Banner>
             ) : null}
+
+            {/* still open to change here: it is fixed once the tender exists */}
+            <TermsChoice on={readTerms} onChange={setReadTerms} docs={docs.length} />
 
             {error ? <Banner tone="bad">{error}</Banner> : null}
 

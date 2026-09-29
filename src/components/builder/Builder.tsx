@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '@/state/AppProvider';
-import { catalogSourceLabel, openEstimationRecord } from '@/state/reducer';
+import { catalogSourceLabel, openEstimationRecord, salesLegalFor } from '@/state/reducer';
 import { ALL_BUNDLES } from '@/lib/router';
 import { allSolutions, bundlesOfKind, kindCounts, solutionKind, type CatalogKind } from '@/domain/catalog';
 import { color, dueInfo, font, radius, tagStyle } from '@/theme';
@@ -21,6 +21,7 @@ import { ImportModal } from '@/components/ImportModal';
 import { Planner } from '@/components/builder/Planner';
 import { RatesPanel } from '@/components/builder/RatesPanel';
 import { RequestModal } from '@/components/builder/RequestModal';
+import { SalesLegalPanel } from '@/components/builder/SalesLegalPanel';
 import { SheetPanel } from '@/components/builder/SheetPanel';
 import { SummaryPanel } from '@/components/builder/SummaryPanel';
 
@@ -55,7 +56,7 @@ export function Builder(): JSX.Element {
   /* The box is local so it stays instant, and the URL catches up a beat later — pushing a route
      per keystroke would bury the Back button and trip the browser's history-call throttle. */
   const [search, setSearch] = useState(router.route.q ?? '');
-  const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display' | 'sheet'>('');
+  const [panel, setPanel] = useState<'' | 'rates' | 'catalog' | 'display' | 'sheet' | 'legal'>('');
   const [importOpen, setImportOpen] = useState(false);
   const [requestFlash, setRequestFlash] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
@@ -124,6 +125,7 @@ export function Builder(): JSX.Element {
   const crumb = platformRef ? `${platformRef.practice.name} / ${platformRef.platform.name}` : '';
 
   const estChipLabel = estimation ? estimation.name + (estimation.client ? ` · ${estimation.client}` : '') : '';
+  const openLegal = estimation ? salesLegalFor(state, estimation.id).filter((item) => item.status === 'open').length : 0;
   const due = dueInfo(estimation?.due);
 
   const entries = railEntries(shownBundles, shownSolutions, state.draft.sel);
@@ -268,6 +270,16 @@ export function Builder(): JSX.Element {
             </HeaderPill>
           ) : null}
           {panel === 'sheet' && !state.presenting ? <SheetPanel onClose={() => setPanel('')} /> : null}
+          {/* hidden while presenting too: "must hold a state security certification" is not for the client */}
+          {!state.presenting ? (
+            <HeaderPill
+              title="What this deal commits Edly to that is not software, for the sales, account and legal teams"
+              on={panel === 'legal'}
+              onClick={() => setPanel(panel === 'legal' ? '' : 'legal')}
+            >
+              Sales &amp; legal{openLegal > 0 ? ` · ${openLegal} open` : ''}
+            </HeaderPill>
+          ) : null}
         </div>
       </header>
 
@@ -444,6 +456,8 @@ export function Builder(): JSX.Element {
       <div style={{ height: 48, background: color.page }} />
 
       {plannerOpen ? <Planner onClose={() => router.navigate({ plan: undefined })} /> : null}
+      {/* a window over the page rather than a dropdown: each item needs room for what the tender says */}
+      {panel === 'legal' && !state.presenting ? <SalesLegalPanel onClose={() => setPanel('')} /> : null}
       {importOpen ? (
         <ImportModal
           onClose={() => setImportOpen(false)}

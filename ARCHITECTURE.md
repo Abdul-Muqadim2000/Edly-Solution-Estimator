@@ -27,6 +27,7 @@ src/
     bundleImport.ts     what a bundles workbook does once reviewed: updates, new bundles, renumbered clashes
     importReview.ts     the review both imports share: groups, decisions, where each row lands
     tender.ts           tender intake: narrowing AI output, ranges, desk drafts
+    salesLegal.ts       sales, account and legal items: what a tender offers, what the estimation keeps
     taskBreakdown.ts    the Excel sheet: deliverables per area, lines, totals, column choices
     team.ts             team composition: rate-card role and seniority, people and weeks from the plan
   state/
@@ -46,9 +47,12 @@ src/
     builder/CatalogTable.tsx  the catalog grid table and its expandable rows
     builder/SheetPanel.tsx    what the downloaded Excel sheet contains: columns, sheets, notes
     builder/KindFilter.tsx    All / Bundles / Estimates on the catalog page, which is also the legend
+    builder/SalesLegalPanel.tsx  the deal's sales, account and legal items, in a window: owner, status, due, note
     ImportModal.tsx     Import from Excel: pick the kind, read the checks, review, apply
     ImportReview.tsx    the review step: approve, rename, redirect or leave out each group and row
-    tender/             tender intake: upload modal, then requirements, match, apply
+    tender/             tender intake: upload modal, then requirements, match, apply, and the
+                        Sales, account and legal tab beside the steps
+    salesLegal/         the status and team pieces the tab, the apply step and the panel share
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links
 server/                 runs in Node, never shipped to the browser
@@ -176,8 +180,9 @@ person chose to import is refused with a reason when it would load differently f
 A salesperson uploads an RFP and gets an estimation and a set of desk requests out of it, with a
 person approving every step. Four decisions shape it, and each is expensive to undo:
 
-- **The AI proposes; people write.** The model is given three tools and all three only report:
-  a platform fit, the requirements in a page range, the catalog matches for a batch. Nothing it
+- **The AI proposes; people write.** The model is given five tools and all five only report:
+  a platform fit, the requirements in a page range, the catalog matches for a batch, the team each
+  out-of-scope item is for, and the key legal and commercial terms of a document. Nothing it
   returns changes state. Each change is a reducer action a click dispatches, which is how "ask
   before acting" is enforced rather than requested in a prompt that a tender could override.
 - **Hours come from the catalog, never the model.** A match carries catalog ids; `readMatches`
@@ -219,9 +224,43 @@ upload ─► Files API id ─► fit (platform, header, outline, sections to sk
       ─► person creates the estimation ─► person sends the desk requests ─► files deleted
 ```
 
+## Sales, account and legal
+
+A tender commits the supplier to more than software: spend reports, fees, account reviews,
+background checks, certifications, contract terms. Those go to the teams who own them, never to
+the client. Decided with the user on 2026-09-29; the plan and its eight answers are in
+`docs/plans/sales-account-legal.md`.
+
+- **On the tender they are still requirements.** An out-of-scope item is an approved requirement
+  with an `out` match; its team is `match.category` and its leave-out is `match.skip`. Key terms,
+  read only when a person ticked for them at the start (or pressed "Read the terms now"), are
+  `Tender.terms`. The tab beside the three steps lists both, by team, and blocks nothing.
+- **At apply they are copied, once.** Creating the estimation copies every accepted, kept item
+  into the `salesLegal` collection (`salesLegalItems`), with where it came from frozen so it
+  outlives the tender, and with the matcher's reason and the tender section, so the estimation
+  shows each item as fully as the match step did. Anything accepted later is offered as new
+  (`copiedItems`). From then on the collection is the record: owner, status, due date and note,
+  edited in the builder's Sales & legal window, and on any estimation items can be added by hand.
+- **Its own sheet, one row per item.** `SalesAccountLegal` has scalar columns only, so the legal
+  and account teams can filter and assign in Google Sheets; the app reads back what they type.
+  It is not part of the estimation snapshot, which is one cell and is not chunked.
+- **Two small AI calls, both through `canSpend`.** `op=sort` puts out-of-scope items in teams from
+  their words alone, after this tab's matching run or when asked; only the asking may give a team
+  to an item already on the estimation, which the AI never writes to unasked. `op=terms` reads one
+  document's key terms after the extraction, through the same cached prefix, and splits like a
+  range when one call cannot finish.
+- **Never client-facing.** Hidden while presenting, and absent from the Excel sheet and both
+  quotes, which have no input that could carry them.
+
+```
+extract (outOfScope) ─► match (kind out) ─► sort (team) ─┐
+tick at the start ─► after extraction: terms per document ─┴─► tab: accept, re-team, leave out
+      ─► create the estimation ─► items copied ─► builder panel: owner, status, due, note ─► SalesAccountLegal sheet
+```
+
 ## Scoping
 
-Estimations, requests, desk-added solutions, custom bundles and tenders all carry a `plat` field, and every
+Estimations, requests, desk-added solutions, custom bundles, tenders and sales and legal items all carry a `plat` field, and every
 list is filtered by the platform in play. Nothing mixes platforms. When you add a feature that
 stores records, give it a `plat` too, and filter it — the selectors in `reducer.ts` show the
 pattern.

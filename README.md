@@ -251,6 +251,12 @@ requirements with the tender's own wording beside each, and matches them against
 person approves each step. The last step creates the estimation with the accepted catalog solutions
 picked, then sends whatever is custom to the estimation desk.
 
+What the tender commits Edly to that is not software (spend reports, certifications, background
+checks, and the key legal and commercial terms when a person ticks for them at the start) is listed
+on the tender's Sales, account and legal tab, goes with the estimation when it is created, and is
+kept there under Sales & legal: an owner, a status, a due date and a note for each, and a row each in
+the workbook's `SalesAccountLegal` sheet. None of it is priced, and none of it reaches the client.
+
 It needs one variable on the server:
 
 ```

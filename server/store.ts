@@ -73,6 +73,7 @@ const populated = (state: PersistedState): boolean =>
   state.solutions.length > 0 ||
   state.bundles.length > 0 ||
   state.tenders.length > 0 ||
+  state.salesLegal.length > 0 ||
   Object.keys(state.settings).length > 0;
 
 /** The stored state, or null when nothing has been written yet. */

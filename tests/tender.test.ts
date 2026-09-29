@@ -22,6 +22,11 @@ import {
   NO_TOKENS,
   outOfScopeMatches,
   planRanges,
+  planTermReads,
+  splitTermRead,
+  termReadKey,
+  termsWaiting,
+  unreadTerms,
   platformDigest,
   rangeLabel,
   rangesToRun,
@@ -855,6 +860,26 @@ describe('the AI spending limit', () => {
     expect(heldByLimit(spent(4.1, { ranges: ranges.slice(0, 1), reqs }), new Set(), false)).toBe('');
   });
 
+  it('says when the key terms or the sorting are what the limit stopped', () => {
+    const termReads: TenderRange[] = [
+      { key: 'terms:1', doc: 1, from: 1, to: 40, status: 'pending' },
+      { key: 'terms:2', doc: 2, from: 1, to: 6, status: 'running', startedAt: 1, by: 'me' },
+      { key: 'terms:3', doc: 3, from: 1, to: 9, status: 'done' }
+    ];
+    const atLimit = spent(4.1, { readTerms: true, termReads });
+    /* terms:2 is being read here and finishes */
+    expect(heldByLimit(atLimit, new Set(['terms:2']), false)).toBe('the key terms of 1 document are not read yet');
+    expect(heldByLimit(atLimit, new Set(), false, 3)).toBe('the key terms of 2 documents are not read yet, and 3 sales and legal items are not sorted yet');
+    /* reads queued on a tender that no longer asks for terms are not waiting on anyone */
+    expect(heldByLimit(spent(4.1, { termReads }), new Set(), false)).toBe('');
+    /* a document split in two is still one document to the person reading the question */
+    const halves: TenderRange[] = [
+      { key: 'terms:1:1-20', doc: 1, from: 1, to: 20, status: 'pending' },
+      { key: 'terms:1:21-40', doc: 1, from: 21, to: 40, status: 'pending' }
+    ];
+    expect(heldByLimit(spent(4.1, { readTerms: true, termReads: halves }), new Set(), false)).toBe('the key terms of 1 document are not read yet');
+  });
+
   it('asks in plain words, with the figures to the cent', () => {
     expect(limitQuestion(4.07, 4, 4, '6 parts of the tender are not read yet')).toBe(
       'This tender has used $4.07 of AI against its limit of $4.00, so the AI has stopped. 6 parts of the tender are not read yet. Continue for up to another $4.00?'
@@ -998,10 +1023,67 @@ describe('a new tender', () => {
     expect(newTender({ ...base, aiLimit: 0, aiApproved: -2 }, 'TND-5', [], '2026-09-29')).toMatchObject({ aiLimit: 4, aiApproved: 0 });
   });
 
+  it('plans one read of each document for its key terms when the person ticked them, and none otherwise', () => {
+    const base = { plat: 'openedx', name: 'Acme', client: '', due: '', summary: '', docs: [doc(1, { pages: 30 }), doc(2, { kind: 'text', pages: 0 })], fit: null, outline: [], tokens: NO_TOKENS, aiLimit: 4, aiApproved: 0 };
+    const asked = newTender({ ...base, readTerms: true }, 'TND-6', [], '2026-09-29');
+    expect(asked.readTerms).toBe(true);
+    expect(asked.terms).toEqual([]);
+    expect(asked.termReads).toEqual([
+      { key: 'terms:1', doc: 1, from: 1, to: 30, status: 'pending' },
+      /* a document nobody counted is read to its end */
+      { key: 'terms:2', doc: 2, from: 1, to: 0, status: 'pending' }
+    ]);
+    /* the extraction itself is planned exactly as it would be without the tick */
+    expect(asked.ranges).toEqual(newTender(base, 'TND-7', [], '2026-09-29').ranges);
+    const plain = newTender(base, 'TND-7', [], '2026-09-29');
+    expect(plain).not.toHaveProperty('readTerms');
+    expect(plain).not.toHaveProperty('termReads');
+  });
+
   it('names an untitled tender rather than leaving it blank', () => {
     const made = newTender({ plat: 'openedx', name: '', client: '', due: '', summary: '', docs: [], fit: null, outline: [], tokens: NO_TOKENS, aiLimit: 4, aiApproved: 0 }, 'TND-3', [], '2026-09-26');
     expect(made.name).toBe('Untitled tender');
     expect(made.slug).toBe('tnd-3');
+  });
+});
+
+describe('reading the key terms', () => {
+  it('queues a document for its terms once, whatever is asked twice', () => {
+    const planned = planTermReads([doc(1), doc(2)]);
+    expect(planned.map((read) => read.key)).toEqual(['terms:1', 'terms:2']);
+    expect(planTermReads([doc(1), doc(2), doc(3)], planned).map((read) => read.key)).toEqual(['terms:3']);
+    /* never the key of an extraction range, so one claim can never be taken for the other */
+    expect(planRanges([doc(1)], []).some((range) => range.key === termReadKey(1))).toBe(false);
+  });
+
+  it('cuts a terms read in two the way a range is cut, under keys no extraction range can have', () => {
+    const halves = splitTermRead({ key: 'terms:1', doc: 1, from: 1, to: 40, status: 'running', by: 'tab' });
+    expect(halves).toEqual([
+      { key: 'terms:1:1-20', doc: 1, from: 1, to: 20, status: 'pending' },
+      { key: 'terms:1:21-40', doc: 1, from: 21, to: 40, status: 'pending' }
+    ]);
+    const ranges = new Set(planRanges([doc(1)], []).map((range) => range.key));
+    expect(halves?.some((half) => ranges.has(half.key))).toBe(false);
+    /* a document nobody counted peels off a range and keeps an open end */
+    expect(splitTermRead({ key: 'terms:2', doc: 2, from: 1, to: 0, status: 'running' })?.map((one) => one.key)).toEqual(['terms:2:1-20', 'terms:2:21-end']);
+    expect(splitTermRead({ key: 'terms:1:7-7', doc: 1, from: 7, to: 7, status: 'running' })).toBeNull();
+  });
+
+  it('waits for the extraction to finish before reading the terms, and not for a failed part', () => {
+    const reads: TenderRange[] = [{ key: 'terms:1', doc: 1, from: 1, to: 40, status: 'pending' }];
+    const extracting: TenderRange[] = [
+      { key: '1:1-20', doc: 1, from: 1, to: 20, status: 'done' },
+      { key: '1:21-40', doc: 1, from: 21, to: 40, status: 'running', startedAt: 1, by: 'tab' }
+    ];
+    expect(termsWaiting(tender({ readTerms: true, termReads: reads, ranges: extracting }))).toBe(false);
+    /* a failed part has its own Retry; the terms do not wait on a person deciding */
+    const read: TenderRange[] = [extracting[0]!, { ...extracting[1]!, status: 'failed' }];
+    expect(termsWaiting(tender({ readTerms: true, termReads: reads, ranges: read }))).toBe(true);
+    expect(termsWaiting(tender({ termReads: reads, ranges: read }))).toBe(false);
+    expect(termsWaiting(tender({ readTerms: true, termReads: [{ ...reads[0]!, status: 'done' }], ranges: read }))).toBe(false);
+    expect(unreadTerms(tender({ readTerms: true, termReads: reads }))).toHaveLength(1);
+    /* a tender from before the choice has none of it */
+    expect(unreadTerms(tender())).toEqual([]);
   });
 });
 
