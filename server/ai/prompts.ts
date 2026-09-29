@@ -237,6 +237,9 @@ export function matchInstruction(reqs: readonly MatchInput[]): string {
     '',
     'kind is catalog when one or more catalog solutions fully cover the requirement; partial when they cover part of it, with remainder saying what is left for the estimation desk to price; custom when nothing in the catalog covers it; out when it is not software work Edly would price.',
     'Prefer partial over catalog when the requirement asks for something the catalog description does not mention. Use catalog ids exactly as listed and never invent one.',
+    /* on the first real tender (2026-09-29) badging came back as a built badge feature and an unbuilt
+       badge service together, which would have priced badging twice */
+    'Name every solution the requirement needs, including the parts that go together. Where two solutions do the same job, name only the one that fits best, preferring status Production (built before) over Estimation (priced, never built), and mention the other in reason: every solution named is added to the estimate, so naming both prices that work twice.',
     'confidence is high when a description clearly covers the requirement, medium when it probably does, low when it is a stretch.',
     '',
     'Requirements:',
