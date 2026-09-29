@@ -227,3 +227,26 @@ export function withoutSearch(url: string): string {
   const rest = params.toString();
   return rest ? `${url.slice(0, cut)}?${rest}` : url.slice(0, cut);
 }
+
+export interface HeldLink {
+  signedIn: boolean;
+  /** The estimation or tender the link names is in this tab. */
+  found: boolean;
+  /** The store has answered, so a link still not found never will be. */
+  storeSettled: boolean;
+  /** The grace period for an unreachable store is over. */
+  expired: boolean;
+}
+
+/**
+ * Whether a link held since boot can be applied now.
+ *
+ * It waits for the sign-in first. Applied before one, the reducer refused it, the sign-in then
+ * opened the practice picker, and a deal link shared with anyone not already signed in never
+ * reached the deal. Past the sign-in it waits for the deal to arrive, for the store to answer
+ * without it, or for the grace period to end.
+ */
+export function deepLinkReady(link: HeldLink): boolean {
+  if (!link.signedIn) return false;
+  return link.found || link.storeSettled || link.expired;
+}

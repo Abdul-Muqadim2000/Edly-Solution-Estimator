@@ -145,13 +145,13 @@ reference.
 
 ### The suite
 
-`bun run test` runs 935 tests across twenty-two files.
+`bun run test` runs 940 tests across twenty-two files.
 
 | File | Covers |
 |---|---|
 | `tests/domain.test.ts` | `calcEstimate`, `schedule`, catalog composition and helpers |
 | `tests/reducer.test.ts` | every state transition, selector and label |
-| `tests/router.test.ts` | URL to state and back, both directions |
+| `tests/router.test.ts` | URL to state and back, both directions, and a link held through sign-in |
 | `tests/schema.test.ts` | state to spreadsheet rows, chunking, round trip, the sync key |
 | `tests/api.test.ts` | `/api/state` end to end, and the empty-payload guard |
 | `tests/handler.test.ts` | the Vercel and web request adapters |
@@ -468,7 +468,9 @@ The spreadsheets hold real deal names, client names and pricing.
   chose this over the old CB-01 numbering on 2026-09-29, knowing the sheet can later add the same
   number: `composeCatalog` then lists the sheet's bundle once and what was filed under the number
   shows there. A gap is never refilled, and bundles already numbered CB keep their ids.
-- `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses.
+- `src/lib/router.ts`: `parseRoute` and `formatRoute` must stay inverses. A link opened before
+  sign-in is held and applied once someone signs in (`deepLinkReady`); applied earlier, the
+  reducer refused it and the sign-in sent a shared deal link to the practice picker.
 - **The AI only proposes.** No tool the model is given writes anything; every change to an
   estimation or the desk queue is a reducer action a person's click dispatches. Hours never come
   from the model: matches carry catalog ids, checked against the catalog by the `read*` functions
