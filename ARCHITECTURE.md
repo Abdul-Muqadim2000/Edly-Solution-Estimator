@@ -330,6 +330,7 @@ the shell, keep those steps green.
 
 ## What is deliberately not here
 
-- **No server-side auth.** The sign-in is a client-side demo gate. Put a proxy in front.
+- **No server-side sessions.** Sign-in checks a password on the server (`/api/users`), but no
+  endpoint checks who is calling afterwards. Put a proxy in front.
 - **No optimistic concurrency.** Last write wins on the whole workbook.
 - **No i18n.** Copy is inline English.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
-import { coerceState, COLUMNS, countRows, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
+import { coerceState, COLUMNS, countRows, namesEveryRow, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
 import type { Catalog, PersistedState, SalesLegalItem, Tender, TenderRequirement } from '../src/types';
 import { DEFAULT_SHEET, readSheetPrefs } from '../src/domain/taskBreakdown';
 import { ESTIMATION_STAGES } from '../src/domain/stages';
@@ -1168,5 +1168,204 @@ describe('where deals and requests stand', () => {
     const waiting = picked.requests[2];
     if (waiting) waiting.stage = 'progress';
     expect(syncKey(picked)).not.toBe(base);
+  });
+});
+
+describe('an empty save that names what a person deleted', () => {
+  it('covers the store only when every stored row, of every sheet, is named', () => {
+    const stored = sample();
+    const all = [...stored.estimations, ...stored.requests, ...stored.solutions, ...stored.bundles, ...stored.tenders, ...stored.salesLegal].map((row) => row.id);
+    expect(namesEveryRow(stored, all)).toBe(true);
+    /* one row left out, of any kind, is one a person never deleted */
+    for (const id of all) expect(namesEveryRow(stored, all.filter((one) => one !== id))).toBe(false);
+  });
+
+  it('names nothing with anything but ids', () => {
+    expect(namesEveryRow(sample(), undefined)).toBe(false);
+    expect(namesEveryRow(sample(), 'EST-1')).toBe(false);
+    expect(namesEveryRow(sample(), [])).toBe(false);
+    expect(namesEveryRow(sample(), ['', 'EST-1'])).toBe(false);
+  });
+
+  it('never keeps the list: the store has no place for it', () => {
+    const coerced = coerceState({ ...sample(), deleted: ['EST-1'] });
+    expect(coerced).not.toHaveProperty('deleted');
+  });
+});
+
+describe('who is on a deal or a request', () => {
+  const T1 = '2026-09-30T09:00:00.000Z';
+  const T2 = '2026-09-30T10:30:00.000Z';
+
+  const rowsOf = (sheets: ReturnType<typeof stateToSheets>, sheet: string): Record<string, unknown>[] => {
+    const [header = [], ...rows] = sheets[sheet] ?? [];
+    return rows.map((row) => Object.fromEntries(header.map((name, i) => [String(name), row[i]])));
+  };
+
+  /** The sheets for `state` with one cell typed over, the way a person edits the sheet. */
+  const typedOver = (state: PersistedState, sheet: string, row: number, column: string, value: string): ReturnType<typeof stateToSheets> => {
+    const sheets = stateToSheets(state);
+    const table = sheets[sheet] ?? [];
+    const at = (table[0] ?? []).indexOf(column);
+    const target = table[row + 1];
+    if (at < 0 || !target) throw new Error(`no ${column} cell in row ${row} of ${sheet}`);
+    target[at] = value;
+    return sheets;
+  };
+
+  const read = async (sheets: ReturnType<typeof stateToSheets>): Promise<PersistedState> => sheetsToState(await readWorkbook(writeWorkbook(sheets)));
+
+  /** The sample with people on EST-1 and RQ-01, a filer on two requests, a priced and a staged one. */
+  function assigned(): PersistedState {
+    const state = sample();
+    const deal = state.estimations[0];
+    if (deal) deal.assigned = [{ user: 'muqadim', by: 'nadia', at: T1 }, { user: 'sara', by: 'admin', at: T2 }];
+    /* RQ-01 is the priced one */
+    const priced = state.requests[0];
+    if (priced) Object.assign(priced, { by: 'sara', assigned: [{ user: 'muqadim', by: 'sara', at: T1 }], priced: { by: 'muqadim', at: T2 } });
+    /* RQ-03 is still waiting on the desk */
+    const waiting = state.requests[2];
+    if (waiting) Object.assign(waiting, { by: 'omar', stage: 'info', staged: { by: 'nadia', at: T2 } });
+    return state;
+  }
+
+  it('keeps who is on a deal, who put each of them there and when', async () => {
+    const back = await roundTrip(assigned());
+    expect(back.estimations[0]?.assigned).toEqual([
+      { user: 'muqadim', by: 'nadia', at: T1 },
+      { user: 'sara', by: 'admin', at: T2 }
+    ]);
+  });
+
+  it('keeps who is on a request, who filed it, who priced it and who last moved it', async () => {
+    const back = await roundTrip(assigned());
+    expect(back.requests[0]).toMatchObject({ by: 'sara', assigned: [{ user: 'muqadim', by: 'sara', at: T1 }], priced: { by: 'muqadim', at: T2 } });
+    expect(back.requests[2]).toMatchObject({ by: 'omar', stage: 'info', staged: { by: 'nadia', at: T2 } });
+  });
+
+  it('writes the people as @names in a column a person can read, with the stamps in JSON beside it', () => {
+    const sheets = stateToSheets(assigned());
+    const [deal, other] = rowsOf(sheets, SHEETS.estimations);
+    expect(deal?.assignedTo).toBe('@muqadim, @sara');
+    expect(JSON.parse(String(deal?.assignedJson))).toEqual([
+      { user: 'muqadim', by: 'nadia', at: T1 },
+      { user: 'sara', by: 'admin', at: T2 }
+    ]);
+    /* a deal nobody is on is two blank cells */
+    expect(other?.assignedTo).toBe('');
+    expect(other?.assignedJson).toBe('');
+    expect(rowsOf(sheets, SHEETS.requests).map((row) => row.assignedTo)).toEqual(['@muqadim', '', '']);
+  });
+
+  it('assigns a name typed into the assignedTo cell by hand, with nobody to say who did it or when', async () => {
+    const onDeal = await read(typedOver(sample(), SHEETS.estimations, 1, 'assignedTo', '@Nadia'));
+    expect(onDeal.estimations[1]?.assigned).toEqual([{ user: 'nadia', by: '', at: '' }]);
+
+    const onRequest = await read(typedOver(sample(), SHEETS.requests, 2, 'assignedTo', '@Omar, sara'));
+    expect(onRequest.requests[2]?.assigned).toEqual([
+      { user: 'omar', by: '', at: '' },
+      { user: 'sara', by: '', at: '' }
+    ]);
+  });
+
+  it('keeps the stamps of the people still named when a name is added to the cell', async () => {
+    const back = await read(typedOver(assigned(), SHEETS.estimations, 0, 'assignedTo', '@muqadim, @sara, @omar'));
+    expect(back.estimations[0]?.assigned).toEqual([
+      { user: 'muqadim', by: 'nadia', at: T1 },
+      { user: 'sara', by: 'admin', at: T2 },
+      { user: 'omar', by: '', at: '' }
+    ]);
+  });
+
+  it('unassigns a name deleted from the cell, though the JSON beside it still lists them', async () => {
+    const fewer = await read(typedOver(assigned(), SHEETS.estimations, 0, 'assignedTo', '@sara'));
+    expect(fewer.estimations[0]?.assigned).toEqual([{ user: 'sara', by: 'admin', at: T2 }]);
+
+    /* everyone taken off: no entry at all, which is how the reducer holds a deal nobody is on */
+    const none = await read(typedOver(assigned(), SHEETS.estimations, 0, 'assignedTo', ''));
+    expect(none.estimations[0]).not.toHaveProperty('assigned');
+    const request = await read(typedOver(assigned(), SHEETS.requests, 0, 'assignedTo', ''));
+    expect(request.requests[0]).not.toHaveProperty('assigned');
+    /* the filer and the price are not in that cell, so they stay */
+    expect(request.requests[0]).toMatchObject({ by: 'sara', priced: { by: 'muqadim', at: T2 } });
+  });
+
+  it('reads rows from before these columns with no assigned key, no filer and no events at all', async () => {
+    const back = sheetsToState(
+      await readWorkbook(
+        writeWorkbook({
+          [SHEETS.estimations]: [
+            ['id', 'plat', 'name', 'slug', 'client', 'tag', 'stage', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions', 'snapshotJson'],
+            ['EST-1', 'openedx', 'Acme Academy', 'acme-academy', 'Acme', 'Active', 'In progress', '', '2026-09-01', '2026-09-02', 40, 4800, 1, '{"sel":{"OX-1":true},"buf":{},"bufPct":0}']
+          ],
+          [SHEETS.requests]: [
+            ['id', 'plat', 'estimationId', 'title', 'status', 'estimateHours', 'extraJson'],
+            ['RQ-01', 'openedx', 'EST-1', 'Custom SSO', 'Estimated', 24, '{"manual":false,"catForm":"Integration"}']
+          ]
+        })
+      )
+    );
+    expect(back.estimations[0]).not.toHaveProperty('assigned');
+    for (const key of ['by', 'assigned', 'staged', 'priced']) expect(back.requests[0]).not.toHaveProperty(key);
+    /* and the rest of the request is read as before */
+    expect(back.requests[0]).toMatchObject({ est: 24, catForm: 'Integration' });
+  });
+
+  it('writes nothing for a ticket nobody is on, so it reads back exactly as it was held', async () => {
+    const state = sample();
+    const deal = state.estimations[1];
+    /* a tab can hold an empty list; the reducer never does, and the sheet must not invent one */
+    if (deal) deal.assigned = [];
+    const request = state.requests[1];
+    if (request) Object.assign(request, { by: '', assigned: [] });
+    const back = await roundTrip(state);
+    expect(back.estimations[1]).not.toHaveProperty('assigned');
+    expect(back.requests[1]).not.toHaveProperty('by');
+    expect(back.requests[1]).not.toHaveProperty('assigned');
+    expect(back.estimations[0]).not.toHaveProperty('assigned');
+    expect(syncKey(state)).toBe(syncKey(sample()));
+  });
+
+  it('reads a filer typed with an @ and capitals as the username', async () => {
+    const sheets = stateToSheets(sample());
+    const table = sheets[SHEETS.requests] ?? [];
+    const at = (table[0] ?? []).indexOf('extraJson');
+    const row = table[1];
+    if (row) row[at] = JSON.stringify({ manual: false, by: '@Sara', staged: { by: 'Nadia', at: T1 }, priced: 'not an event' });
+    const back = await read(sheets);
+    expect(back.requests[0]?.by).toBe('sara');
+    expect(back.requests[0]?.staged).toEqual({ by: 'nadia', at: T1 });
+    expect(back.requests[0]).not.toHaveProperty('priced');
+  });
+
+  it('keeps storedForm in step with the file, so the sync key sees who is on what', async () => {
+    const held = assigned();
+    /* storedForm is the in-memory model of the round trip; if it dropped the people, the key would too */
+    expect(storedForm(held)).toEqual(await roundTrip(held));
+    expect(syncKey(await roundTrip(held))).toBe(syncKey(held));
+
+    const base = syncKey(held);
+    expect(base).not.toBe(syncKey(sample()));
+
+    const fewer = assigned();
+    const deal = fewer.estimations[0];
+    if (deal) deal.assigned = deal.assigned?.slice(0, 1);
+    expect(syncKey(fewer)).not.toBe(base);
+
+    /* put back on later: the same people, a new stamp, and a notification the save must carry */
+    const later = assigned();
+    const again = later.estimations[0];
+    if (again) again.assigned = [{ user: 'muqadim', by: 'nadia', at: '2026-10-01T08:00:00.000Z' }, { user: 'sara', by: 'admin', at: T2 }];
+    expect(syncKey(later)).not.toBe(base);
+
+    const onRequest = assigned();
+    const request = onRequest.requests[2];
+    if (request) request.assigned = [{ user: 'sara', by: 'omar', at: T1 }];
+    expect(syncKey(onRequest)).not.toBe(base);
+
+    const repriced = assigned();
+    const priced = repriced.requests[0];
+    if (priced) priced.priced = { by: 'nadia', at: T2 };
+    expect(syncKey(repriced)).not.toBe(base);
   });
 });

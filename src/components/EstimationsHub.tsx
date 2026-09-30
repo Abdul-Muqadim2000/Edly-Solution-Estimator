@@ -20,11 +20,13 @@ import { TenderStrip } from '@/components/tender/TenderList';
 import { EstimationBoard } from '@/components/EstimationBoard';
 import { StagePicker, StageTrack, useStoredView, ViewSwitch } from '@/components/stages';
 import { VIEW_KEYS } from '@/state/keys';
+import { AssignControl, DEMO_ASSIGN } from '@/components/people';
+import { assignedUsers, isAdmin } from '@/domain/people';
 
 /** The sales landing page: every deal for this platform, with the numbers that matter on the card. */
 
 const TAGS: EstimationTag[] = ['Active', 'Urgent', 'On hold', 'Closed'];
-type Filter = 'all' | 'open' | 'urgent' | 'pending' | 'closed';
+type Filter = 'all' | 'mine' | 'open' | 'urgent' | 'pending' | 'closed';
 
 /** The status filters above the card grid. */
 function FilterPill({ children, on, onClick }: { children: string; on: boolean; onClick: () => void }): JSX.Element {
@@ -87,6 +89,8 @@ export function EstimationsHub(): JSX.Element {
   const estimations = usePlatformEstimations();
 
   const [filter, setFilter] = useState<Filter>('all');
+  /* the admin account is nobody's to assign, so it has no deals of its own to filter to */
+  const me = isAdmin(state.auth) ? '' : state.auth?.user ?? '';
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -106,11 +110,12 @@ export function EstimationsHub(): JSX.Element {
       if (filter === 'open' && estimation.tag === 'Closed') return false;
       if (filter === 'urgent' && estimation.tag !== 'Urgent') return false;
       if (filter === 'closed' && estimation.tag !== 'Closed') return false;
+      if (filter === 'mine' && !assignedUsers(estimation.assigned).includes(me)) return false;
       if (filter === 'pending' && !requestsFor(state, estimation.id).some((request) => !request.manual && !(Number(request.est) > 0))) return false;
       if (!needle) return true;
       return `${estimation.name} ${estimation.client}`.toLowerCase().includes(needle);
     });
-  }, [estimations, filter, query, state]);
+  }, [estimations, filter, query, state, me]);
 
   /* one pass for every card, rather than a filter of the whole list per card */
   const openLegal = useMemo(() => openByEstimation(state.salesLegal), [state.salesLegal]);
@@ -174,6 +179,7 @@ export function EstimationsHub(): JSX.Element {
           {(
             [
               ['all', `All ${estimations.length}`],
+              ...(me ? [['mine', 'Assigned to me'] as [Filter, string]] : []),
               ['open', 'Open'],
               ['urgent', 'Urgent'],
               ['pending', 'Awaiting estimates'],
@@ -335,6 +341,9 @@ export function EstimationsHub(): JSX.Element {
                         <div style={{ fontSize: 10, color: color.quiet, letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 2 }}>{label}</div>
                       </div>
                     ))}
+                    <Spacer />
+                    {/* who is on the deal; its own clicks and keys stop at it, so the card does not open */}
+                    <AssignControl ticket="deal" id={estimation.id} assigned={estimation.assigned} align="right" disabledReason={demo ? DEMO_ASSIGN : undefined} />
                   </Row>
 
                   {due ? (

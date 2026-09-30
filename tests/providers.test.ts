@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, TokenCache } from '../server/providers/types';
+import { EMPTY_STATE } from '../server/schema';
+import { USER_COLUMNS } from '../server/users';
 
 /**
  * The cloud stores, driven against a stubbed `fetch`.
@@ -343,6 +345,99 @@ describe('Google Sheets', () => {
       await (await provider()).saveSheets({ Estimations: [['id'], ['EST-1']], Tenders: [['id'], ['TEN-1']] });
 
       expect(sheets.now()).toEqual({ Estimations: [['id'], ['EST-1']], Tenders: [['id'], ['TEN-1']] });
+    });
+
+    describe('with the accounts in a Users tab', () => {
+      let before: string | undefined;
+
+      beforeEach(() => {
+        before = process.env.EDLY_STORE;
+        process.env.EDLY_STORE = 'gsheet';
+      });
+
+      afterEach(() => {
+        if (before === undefined) delete process.env.EDLY_STORE;
+        else process.env.EDLY_STORE = before;
+      });
+
+      /** The store layer over this provider, fresh, so its token cache and lazy import start clean. */
+      const store = async () => {
+        vi.resetModules();
+        return import('../server/store');
+      };
+
+      /** Every request made from here on, its URL decoded and its body as sent. */
+      const recording = (): { url: string; body: string }[] => {
+        const seen: { url: string; body: string }[] = [];
+        const inner = globalThis.fetch;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          seen.push({ url: decodeURIComponent(String(input)), body: typeof init?.body === 'string' ? init.body : '' });
+          return inner(input, init);
+        }) as typeof fetch;
+        return seen;
+      };
+
+      const writtenRanges = (seen: { url: string; body: string }[]): string[][] =>
+        seen.filter((call) => call.url.includes('/values:batchUpdate')).map((call) => (JSON.parse(call.body) as { data: { range: string }[] }).data.map((entry) => entry.range));
+
+      const accounts = (): string[][] => [
+        [...USER_COLUMNS],
+        ['nadia', 'Nadia Rahman', 'Estimator', '2026-09-01', '2026-09-01', 'pbkdf2-sha256$600000$c2FsdA==$aGFzaA=='],
+        ['farid', 'Farid Anwar', 'Sales', '2026-09-02', '2026-09-02', 'pbkdf2-sha256$600000$c2FsdDI=$aGFzaDI=']
+      ];
+
+      const deal = {
+        id: 'EST-1', plat: 'openedx', name: 'Acme Academy', slug: 'acme-academy', client: 'Acme', tag: 'Active' as const, due: '',
+        at: '2026-09-01', up: '2026-09-01', total: 40, cost: 4800, items: 1, snap: { sel: {}, buf: {}, bufPct: 0 },
+        assigned: [{ user: 'nadia', by: 'admin', at: '2026-09-30T09:00:00.000Z' }]
+      };
+
+      it('never names the Users tab in a save of the work, so the accounts cannot be written over', async () => {
+        /* A browser never holds the accounts. Writing the tab from what it sent, or blanking it as a
+           tab the new rows no longer reach, would delete every account on the next save. */
+        const sheets = fakeSheets({ Estimations: [['id'], ['EST-OLD']], Users: accounts() });
+        const seen = recording();
+        const { saveState } = await store();
+
+        await saveState({ ...EMPTY_STATE, estimations: [deal] });
+
+        const ranges = writtenRanges(seen);
+        expect(ranges).toHaveLength(1);
+        expect(ranges[0]).toContain("'Estimations'!A1");
+        expect(seen.filter((call) => call.url.includes('Users') || call.body.includes('Users'))).toEqual([]);
+        expect(sheets.now().Users).toEqual(accounts());
+      });
+
+      it('writes the Users tab and nothing else when the accounts are saved', async () => {
+        const work = { Estimations: [['id', 'name'], ['EST-1', 'Acme Academy']], Requests: [['id', 'title'], ['RQ-01', 'Custom SSO']] };
+        const sheets = fakeSheets(work);
+        const seen = recording();
+        const { saveUsers } = await store();
+
+        await saveUsers([{ username: 'nadia', name: 'Nadia Rahman', role: 'estimator', created: '2026-09-01', updated: '2026-09-30', hash: 'pbkdf2-sha256$1$c2FsdA==$aGFzaA==' }]);
+
+        expect(writtenRanges(seen)).toEqual([["'Users'!A1"]]);
+        const now = sheets.now();
+        /* the tab is made where there was none, and the work is untouched */
+        expect(now.Users).toEqual([[...USER_COLUMNS], ['nadia', 'Nadia Rahman', 'Estimator', '2026-09-01', '2026-09-30', 'pbkdf2-sha256$1$c2FsdA==$aGFzaA==']]);
+        expect(now.Estimations).toEqual(work.Estimations);
+        expect(now.Requests).toEqual(work.Requests);
+      });
+
+      it('takes a removed account out of the tab in the same one write', async () => {
+        const sheets = fakeSheets({ Users: accounts() });
+        const { saveUsers } = await store();
+        await saveUsers([{ username: 'nadia', name: 'Nadia Rahman', role: 'estimator', created: '2026-09-01', updated: '2026-09-01', hash: 'pbkdf2-sha256$600000$c2FsdA==$aGFzaA==' }]);
+        expect(sheets.now().Users).toEqual(accounts().slice(0, 2));
+      });
+
+      it('reads the accounts from the live sheet beside the work, and a sheet of accounts alone as no work', async () => {
+        fakeSheets({ Users: accounts() });
+        const { loadStore } = await store();
+        const alone = await loadStore();
+        expect(alone.state).toBeNull();
+        expect(alone.users.map((one) => one.username)).toEqual(['nadia', 'farid']);
+      });
     });
   });
 

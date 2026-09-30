@@ -22,6 +22,8 @@ import { ESTIMATION_STAGES, stageLabel, stageOf, TICKET_STAGES, ticketStage, typ
 import { StageChip, StagePicker, useStoredView, ViewSwitch } from '@/components/stages';
 import { RequestBoard } from '@/components/desk/RequestBoard';
 import { VIEW_KEYS } from '@/state/keys';
+import { AssignControl, DEMO_ASSIGN, MentionField } from '@/components/people';
+import { assignedUsers, isAdmin } from '@/domain/people';
 
 /**
  * The estimation desk.
@@ -248,7 +250,8 @@ function DeskTabs({ queueView, onQueueView }: { queueView: BoardView; onQueueVie
 
 function RequestQueue({ view, onView }: { view: BoardView; onView: (next: BoardView) => void }): JSX.Element {
   const { state } = useApp();
-  const [filter, setFilter] = useState<'' | 'pending' | 'done'>('');
+  const [filter, setFilter] = useState<'' | 'pending' | 'done' | 'mine'>('');
+  const me = isAdmin(state.auth) ? '' : state.auth?.user ?? '';
   const [deal, setDeal] = useState('');
   /* the request a board card opened; looked up again each render, so the form shows what was just saved */
   const [opened, setOpened] = useState('');
@@ -261,6 +264,7 @@ function RequestQueue({ view, onView }: { view: BoardView; onView: (next: BoardV
   const rows = listed.filter((request) => {
     if (filter === 'pending') return !(Number(request.est) > 0);
     if (filter === 'done') return Number(request.est) > 0;
+    if (filter === 'mine') return assignedUsers(request.assigned).includes(me);
     return true;
   });
   const pending = requests.filter((request) => !(Number(request.est) > 0)).length;
@@ -298,8 +302,9 @@ function RequestQueue({ view, onView }: { view: BoardView; onView: (next: BoardV
           [
             ['', 'All'],
             ['pending', 'Awaiting'],
-            ['done', 'Estimated']
-          ] as ['' | 'pending' | 'done', string][]
+            ['done', 'Estimated'],
+            ...(me ? [['mine', 'Assigned to me'] as ['mine', string]] : [])
+          ] as ['' | 'pending' | 'done' | 'mine', string][]
         ).map(([key, label]) => (
           <TabPill key={key} small on={filter === key} onClick={() => setFilter(key)}>
             {label}
@@ -394,7 +399,8 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         subCategory: subCategory.trim(),
         account: account.trim(),
         notes: notes.trim(),
-        by: state.auth?.user ?? 'estimator'
+        /* the name a person reads on the sheet; the username goes in `priced`, which the reducer writes */
+        by: state.auth?.name || state.auth?.user || 'estimator'
       }
     });
   };
@@ -458,6 +464,16 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
       <p style={{ fontSize: 13, color: color.body, lineHeight: 1.6, margin: '10px 0 0', whiteSpace: 'pre-line' }}>{request.details}</p>
       <div style={{ fontSize: 11.5, color: color.faint, marginTop: 8 }}>
         Requested by {[request.name, request.org, request.email].filter(Boolean).join(' · ') || 'Sales workspace'} · {request.at || '—'}
+      </div>
+
+      <div style={{ marginTop: 12, maxWidth: 520 }}>
+        <MentionField
+          label="Assigned"
+          hint="Whoever you add is told in their notifications"
+          value={assignedUsers(request.assigned)}
+          onChange={(users) => dispatch({ type: 'setAssignees', ticket: 'request', id: request.id, users })}
+          disabledReason={isDemoRequest(request) ? DEMO_ASSIGN : undefined}
+        />
       </div>
 
       <OpenPageButton
@@ -675,6 +691,13 @@ function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX
             value={stageOf(estimation)}
             onChange={(stage) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { stage } })}
             stepper
+          />
+          <AssignControl
+            ticket="deal"
+            id={estimation.id}
+            assigned={estimation.assigned}
+            align="right"
+            disabledReason={isDemoEstimation(estimation) ? DEMO_ASSIGN : undefined}
           />
         </div>
         <div style={{ fontFamily: font.mono, fontSize: 11.5, color: color.muted, marginTop: 10 }}>

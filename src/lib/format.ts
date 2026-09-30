@@ -68,6 +68,24 @@ export function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * How long ago, for the bell: "just now", "12 min ago", "3 h ago", "yesterday", "4 days ago", then
+ * the date. Blank for a time nobody recorded (a name typed into the sheet), or one that is not a time.
+ */
+export function ago(iso: string, now = Date.now()): string {
+  const then = Date.parse(iso);
+  if (!iso || Number.isNaN(then)) return '';
+  const minutes = Math.floor((now - then) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hoursAgo = Math.floor(minutes / 60);
+  if (hoursAgo < 24) return `${hoursAgo} h ago`;
+  const days = Math.floor(hoursAgo / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(then).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: new Date(then).getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric' });
+}
+
 export function longDate(iso?: string): string {
   const d = iso ? new Date(`${iso}T00:00:00`) : new Date();
   return d.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });

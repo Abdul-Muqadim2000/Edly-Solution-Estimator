@@ -30,6 +30,9 @@ import { SalesLegalPanel } from '@/components/builder/SalesLegalPanel';
 import { SheetPanel } from '@/components/builder/SheetPanel';
 import { SummaryPanel } from '@/components/builder/SummaryPanel';
 import { StagePicker } from '@/components/stages';
+import { AssignControl, DEMO_ASSIGN } from '@/components/people';
+import { NotificationBell } from '@/components/Notifications';
+import { isAdmin } from '@/domain/people';
 
 /**
  * The bundle builder: a three-column app shell. While a deal is presented, the edly.io header
@@ -236,6 +239,15 @@ export function Builder(): JSX.Element {
                 stepper
               />
             ) : null}
+            {/* who is on the deal: internal, so it goes while presenting */}
+            {estimation && !state.presenting ? (
+              <AssignControl
+                ticket="deal"
+                id={estimation.id}
+                assigned={estimation.assigned}
+                disabledReason={isDemoEstimation(estimation) ? DEMO_ASSIGN : undefined}
+              />
+            ) : null}
           </div>
 
           <div style={{ flex: '1 1 240px', display: 'flex', justifyContent: 'center' }}>
@@ -248,10 +260,11 @@ export function Builder(): JSX.Element {
           </div>
 
           <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            <NotificationBell />
             <UserChip>
-              {state.auth?.user ?? ''} · {state.auth?.role === 'estimator' ? 'Estimator' : 'Sales'}
+              {state.auth?.name || state.auth?.user || ''} · {state.auth?.role === 'estimator' ? 'Estimator' : 'Sales'}
             </UserChip>
-            <HeaderPill onClick={() => router.navigate({ screen: 'desk', estimation: undefined })}>⇄ Estimation desk</HeaderPill>
+            {isAdmin(state.auth) ? <HeaderPill onClick={() => router.navigate({ screen: 'desk', estimation: undefined })}>⇄ Estimation desk</HeaderPill> : null}
             <HeaderPill danger onClick={() => dispatch({ type: 'signOut' })}>
               Logout
             </HeaderPill>

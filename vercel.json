@@ -11,6 +11,9 @@
     },
     "api/tender.ts": {
       "maxDuration": 300
+    },
+    "api/users.ts": {
+      "maxDuration": 15
     }
   },
   "headers": [

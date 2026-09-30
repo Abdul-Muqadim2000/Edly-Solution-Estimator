@@ -8,6 +8,7 @@ import { pressable } from '@/lib/pressable';
 import { Chip, DemoTag, Row, Spacer, useRowHover } from '@/components/ui';
 import { Board } from '@/components/Board';
 import { StagePicker } from '@/components/stages';
+import { AssignControl, DEMO_ASSIGN } from '@/components/people';
 
 /**
  * The desk's queue as a board: a column per stage, a card per request.
@@ -137,8 +138,9 @@ function TicketCard({ request, onOpen }: { request: EstimateRequest; onOpen: () 
             variant="move"
           />
         )}
+        <AssignControl ticket="request" id={request.id} assigned={request.assigned} size={20} disabledReason={isDemoRequest(request) ? DEMO_ASSIGN : undefined} />
         <Spacer />
-        <span style={{ fontSize: 10.5, color: color.quiet, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 5 }}>
+        <span style={{ fontSize: 10.5, color: color.quiet, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, paddingRight: 5 }}>
           {priced ? `by ${request.estBy || 'estimator'}${request.estAt ? ` · ${request.estAt}` : ''}` : request.name || request.org || 'Sales workspace'}
         </span>
       </Row>

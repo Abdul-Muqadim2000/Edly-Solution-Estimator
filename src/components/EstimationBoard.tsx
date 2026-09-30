@@ -10,6 +10,7 @@ import { pressable } from '@/lib/pressable';
 import { Chip, DemoTag, Mono, Row, Spacer, useRowHover } from '@/components/ui';
 import { Board } from '@/components/Board';
 import { StagePicker } from '@/components/stages';
+import { AssignControl, DEMO_ASSIGN } from '@/components/people';
 
 /** The hub as a board: a column per stage, the deals in it, and their hours at the top. */
 export function EstimationBoard({ rows }: { rows: Estimation[] }): JSX.Element {
@@ -145,8 +146,9 @@ function DealCard({ estimation }: { estimation: Estimation }): JSX.Element {
           variant="move"
           stepper
         />
+        <AssignControl ticket="deal" id={estimation.id} assigned={estimation.assigned} size={20} disabledReason={isDemoEstimation(estimation) ? DEMO_ASSIGN : undefined} />
         <Spacer />
-        <span style={{ fontSize: 10.5, color: color.quiet, whiteSpace: 'nowrap', paddingRight: 5 }} title={`${plural(numbers.selIds.length, 'solution')}, ${plural(requests.length, 'custom item')}`}>
+        <span style={{ fontSize: 10.5, color: color.quiet, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, paddingRight: 5 }} title={`${plural(numbers.selIds.length, 'solution')}, ${plural(requests.length, 'custom item')}`}>
           {estimation.up || estimation.at ? `Updated ${estimation.up || estimation.at}` : ''}
         </span>
       </Row>

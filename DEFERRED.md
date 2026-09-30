@@ -57,7 +57,7 @@ This part is listed in CLAUDE.md.
 the stored one is newer, and `useSync.ts` shows the conflict the way it already does when a
 background pull meets unsaved edits.
 
-### 3. Rate limiting on `/api/state`
+### 3. Rate limiting on `/api/state` and on sign-in
 
 **Blocked by:** Vercel function instances do not share memory, so a counter kept in one instance
 never sees the requests another one handles. Rate limiting needs a shared counter (a Redis-style
@@ -68,11 +68,18 @@ with no limit today, so answering 413 above a set size is doable now and is list
 
 Do not ship an in-memory limiter as a stopgap. It reads as protection and gives none.
 
-### 4. Per-user accounts and roles the server enforces
+Sign-in (`/api/users`, since 2026-09-30) has the same gap: a password can be guessed as fast as the
+endpoint answers. Each guess costs the server about 50 ms of PBKDF2, which slows a guesser but does
+not stop one. The shared counter above would cover it too.
 
-**Blocked by:** accounts need somewhere to live, and sessions need a server to check them. Today
-sign-in is `admin` / `admin` checked in the browser, and the sales or desk role is a toggle anyone
-can flip.
+### 4. Roles the server enforces, and sessions it can revoke
+
+**Blocked by:** per-record storage (entry 1) for anything that has to be looked up on every call.
+Accounts exist since 2026-09-30: the admin creates them in the admin panel, they live in the
+store's Users tab with a salted hash, and `/api/users` checks the password at sign-in. After that
+the browser keeps who signed in, a role locks only the screens, and `/api/state` checks nobody. A
+signed session token checked by `/api/state` needs no database and is item 1 in CLAUDE.md; revoking
+one before it expires, and checking the role on every write, need a sessions table.
 
 **Now:** put Vercel Authentication or an SSO proxy in front of the whole deployment, `/api/state`
 included. That needs no server and is item 1 in CLAUDE.md. It answers "may this person open the
@@ -90,8 +97,9 @@ used to delete other files in the workspace. And the key should belong to an Ant
 its own with a monthly spend limit set in the Anthropic console: that caps what an open endpoint
 can cost, and keeps the tender files apart from anything else the organisation stores there.
 
-**When unblocked:** a users table, a session check in `server/handler.ts` before any store call,
-and the role checked on the server for every write. When choosing the proxy, check whether it
+**When unblocked:** move the Users tab into a users table, add a sessions table, check the session in
+`server/handler.ts` before any store call, and check the role on the server for every write (the
+desk's pricing, the admin's changes). When choosing the proxy, check whether it
 forwards a verified identity header. If it does, part of this entry and the "who" in entry 5 can
 come earlier.
 
@@ -108,6 +116,19 @@ grow without limit. This part is listed in CLAUDE.md.
 
 **When unblocked:** an append-only `audit` table carrying the user id from entry 4. The sheet can
 stay as a readable view of it.
+
+### 12. Read marks that follow a person across browsers
+
+**Blocked by:** entry 1. Marking a notification read would be a save, and today a save rewrites the
+whole workbook, last write wins. A click on the bell could then undo a colleague's edit made in the
+same minute, which is a worse fault than a notification showing unread on a second laptop.
+
+**Now:** read marks are kept per person in each browser (`seenStorageKey` in
+`src/domain/notifications.ts`), and the notifications themselves are worked out from the records,
+so they are the same everywhere; only whether each has been read differs.
+
+**When unblocked:** a `notification_reads` table keyed by username and notice key, written one row
+at a time, and `markSeen` sending the keys it adds.
 
 ### 11. An AI spending cap that holds for every caller
 

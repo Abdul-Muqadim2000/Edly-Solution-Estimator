@@ -7,8 +7,10 @@ import { useHover } from '@/lib/useHover';
 import { pressable } from '@/lib/pressable';
 import { HomeLogo } from '@/components/Nav';
 import { exactly, LANDING } from '@/lib/router';
+import { isAdmin } from '@/domain/people';
+import { NotificationBell } from '@/components/Notifications';
 
-/** The signed-in chrome: brand, platform switcher, role swap, sign out, and the sync pill. */
+/** The signed-in chrome: brand, platform switcher, notifications, role swap, sign out, and the sync pill. */
 
 /** The mono pill that names who is signed in and in which role. */
 export function UserChip({ children }: { children: ReactNode }): JSX.Element {
@@ -174,6 +176,7 @@ export function PlatformSwitcher(): JSX.Element | null {
 export function AppHeader({ children, sticky }: { children?: ReactNode; sticky?: boolean }): JSX.Element {
   const { state, dispatch, router } = useApp();
   const role = state.auth?.role;
+  const admin = isAdmin(state.auth);
 
   /* Ducking into the desk and back should return you to the deal you were building, which is what
      this pill has always done. The estimation stays open while the desk is showing, so coming
@@ -211,10 +214,17 @@ export function AppHeader({ children, sticky }: { children?: ReactNode; sticky?:
       ) : null}
       {children}
       <Spacer />
+      <NotificationBell />
       <UserChip>
-        {state.auth?.user ?? ''} · {role === 'estimator' ? 'Estimator' : 'Sales'}
+        {state.auth?.name || state.auth?.user || ''} · {role === 'estimator' ? 'Estimator' : 'Sales'}
       </UserChip>
-      <HeaderPill onClick={swapRole}>⇄ {role === 'estimator' ? 'Sales workspace' : 'Estimation desk'}</HeaderPill>
+      {/* a role locks everyone else to their workspace (2026-09-30); the built-in admin keeps both */}
+      {admin && !state.adminPanel ? <HeaderPill onClick={swapRole}>⇄ {role === 'estimator' ? 'Sales workspace' : 'Estimation desk'}</HeaderPill> : null}
+      {admin && !state.adminPanel ? (
+        <HeaderPill title="Add and change the people who can sign in" onClick={() => router.navigate(exactly({ screen: 'admin' }))}>
+          Users
+        </HeaderPill>
+      ) : null}
       <HeaderPill danger onClick={() => dispatch({ type: 'signOut' })}>
         Logout
       </HeaderPill>

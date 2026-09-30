@@ -6,7 +6,7 @@ import { handle } from '../api/state';
 import { storeKind } from '../server/store';
 import { coerceState, countRows, EMPTY_STATE } from '../server/schema';
 import { demoRecords } from '../src/domain/demo';
-import type { Estimation, PersistedState, SalesLegalItem, Tender } from '../src/types';
+import type { EstimateRequest, Estimation, PersistedState, SalesLegalItem, Tender } from '../src/types';
 
 /**
  * The endpoint, driven end to end against a real spreadsheet in a temp directory.
@@ -216,6 +216,43 @@ describe('the empty-payload guard', () => {
     expect(after.state.estimations).toHaveLength(2);
   });
 
+  /* The demo is never stored, so deleting the only real deal left an empty payload, which this guard
+     refused; the next read then put the deal back. A person's delete now names what it removed. */
+  it('lets a person delete the last deal: an empty payload that names every stored row it removes', async () => {
+    await put(state({ estimations: [estimation('EST-1')], salesLegal: [item('SL-01')] }));
+
+    const response = await put({ ...EMPTY_STATE, deleted: ['EST-1', 'SL-01'] });
+    expect(response.status).toBe(200);
+
+    const after = (await (await get()).json()) as { empty: boolean };
+    expect(after.empty).toBe(true);
+  });
+
+  it('still refuses an empty payload that leaves out a stored row, which another tab may have added', async () => {
+    await put(state({ estimations: [estimation('EST-1'), estimation('EST-2')] }));
+
+    const response = await put({ ...EMPTY_STATE, deleted: ['EST-1'] });
+    expect(response.status).toBe(409);
+
+    const after = (await (await get()).json()) as { state: PersistedState };
+    expect(after.state.estimations.map((one) => one.id)).toEqual(['EST-1', 'EST-2']);
+  });
+
+  it('reads anything but a list of ids as naming nothing', async () => {
+    await put(state({ estimations: [estimation('EST-1')] }));
+    expect((await put({ ...EMPTY_STATE, deleted: 'EST-1' })).status).toBe(409);
+    expect((await put({ ...EMPTY_STATE, deleted: [1, null] })).status).toBe(409);
+    expect((await put({ ...EMPTY_STATE, deleted: {} })).status).toBe(409);
+  });
+
+  it('never stores the list of what was deleted', async () => {
+    await put(state({ estimations: [estimation('EST-1')] }));
+    await put({ ...state({ estimations: [estimation('EST-2')] }), deleted: ['EST-1'] });
+    const after = (await (await get()).json()) as { state: PersistedState & { deleted?: unknown } };
+    expect(after.state.deleted).toBeUndefined();
+    expect(after.state.estimations.map((one) => one.id)).toEqual(['EST-2']);
+  });
+
   it('clears the store when the caller says so deliberately', async () => {
     await put(state({ estimations: [estimation('EST-1')] }));
 
@@ -365,6 +402,68 @@ describe('the empty-payload guard', () => {
     expect(body.state.salesLegal[0]?.text).toBe('Notify the university of a data breach within one business day.');
     expect(((await (await get('?probe=1')).json()) as { hasData: boolean }).hasData).toBe(true);
     expect((await put(EMPTY_STATE)).status).toBe(409);
+  });
+});
+
+describe('a tab from before assignments', () => {
+  const request = (id: string, over: Partial<EstimateRequest> = {}): EstimateRequest => ({
+    id,
+    plat: 'openedx',
+    estId: 'EST-1',
+    estName: 'Deal EST-1',
+    client: 'Acme',
+    title: 'Single sign-on with Azure AD',
+    details: 'Staff sign in with university accounts.',
+    area: '',
+    urgency: '',
+    integrations: '',
+    name: 'Sara Khan',
+    email: 'sara@example.com',
+    org: '',
+    at: '2026-09-30',
+    ...over
+  });
+  const people = { assigned: [{ user: 'omar', by: 'sara', at: '2026-09-30T10:00:00.000Z' }] };
+  const events = {
+    by: 'sara',
+    staged: { by: 'omar', at: '2026-09-30T10:05:00.000Z' },
+    priced: { by: 'omar', at: '2026-09-30T10:09:00.000Z' }
+  };
+  const stored = async (): Promise<PersistedState> => ((await (await get()).json()) as { state: PersistedState }).state;
+
+  it('keeps who is on a deal and a request when a tab that never read them saves', async () => {
+    /* a tab still running the build from before assignments sends every deal and request without
+       them; read as "nobody", each of its saves would unassign everyone, and the bell would go quiet */
+    await put({ ...state({ estimations: [estimation('EST-1', people)], requests: [request('RQ-01', { ...people, ...events, est: 40 })] }), knowsPeople: true });
+    expect((await put(state({ estimations: [estimation('EST-1', { name: 'Renamed in the old tab' })], requests: [request('RQ-01', { est: 40 })] }))).status).toBe(200);
+
+    const after = await stored();
+    expect(after.estimations[0]?.name).toBe('Renamed in the old tab');
+    expect(after.estimations[0]?.assigned).toEqual(people.assigned);
+    expect(after.requests[0]).toMatchObject({ ...people, ...events });
+  });
+
+  it('takes the last person off when a current tab saves the ticket with nobody on it', async () => {
+    await put({ ...state({ estimations: [estimation('EST-1', people)], requests: [request('RQ-01', people)] }), knowsPeople: true });
+    await put({ ...state({ estimations: [estimation('EST-1')], requests: [request('RQ-01')] }), knowsPeople: true });
+
+    const after = await stored();
+    expect(after.estimations[0]).not.toHaveProperty('assigned');
+    expect(after.requests[0]).not.toHaveProperty('assigned');
+  });
+
+  it('still deletes a deal an older tab deleted, people and all', async () => {
+    await put({ ...state({ estimations: [estimation('EST-1', people), estimation('EST-2', people)] }), knowsPeople: true });
+    await put(state({ estimations: [estimation('EST-2')] }));
+
+    const after = await stored();
+    expect(after.estimations.map((one) => one.id)).toEqual(['EST-2']);
+    expect(after.estimations[0]?.assigned).toEqual(people.assigned);
+  });
+
+  it('never stores the mark itself', async () => {
+    await put({ ...state({ estimations: [estimation('EST-1')] }), knowsPeople: true });
+    expect(await stored()).not.toHaveProperty('knowsPeople');
   });
 });
 

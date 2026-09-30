@@ -1,13 +1,23 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Role } from '@/types';
 import { useApp } from '@/state/AppProvider';
+import { signInAccount, usesDefaultAdmin } from '@/api/client';
+import { ADMIN_USER, normalUsername } from '@/domain/people';
+import { rememberAdminPassword } from '@/components/AdminPanel';
 import { color, font, shadow } from '@/theme';
 import { Link } from '@/components/ui';
 import { useFocus, useHover } from '@/lib/useHover';
 import { pressable } from '@/lib/pressable';
 import { QuotientLogo } from '@/components/Brand';
 
-/** The demo gate. Real auth belongs in front of the deployment — see README. */
+/**
+ * Sign-in. The server checks the password (`/api/users`) and answers with who it belongs to; each
+ * account's role decides its workspace. The built-in admin still picks one, which is why the role
+ * tiles appear only when the username is `admin`.
+ *
+ * This keeps people out of the app, not out of the API: `/api/state` checks nobody. Real auth belongs
+ * in front of the deployment; see CLAUDE.md, Known limits.
+ */
 
 const authLabel: CSSProperties = {
   display: 'block',
@@ -93,19 +103,46 @@ export function SignIn(): JSX.Element {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>('sales');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  /* the admin's password is shown only while it is still the one everybody knows */
+  const [demoHint, setDemoHint] = useState(false);
   const submitHover = useHover();
+  const admin = normalUsername(user) === ADMIN_USER;
 
-  const submit = (): void => {
-    if (user.trim().toLowerCase() !== 'admin' || password !== 'admin') {
-      setError('Invalid credentials — demo sign-in is admin / admin.');
+  useEffect(() => {
+    let live = true;
+    void usesDefaultAdmin().then((answer) => {
+      if (live) setDemoHint(answer);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const submit = async (): Promise<void> => {
+    if (busy) return;
+    if (!user.trim() || !password) {
+      setError('Enter your username and password.');
       return;
     }
-    setError('');
-    dispatch({ type: 'signIn', user: 'admin', role });
+    setBusy(true);
+    try {
+      const account = await signInAccount(user, password);
+      setError('');
+      if (account.admin) {
+        rememberAdminPassword(password);
+        dispatch({ type: 'signIn', user: ADMIN_USER, role, name: 'Admin' });
+      } else {
+        dispatch({ type: 'signIn', user: account.username, role: account.role ?? 'sales', name: account.name });
+      }
+    } catch (failure) {
+      setError((failure as Error).message);
+      setBusy(false);
+    }
   };
 
   const onKey = (event: React.KeyboardEvent): void => {
-    if (event.key === 'Enter') submit();
+    if (event.key === 'Enter') void submit();
   };
 
   return (
@@ -145,7 +182,8 @@ export function SignIn(): JSX.Element {
             label="Username"
             marginTop={16}
             value={user}
-            placeholder="admin"
+            placeholder="your username"
+            autoComplete="username"
             onChange={(event) => setUser(event.target.value)}
             onKeyDown={onKey}
           />
@@ -155,10 +193,14 @@ export function SignIn(): JSX.Element {
             type="password"
             value={password}
             placeholder="••••••"
+            autoComplete="current-password"
             onChange={(event) => setPassword(event.target.value)}
             onKeyDown={onKey}
           />
 
+          {/* everyone else's account says which workspace is theirs */}
+          {admin ? (
+            <>
           <div style={{ ...authLabel, marginTop: 16 }}>Sign in as</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 6 }}>
             <RoleCard
@@ -174,6 +216,8 @@ export function SignIn(): JSX.Element {
               blurb="Receive submitted requests and return estimated hours to sales."
             />
           </div>
+            </>
+          ) : null}
 
           {error ? (
             <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600, color: color.redInk, background: color.redWash, borderRadius: 8, padding: '9px 12px' }}>
@@ -183,14 +227,16 @@ export function SignIn(): JSX.Element {
 
           <button
             type="button"
-            onClick={submit}
+            onClick={() => void submit()}
+            disabled={busy}
             {...submitHover.bind}
             style={{
               width: '100%',
               marginTop: 16,
               border: 'none',
-              cursor: 'pointer',
-              background: submitHover.on ? color.redDeep : color.red,
+              cursor: busy ? 'progress' : 'pointer',
+              background: submitHover.on && !busy ? color.redDeep : color.red,
+              opacity: busy ? 0.75 : 1,
               color: color.onSolid,
               borderRadius: 10,
               padding: 13,
@@ -202,11 +248,17 @@ export function SignIn(): JSX.Element {
               transition: 'background 120ms ease'
             }}
           >
-            Sign in
+            {busy ? 'Signing in…' : 'Sign in'}
           </button>
 
-          <div style={{ marginTop: 12, textAlign: 'center', fontSize: 11.5, color: color.faint }}>
-            Demo credentials: <span style={{ fontFamily: font.mono, color: color.ink }}>admin / admin</span>
+          <div style={{ marginTop: 12, textAlign: 'center', fontSize: 11.5, color: color.faint, lineHeight: 1.55 }}>
+            {demoHint ? (
+              <>
+                Admin: <span style={{ fontFamily: font.mono, color: color.ink }}>admin / admin</span>. It adds everyone else in the admin panel.
+              </>
+            ) : (
+              'Your admin gives you a username and password.'
+            )}
           </div>
         </div>
 

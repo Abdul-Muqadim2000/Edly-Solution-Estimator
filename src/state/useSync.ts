@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { PersistedState } from '@/types';
+import type { PersistedState, Person } from '@/types';
 import { beaconSave, fetchState, saveState } from '@/api/client';
 import { countRows, syncKey } from '@server/schema';
 import { ALL_SYNCED_KEYS, readStorage, STORAGE_KEYS, SYNCED_SETTING_KEYS, writeStorage } from '@/state/keys';
@@ -54,6 +54,8 @@ export interface UseSyncOptions {
   snapshot: PersistedState;
   /** Called with server data on the first successful read, and on a clean background update. */
   onHydrate: (state: PersistedState) => void;
+  /** Called with who can sign in on every read that brings the list, whatever the read does to the data. */
+  onPeople?: (people: Person[]) => void;
   /** Debounce before a push, ms. */
   debounceMs?: number;
   /** Background re-read interval, ms. */
@@ -61,7 +63,7 @@ export interface UseSyncOptions {
   enabled?: boolean;
 }
 
-export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_000, enabled = true }: UseSyncOptions): SyncApi {
+export function useSync({ snapshot, onHydrate, onPeople, debounceMs = 1200, pollMs = 45_000, enabled = true }: UseSyncOptions): SyncApi {
   const [status, setStatus] = useState<SyncStatus>({ tone: 'busy', message: 'connecting…', hydrated: false, store: 'store' });
 
   const hydrated = useRef(false);
@@ -84,6 +86,8 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
   latest.current = snapshot;
   const hydrateRef = useRef(onHydrate);
   hydrateRef.current = onHydrate;
+  const peopleRef = useRef(onPeople);
+  peopleRef.current = onPeople;
 
   const current = useCallback((): PersistedState => ({ ...latest.current, settings: SETTINGS_SNAPSHOT() }), []);
 
@@ -141,6 +145,9 @@ export function useSync({ snapshot, onHydrate, debounceMs = 1200, pollMs = 45_00
     const savingBefore = inFlight.current;
     try {
       const result = await fetchState();
+      /* The accounts are not part of the data, so no rule below applies to them: a read that the
+         data rules ignore still says who can sign in. A server older than accounts sends none. */
+      if (Array.isArray(result.people)) peopleRef.current?.(result.people);
       const store = shortStore(result.label);
       const incoming = syncKey({
         estimations: result.state.estimations ?? [],

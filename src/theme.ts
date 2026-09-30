@@ -199,6 +199,25 @@ export const tagStyle = (tag: string): { bg: string; co: string } =>
     Closed: { bg: color.surfaceMuted, co: color.muted }
   })[tag] ?? { bg: color.brandWashDeep, co: color.brandInk };
 
+/**
+ * A person's avatar colours, the same for them everywhere and in every browser: picked from the
+ * username, which never changes. Washes with their own ink, so initials stay readable on each.
+ */
+const PERSON_TONES = [
+  { bg: color.brandWashDeep, co: color.brandInk },
+  { bg: color.violetWash, co: color.violet },
+  { bg: color.blueWash, co: color.blueInk },
+  { bg: color.roseWash, co: color.roseInk },
+  { bg: color.cyanWash, co: color.cyanInk },
+  { bg: color.amberWash, co: color.amberInk }
+] as const;
+
+export function personStyle(username: string): { bg: string; co: string } {
+  let sum = 0;
+  for (const letter of username) sum = (sum * 31 + letter.charCodeAt(0)) % 9973;
+  return PERSON_TONES[sum % PERSON_TONES.length] ?? PERSON_TONES[0];
+}
+
 export interface StageStyle {
   /** The column's dot, its top rule and the builder's track. */
   dot: string;
