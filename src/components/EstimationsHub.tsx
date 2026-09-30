@@ -1,9 +1,10 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import type { EstimationTag } from '@/types';
+import type { EstimationStage, EstimationTag } from '@/types';
 import { useApp, usePlatformEstimations } from '@/state/AppProvider';
 import { hubStats, requestsFor } from '@/state/reducer';
 import { isDemoEstimation } from '@/domain/demo';
 import { openByEstimation } from '@/domain/salesLegal';
+import { deskCounts, ESTIMATION_STAGES, stageOf, stageStep } from '@/domain/stages';
 import { calcEstimate } from '@/domain/estimate';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
 import { hours, money, plural } from '@/lib/format';
@@ -16,6 +17,9 @@ import { Banner, Button, DemoTag, Empty, Field, Mono, Row, SearchInput, Select, 
 import { useHover } from '@/lib/useHover';
 import { TenderIntake } from '@/components/tender/TenderIntake';
 import { TenderStrip } from '@/components/tender/TenderList';
+import { EstimationBoard } from '@/components/EstimationBoard';
+import { StagePicker, StageTrack, useStoredView, ViewSwitch } from '@/components/stages';
+import { VIEW_KEYS } from '@/state/keys';
 
 /** The sales landing page: every deal for this platform, with the numbers that matter on the card. */
 
@@ -88,7 +92,10 @@ export function EstimationsHub(): JSX.Element {
   const [name, setName] = useState('');
   const [client, setClient] = useState('');
   const [tag, setTag] = useState<EstimationTag>('Active');
+  const [stage, setStage] = useState<EstimationStage>('progress');
   const [due, setDue] = useState('');
+  const [view, setView] = useStoredView(VIEW_KEYS.hub);
+  const board = view === 'board';
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState('');
   const [intake, setIntake] = useState(false);
@@ -117,18 +124,20 @@ export function EstimationsHub(): JSX.Element {
       return;
     }
     setError('');
-    dispatch({ type: 'createEstimation', input: { name: name.trim(), client: client.trim(), tag, due } });
+    dispatch({ type: 'createEstimation', input: { name: name.trim(), client: client.trim(), tag, stage, due } });
     setName('');
     setClient('');
     setDue('');
     setTag('Active');
+    setStage('progress');
     setCreating(false);
   };
 
   return (
     <div style={{ background: color.page }}>
       <AppHeader sticky />
-      <main style={{ maxWidth: 1180, margin: '0 auto', padding: '32px 28px 90px' }}>
+      {/* the board takes more of a wide screen, since six columns do not fit the cards' width */}
+      <main style={{ maxWidth: board ? 1680 : 1180, margin: '0 auto', padding: '32px 28px 90px' }}>
         {state.catalogError ? (
           <div style={{ marginBottom: 20 }}>
             <Banner tone="bad">{state.catalogError}</Banner>
@@ -202,6 +211,7 @@ export function EstimationsHub(): JSX.Element {
               <Field label="Name" value={name} onChange={setName} placeholder="e.g. Acme Corporate Academy" onEnter={create} />
               <Field label="Client / contact" value={client} onChange={setClient} placeholder="Optional" onEnter={create} />
               <Select label="Status" value={tag} options={TAGS.map((value) => ({ value, label: value }))} onChange={setTag} />
+              <Select label="Stage" value={stage} options={ESTIMATION_STAGES.map((one) => ({ value: one.id, label: one.label }))} onChange={setStage} />
               <Field label="Deadline" type="date" value={due} onChange={setDue} />
             </div>
             <Row gap={10} style={{ marginTop: 14 }}>
@@ -230,10 +240,23 @@ export function EstimationsHub(): JSX.Element {
           </div>
         ) : null}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14, marginTop: 22 }}>
+        {/* its own row above the results: the toolbar has no room for it at 1440px */}
+        {estimations.length > 0 ? (
+          <Row gap={10} style={{ marginTop: 20 }}>
+            <span style={{ fontSize: 12, color: color.muted }}>
+              {rows.length === estimations.length ? plural(estimations.length, 'estimation') : `${rows.length} of ${plural(estimations.length, 'estimation')}`}
+            </span>
+            <Spacer />
+            <ViewSwitch view={view} onChange={setView} />
+          </Row>
+        ) : null}
+
+        {board ? (estimations.length > 0 ? <EstimationBoard rows={rows} /> : null) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14, marginTop: 14 }}>
           {rows.map((estimation) => {
             const requests = requestsFor(state, estimation.id);
-            const pending = requests.filter((request) => !request.manual && !(Number(request.est) > 0)).length;
+            const { waiting: pending, needsInfo } = deskCounts(requests);
+            const dealStage = stageOf(estimation);
             const shown = estimation.tag || 'Active';
             const style = tagStyle(shown);
             const due = dueInfo(estimation.due);
@@ -283,6 +306,23 @@ export function EstimationsHub(): JSX.Element {
                       </Mono>
                     ) : null}
                   </Row>
+
+                  {/* where it stands: the menu moves it, the track shows how far along it is */}
+                  <div style={{ marginTop: 14 }}>
+                    <Row gap={8} wrap={false}>
+                      <StagePicker
+                        stages={ESTIMATION_STAGES}
+                        value={dealStage}
+                        onChange={(next) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { stage: next } })}
+                        stepper
+                      />
+                      <Spacer />
+                      <Mono size={10.5} tone={color.quiet}>
+                        {stageStep(dealStage)}/{ESTIMATION_STAGES.length}
+                      </Mono>
+                    </Row>
+                    <StageTrack stage={dealStage} style={{ marginTop: 9 }} />
+                  </div>
 
                   <Row gap={14} style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${color.hairlineSoft}` }}>
                     {[
@@ -369,6 +409,12 @@ export function EstimationsHub(): JSX.Element {
                     {pending} awaiting estimate
                   </div>
                 ) : null}
+                {/* the one thing on the desk sales has to answer */}
+                {needsInfo > 0 ? (
+                  <div style={{ background: color.roseWash, borderTop: `1px solid ${color.roseEdge}`, padding: '8px 20px', fontSize: 11, fontWeight: 700, color: color.roseInk }}>
+                    The desk needs more detail on {plural(needsInfo, 'request')}
+                  </div>
+                ) : null}
                 {/* internal, like the builder's panel, so it goes while presenting */}
                 {legalOpen > 0 && !state.presenting ? (
                   <div
@@ -382,6 +428,7 @@ export function EstimationsHub(): JSX.Element {
             );
           })}
         </div>
+        )}
       </main>
     </div>
   );

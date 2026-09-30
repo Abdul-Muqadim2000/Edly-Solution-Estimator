@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import type { EstimateRequest } from '@/types';
+import type { EstimateRequest, RequestStage } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import type { AppState } from '@/state/reducer';
 import { deskQueue, platformEstimations, requestsFor } from '@/state/reducer';
@@ -12,12 +12,16 @@ import { ImportModal } from '@/components/ImportModal';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
 import { hours, hours1, money, plural, today } from '@/lib/format';
 import { AppHeader } from '@/components/AppHeader';
-import { Banner, Button, Chip, DemoTag, Empty, Field, Mono, Row, Select, Spacer, TextArea, useRowHover } from '@/components/ui';
+import { Banner, Button, Chip, DemoTag, Empty, Field, Modal, Mono, Row, Select, Spacer, TextArea, useRowHover } from '@/components/ui';
 import { allSolutions } from '@/domain/catalog';
 import { useHover } from '@/lib/useHover';
 import { isLiveCatalog } from '@/data/practices';
 import { platformTrail } from '@/lib/router';
 import { Breadcrumbs } from '@/components/Nav';
+import { ESTIMATION_STAGES, stageLabel, stageOf, TICKET_STAGES, ticketStage, type BoardView, type TicketStage } from '@/domain/stages';
+import { StageChip, StagePicker, useStoredView, ViewSwitch } from '@/components/stages';
+import { RequestBoard } from '@/components/desk/RequestBoard';
+import { VIEW_KEYS } from '@/state/keys';
 
 /**
  * The estimation desk.
@@ -29,6 +33,9 @@ export function Desk(): JSX.Element {
   const { state, catalog, router } = useApp();
   const openPage = state.deskView;
   const catChip = `${allSolutions(catalog).length} solutions · ${catalog.meta.compiled || 'catalog'}`;
+  /* held here rather than in the queue, because the board needs the page wider than the desk's 900px */
+  const [queueView, setQueueView] = useStoredView(VIEW_KEYS.queue);
+  const wide = !openPage && state.deskTab === 'queue' && queueView === 'board';
 
   return (
     <div style={{ background: color.page }}>
@@ -40,11 +47,11 @@ export function Desk(): JSX.Element {
           📚 {catChip}
         </span>
       </AppHeader>
-      <main style={{ maxWidth: 900, margin: '0 auto', padding: '34px 24px 80px' }}>
+      <main style={{ maxWidth: wide ? 1480 : 900, margin: '0 auto', padding: '34px 24px 80px' }}>
         {openPage ? (
           <EstimationPage id={openPage} onBack={() => router.navigate({ screen: 'desk', estimation: undefined, tab: 'estimations' })} />
         ) : (
-          <DeskTabs />
+          <DeskTabs queueView={queueView} onQueueView={setQueueView} />
         )}
       </main>
     </div>
@@ -204,7 +211,7 @@ function SampleNotice(): JSX.Element | null {
   );
 }
 
-function DeskTabs(): JSX.Element {
+function DeskTabs({ queueView, onQueueView }: { queueView: BoardView; onQueueView: (next: BoardView) => void }): JSX.Element {
   const { state, router } = useApp();
   const tabs: { id: typeof state.deskTab; label: string }[] = [
     { id: 'queue', label: 'Request queue' },
@@ -230,7 +237,7 @@ function DeskTabs(): JSX.Element {
         ))}
       </Row>
 
-      {state.deskTab === 'queue' ? <RequestQueue /> : null}
+      {state.deskTab === 'queue' ? <RequestQueue view={queueView} onView={onQueueView} /> : null}
       {state.deskTab === 'estimations' ? <EstimationList /> : null}
       {state.deskTab === 'add' ? <AddToCatalog /> : null}
     </>
@@ -239,10 +246,13 @@ function DeskTabs(): JSX.Element {
 
 /* ------------------------------------------------------------------ queue */
 
-function RequestQueue(): JSX.Element {
+function RequestQueue({ view, onView }: { view: BoardView; onView: (next: BoardView) => void }): JSX.Element {
   const { state } = useApp();
   const [filter, setFilter] = useState<'' | 'pending' | 'done'>('');
   const [deal, setDeal] = useState('');
+  /* the request a board card opened; looked up again each render, so the form shows what was just saved */
+  const [opened, setOpened] = useState('');
+  const openedRequest = opened ? state.requests.find((request) => request.id === opened) : undefined;
   const deals = platformEstimations(state);
 
   /* the demo's requests are listed after the real ones, and the figures leave them out unless the
@@ -297,7 +307,28 @@ function RequestQueue(): JSX.Element {
         ))}
       </Row>
 
-      {rows.length === 0 ? (
+      {listed.length > 0 ? (
+        <Row gap={10} style={{ marginTop: 16 }}>
+          <span style={{ fontSize: 12, color: color.muted }}>
+            {rows.length === listed.length ? plural(listed.length, 'request') : `${rows.length} of ${plural(listed.length, 'request')}`}
+          </span>
+          <Spacer />
+          <ViewSwitch view={view} onChange={onView} />
+        </Row>
+      ) : null}
+
+      {view === 'board' && listed.length > 0 ? <RequestBoard rows={rows} onOpen={(request) => setOpened(request.id)} /> : null}
+      {openedRequest ? (
+        <Modal
+          width={900}
+          onClose={() => setOpened('')}
+          title={<div style={{ fontFamily: font.display, fontSize: 17, fontWeight: 700 }}>{Number(openedRequest.est) > 0 ? 'Update the estimate' : 'Price the request'}</div>}
+        >
+          <RequestCard request={openedRequest} />
+        </Modal>
+      ) : null}
+
+      {rows.length === 0 && (view === 'cards' || listed.length === 0) ? (
         <DeskEmpty>
           No requests yet.
           <br />
@@ -305,14 +336,19 @@ function RequestQueue(): JSX.Element {
         </DeskEmpty>
       ) : null}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 18 }}>
-        {rows.map((request) => (
-          <RequestCard key={request.id} request={request} />
-        ))}
-      </div>
+      {view === 'cards' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 }}>
+          {rows.map((request) => (
+            <RequestCard key={request.id} request={request} />
+          ))}
+        </div>
+      ) : null}
     </>
   );
 }
+
+/** Why Estimated cannot be picked from a request's menu: the hours below are what put it there. */
+const hoursOnly = (stage: TicketStage): string | null => (stage === 'estimated' ? 'Enter the hours below to estimate it' : null);
 
 function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
   const { state, dispatch, router, catalog } = useApp();
@@ -389,20 +425,18 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
         ) : null}
         <span style={{ fontFamily: font.display, fontSize: 15.5, fontWeight: 600, color: color.ink }}>{request.title}</span>
         <Spacer />
-        <span
-          style={{
-            fontSize: 10.5,
-            fontWeight: 700,
-            letterSpacing: 0.5,
-            textTransform: 'uppercase',
-            borderRadius: radius.pill,
-            padding: '4px 11px',
-            background: done ? color.brandWashDeep : color.amberWash,
-            color: done ? color.brandInk : color.amber
-          }}
-        >
-          {done ? 'Estimated' : 'Awaiting estimate'}
-        </span>
+        {/* where the desk is with it; Estimated comes from the hours below, never from this menu */}
+        {done ? (
+          <StageChip stage="estimated" label="Estimated" title="Hours returned to sales" />
+        ) : (
+          <StagePicker
+            stages={TICKET_STAGES}
+            value={ticketStage(request)}
+            label="Desk status"
+            refuses={hoursOnly}
+            onChange={(stage) => dispatch({ type: 'setRequestStage', id: request.id, stage: stage as RequestStage })}
+          />
+        )}
       </div>
 
       {chips.length > 0 ? (
@@ -545,6 +579,7 @@ function EstimationList(): JSX.Element {
                 {hours(numbers.grand)} h · {plural(numbers.selIds.length, 'solution')} · {plural(requests.length, 'custom item')}
             </Mono>
             <Row gap={6} style={{ marginTop: 10 }}>
+              <StageChip stage={stageOf(estimation)} label={stageLabel(stageOf(estimation))} size="sm" />
               <Chip bg={style.bg} co={style.co}>
                 {estimation.tag}
               </Chip>
@@ -572,7 +607,7 @@ function EstimationList(): JSX.Element {
 }
 
 function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX.Element {
-  const { state, catalog } = useApp();
+  const { state, dispatch, catalog } = useApp();
   const estimation = state.estimations.find((candidate) => candidate.id === id);
   const requests = requestsFor(state, id);
 
@@ -634,6 +669,13 @@ function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX
               {pageDue.label}
             </span>
           ) : null}
+          {/* the desk can say where a deal stands too: In review is often the desk checking it */}
+          <StagePicker
+            stages={ESTIMATION_STAGES}
+            value={stageOf(estimation)}
+            onChange={(stage) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { stage } })}
+            stepper
+          />
         </div>
         <div style={{ fontFamily: font.mono, fontSize: 11.5, color: color.muted, marginTop: 10 }}>
           {hours(numbers.grand)} h · {plural(numbers.selIds.length, 'solution')} · {plural(requests.length, 'custom item')}

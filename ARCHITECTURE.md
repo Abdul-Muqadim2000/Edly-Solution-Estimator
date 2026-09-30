@@ -31,8 +31,10 @@ src/
     taskBreakdown.ts    the Excel sheet: deliverables per area, lines, totals, column choices
     team.ts             team composition: rate-card role and seniority, people and weeks from the plan
     demo.ts             the demo estimation: built in, held in memory, never stored
+    stages.ts           where a deal and a desk request stand: the stages, reading them back, the
+                        moves filing and pricing make by themselves, and the boards' order
   state/
-    keys.ts             browser storage keys, and which are synced
+    keys.ts             browser storage keys, which are synced, and the per-browser Cards / Board choice
     reducer.ts          all workspace state and every transition (pure, exported)
     AppProvider.tsx     context: reducer + persistence + sync + routing + derived values
     useSync.ts          spreadsheet ↔ browser, with the three safety rules
@@ -56,6 +58,11 @@ src/
     tender/             tender intake: upload modal, then requirements, match, apply, and the
                         Sales, account and legal tab beside the steps
     salesLegal/         the status and team pieces the tab, the apply step and the panel share
+    Board.tsx           a kanban board: a column per stage, drag, Shift and an arrow key, a spoken move
+    stages.tsx          the stage chip, the six-step track, the menu that moves a deal or a request,
+                        and the Cards / Board switch
+    EstimationBoard.tsx the hub as a board
+    desk/RequestBoard.tsx  the desk's request queue as a board
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links
   data/brand.ts         the product name, Quotient, and its logo files in public/brand/

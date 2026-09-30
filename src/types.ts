@@ -165,6 +165,17 @@ export interface RateRole {
 
 export type EstimationTag = 'Active' | 'Urgent' | 'On hold' | 'Closed';
 
+/**
+ * Where a deal stands in the work, in order. The hub's board lays these out as columns. It is
+ * independent of the tag: a deal can be Urgent and In review, or On hold while Pending rates.
+ * `custom` is waiting on the desk to price custom requests; `rates` has its hours and waits on the
+ * rate card.
+ */
+export type EstimationStage = 'backlog' | 'progress' | 'custom' | 'rates' | 'review' | 'done';
+
+/** Where a desk request stands before its hours go back. A priced request is Estimated, whatever this says. */
+export type RequestStage = 'backlog' | 'progress' | 'review' | 'info';
+
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'PKR' | 'AED';
 
 /** One task's placement in the delivery plan. */
@@ -241,6 +252,11 @@ export interface Estimation {
   client: string;
   /** Empty on the "General estimation" older builds seeded for a fresh workspace; the hub shows it as Active. */
   tag: EstimationTag | '';
+  /**
+   * Absent on deals saved before stages existed, and in a browser still holding one: those read as
+   * Completed when tagged Closed and In progress otherwise (`stageOf` in domain/stages.ts).
+   */
+  stage?: EstimationStage;
   /** Deadline, ISO yyyy-mm-dd. */
   due: string;
   /** Created, ISO yyyy-mm-dd. */
@@ -278,6 +294,11 @@ export interface EstimateRequest {
   at: string;
   /** Added by sales as a placeholder rather than submitted for estimation. */
   manual?: boolean;
+  /**
+   * Where the desk is with it. Absent means Backlog: nobody has picked it up. A priced request
+   * carries none, because its hours already say it is Estimated.
+   */
+  stage?: RequestStage;
 
   /** Hours returned by the desk. Undefined means still pending. */
   est?: number;

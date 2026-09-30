@@ -8,6 +8,7 @@ import type {
   EstimateRequest,
   Estimation,
   EstimationSnapshot,
+  EstimationStage,
   EstimationTag,
   PersistedState,
   PlanEntry,
@@ -15,6 +16,7 @@ import type {
   RequirementMatch,
   RequirementPriority,
   RequirementStatus,
+  RequestStage,
   Role,
   SalesLegalCategory,
   SalesLegalItem,
@@ -52,6 +54,7 @@ import { DEMO_ID, demoPrefix, isDemoEstimation, isDemoId, isDemoRequest, isDemoS
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
 import { planEstimateImport, removeImported, type EstimateRow } from '@/domain/estimateImport';
 import { nextBundleId } from '@/domain/catalog';
+import { isAwaiting, stageOf, stageOnFiling, stageOnSettled } from '@/domain/stages';
 import type { ImportReview } from '@/domain/importReview';
 import { nextId, today, uniqueSlug } from '@/lib/format';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
@@ -187,6 +190,8 @@ export interface NewEstimationInput {
   client: string;
   tag: EstimationTag;
   due: string;
+  /** In progress when not given: a deal made from the hub is opened and worked on straight away. */
+  stage?: EstimationStage;
 }
 
 export interface NewRequestInput {
@@ -250,7 +255,7 @@ export type Action =
   | { type: 'openEstimation'; id: string }
   | { type: 'closeEstimation' }
   | { type: 'deleteEstimation'; id: string }
-  | { type: 'patchEstimation'; id: string; patch: Partial<Pick<Estimation, 'tag' | 'due' | 'name' | 'client'>> }
+  | { type: 'patchEstimation'; id: string; patch: Partial<Pick<Estimation, 'tag' | 'stage' | 'due' | 'name' | 'client'>> }
   | { type: 'cacheTotals'; totals: Record<string, CachedTotals> }
   | { type: 'toggleSolution'; id: string }
   | { type: 'clearSelection' }
@@ -274,6 +279,7 @@ export type Action =
   | { type: 'addRequest'; input: NewRequestInput }
   | { type: 'addManualItem'; title: string; hours: number }
   | { type: 'deleteRequest'; id: string }
+  | { type: 'setRequestStage'; id: string; stage: RequestStage }
   | { type: 'submitEstimate'; id: string; submission: EstimateSubmission }
   | { type: 'addSolution'; input: NewSolutionInput }
   | { type: 'removeSolution'; id: string }
@@ -380,6 +386,7 @@ function buildEstimation(state: AppState, input: NewEstimationInput, sel: Record
     ),
     client: input.client,
     tag: input.tag,
+    stage: input.stage ?? 'progress',
     due: input.due,
     at: stamp,
     up: stamp,
@@ -388,6 +395,20 @@ function buildEstimation(state: AppState, input: NewEstimationInput, sel: Record
     items: 0,
     snap: { ...EMPTY_SNAPSHOT, sel, roles: [...DEFAULT_ROLES] }
   };
+}
+
+/**
+ * A deal's stage after a change to its requests. `change` is `stageOnFiling` or `stageOnSettled`
+ * with the requests as they are now. The same state when the deal does not move, and `up` stays
+ * put when it does, like a recount: the desk pricing a request is not an edit to the deal.
+ */
+function moveDeal(state: AppState, estId: string, change: (stage: EstimationStage, waiting: number) => EstimationStage): AppState {
+  const deal = state.estimations.find((estimation) => estimation.id === estId);
+  if (!deal) return state;
+  const waiting = state.requests.filter((request) => request.estId === estId && isAwaiting(request)).length;
+  const stage = change(stageOf(deal), waiting);
+  if (stage === stageOf(deal)) return state;
+  return { ...state, estimations: state.estimations.map((estimation) => (estimation.id === estId ? { ...estimation, stage } : estimation)) };
 }
 
 /**
@@ -569,13 +590,20 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'patchEstimation':
+    case 'patchEstimation': {
+      const target = state.estimations.find((estimation) => estimation.id === action.id);
+      if (!target) return state;
+      /* a card dropped back on its own column, or a menu set to what it shows, is not an edit: the
+         deal would otherwise jump to the top of the hub for nothing */
+      const unchanged = (Object.keys(action.patch) as (keyof typeof action.patch)[]).every((key) =>
+        key === 'stage' ? action.patch.stage === stageOf(target) : action.patch[key] === target[key]
+      );
+      if (unchanged) return state;
       return {
         ...state,
-        estimations: state.estimations.map((estimation) =>
-          estimation.id === action.id ? { ...estimation, ...action.patch, up: today() } : estimation
-        )
+        estimations: state.estimations.map((estimation) => (estimation.id === action.id ? { ...estimation, ...action.patch, up: today() } : estimation))
       };
+    }
 
     /* A recount, not an edit: `up` stays put, so a deal does not jump up the hub because the
        desk priced one of its requests or the catalog changed under it. */
@@ -719,7 +747,7 @@ export function reducer(state: AppState, action: Action): AppState {
         client: open?.client ?? '',
         at: today()
       };
-      return { ...state, requests: [...state.requests, request] };
+      return moveDeal({ ...state, requests: [...state.requests, request] }, request.estId, stageOnFiling);
     }
 
     case 'addManualItem': {
@@ -745,8 +773,28 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, requests: [...state.requests, request] };
     }
 
-    case 'deleteRequest':
-      return { ...state, requests: state.requests.filter((request) => request.id !== action.id) };
+    case 'deleteRequest': {
+      const gone = state.requests.find((request) => request.id === action.id);
+      if (!gone) return state;
+      const next = { ...state, requests: state.requests.filter((request) => request.id !== action.id) };
+      /* only taking out a request that was still waiting can leave a deal with nothing waiting */
+      return isAwaiting(gone) ? moveDeal(next, gone.estId, stageOnSettled) : next;
+    }
+
+    /* The desk's own stage for a request, until its hours go back. A priced request is Estimated,
+       and moving it would say something its hours contradict, so it stays put. */
+    case 'setRequestStage': {
+      const target = state.requests.find((request) => request.id === action.id);
+      if (!target || Number(target.est) > 0 || (target.stage ?? 'backlog') === action.stage) return state;
+      const requests = state.requests.map((request) => {
+        if (request.id !== action.id) return request;
+        const next: EstimateRequest = { ...request, stage: action.stage };
+        /* no entry rather than a Backlog one, which is how a request nobody has picked up reads back */
+        if (action.stage === 'backlog') delete next.stage;
+        return next;
+      });
+      return { ...state, requests };
+    }
 
     case 'submitEstimate': {
       const request = state.requests.find((candidate) => candidate.id === action.id);
@@ -774,6 +822,8 @@ export function reducer(state: AppState, action: Action): AppState {
       };
       /* no entry rather than an empty one, which is how a request with no notes reads back */
       if (!updated.catNotes) delete updated.catNotes;
+      /* its hours say where it is now */
+      delete updated.stage;
 
       const solution: AddedSolution = {
         id: catalogId,
@@ -796,13 +846,15 @@ export function reducer(state: AppState, action: Action): AppState {
         direct: false
       };
 
-      return {
+      const priced = {
         ...state,
         requests: state.requests.map((candidate) => (candidate.id === action.id ? updated : candidate)),
         solutions: state.solutions.some((candidate) => candidate.id === catalogId)
           ? state.solutions.map((candidate) => (candidate.id === catalogId ? solution : candidate))
           : [...state.solutions, solution]
       };
+      /* pricing the last waiting request hands the deal back to sales; updating one already priced does not */
+      return isAwaiting(request) ? moveDeal(priced, request.estId, stageOnSettled) : priced;
     }
 
     case 'addSolution': {
@@ -1211,7 +1263,8 @@ export function reducer(state: AppState, action: Action): AppState {
       const fresh = action.drafts.filter((draft) => !sent.has(draft.reqId));
       const made = tenderRequests(state.requests, tender, fresh, action.contact, estimation, today());
       if (made.length === 0) return state;
-      return withTender({ ...state, requests: [...state.requests, ...made] }, action.id, (one) => ({ ...one, sentAt: today(), stage: 'done' }));
+      const filed = moveDeal({ ...state, requests: [...state.requests, ...made] }, estimation.id, stageOnFiling);
+      return withTender(filed, action.id, (one) => ({ ...one, sentAt: today(), stage: 'done' }));
     }
 
     case 'forgetTenderFiles':

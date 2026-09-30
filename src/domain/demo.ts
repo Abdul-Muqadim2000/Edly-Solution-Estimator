@@ -490,6 +490,8 @@ export function demoRecords(today: string): DemoCollections {
     slug: DEMO_SLUG,
     client: DEMO_CLIENT,
     tag: 'Active',
+    /* finished and being checked, so the board shows a deal near the end of the line */
+    stage: 'review',
     /* the proposal is due in three weeks, and the work starts two weeks after that */
     due: shiftDay(today, 21),
     at: opened,

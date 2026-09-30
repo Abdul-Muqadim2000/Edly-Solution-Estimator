@@ -71,6 +71,8 @@
   const mapSpec = (spec, from) => {
     if (spec === 'react') return 'react';
     if (spec === 'react-dom/client') return 'react-dom/client';
+    /* the stage menu's portal; the UMD build serves both names from one global */
+    if (spec === 'react-dom') return 'react-dom';
     if (spec.endsWith('.css')) return 'css';
     if (spec.startsWith('@/')) return '../src/' + spec.slice(2);
     if (spec.startsWith('@server/')) return '../server/' + spec.slice(8);
@@ -78,7 +80,7 @@
     if (spec.startsWith('.')) return normalise(from.split('/').slice(0, -1).join('/') + '/' + spec.replace(/\.js$/, ''));
     return spec;
   };
-  const EXTERNAL = { react: () => window.React, 'react-dom/client': () => window.ReactDOM, css: () => ({}) };
+  const EXTERNAL = { react: () => window.React, 'react-dom': () => window.ReactDOM, 'react-dom/client': () => window.ReactDOM, css: () => ({}) };
 
   async function fetchSrc(base) {
     /* Probe the candidate extensions concurrently, with a retry: serially, 33 modules meant ~70

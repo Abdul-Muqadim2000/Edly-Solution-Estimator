@@ -25,6 +25,13 @@ export const STORAGE_KEYS = {
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
 
+/**
+ * Cards or board, for the hub and for the desk's queue. Kept apart from `STORAGE_KEYS` on purpose:
+ * this is one browser's preference, never synced, so one person's view does not become everyone's.
+ * Not in the URL either, where Back would flip it and a link to a deal would lose it.
+ */
+export const VIEW_KEYS = { hub: 'quotient-hub-view-v1', queue: 'quotient-queue-view-v1' } as const;
+
 /** Keys whose contents belong in the spreadsheet. */
 export const SYNCED_DATA_KEYS = [
   STORAGE_KEYS.estimations,

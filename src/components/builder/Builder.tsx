@@ -4,6 +4,7 @@ import { catalogSourceLabel, openEstimationRecord, salesLegalFor, showsSiteChrom
 import { ALL_BUNDLES } from '@/lib/router';
 import { allSolutions, bundlesOfKind, kindCounts, solutionKind, type CatalogKind } from '@/domain/catalog';
 import { isDemoEstimation } from '@/domain/demo';
+import { ESTIMATION_STAGES, stageOf } from '@/domain/stages';
 import { color, dueInfo, font, radius, tagStyle } from '@/theme';
 import { hours } from '@/lib/format';
 import { findPlatform } from '@/data/practices';
@@ -28,6 +29,7 @@ import { RequestModal } from '@/components/builder/RequestModal';
 import { SalesLegalPanel } from '@/components/builder/SalesLegalPanel';
 import { SheetPanel } from '@/components/builder/SheetPanel';
 import { SummaryPanel } from '@/components/builder/SummaryPanel';
+import { StagePicker } from '@/components/stages';
 
 /**
  * The bundle builder: a three-column app shell. While a deal is presented, the edly.io header
@@ -223,6 +225,16 @@ export function Builder(): JSX.Element {
             ) : null}
             {due ? (
               <span style={{ fontSize: 11, fontWeight: 700, borderRadius: radius.pill, padding: '5px 11px', background: due.bg, color: due.co }}>{due.label}</span>
+            ) : null}
+            {/* internal, like Rates: "Pending rates" is not something to screen-share to a client */}
+            {estimation && !state.presenting ? (
+              <StagePicker
+                stages={ESTIMATION_STAGES}
+                value={stageOf(estimation)}
+                onChange={(stage) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { stage } })}
+                variant="header"
+                stepper
+              />
             ) : null}
           </div>
 

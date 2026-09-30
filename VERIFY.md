@@ -24,7 +24,7 @@ this directory.
 ## verify-domain.html — the logic and the schema
 
 Runs `tests/domain.test.ts` and `tests/schema.test.ts` against the real sources, with a small
-`describe/it/expect` shim. **103 assertions**, all green on 2026-09-30 (102 on 2026-09-29, 81 on 2026-09-27, 59 on 2026-09-26). Same code Vitest runs, so a
+`describe/it/expect` shim. **112 assertions**, all green on 2026-09-30 with the stage and status columns (103 earlier that day, 102 on 2026-09-29, 81 on 2026-09-27, 59 on 2026-09-26). Same code Vitest runs, so a
 green run here and a green `bun run test` mean the same thing. The shim covers `toMatchObject` and
 `.not` since that date, and `toMatch` and `toHaveProperty` since 2026-09-27; before each, some
 assertions failed on the shim rather than on the code.
@@ -65,7 +65,9 @@ fixed on `feat/clickable-navigation`: 29 of 31 pass there, 26 of 31 on `main` (e
 left are the runner's own: the hover probe looks for a card with a transform transition the hub
 cards do not have, and the focus probe reads no ring in a page the runner has not focused (a real
 Tab shows it). On 2026-09-30, with the demo estimation built in, the same 29 of 31 pass and the
-same two fail.
+same two fail. Later that day the stage menu brought the first import of plain `react-dom` (for
+its portal), which the loader did not map, and every step failed with "cannot resolve module:
+react-dom"; it now serves both names from the one UMD global, and the same 29 of 31 pass.
 
 Eight of those steps guard the *design and the feel*, not the logic. Two drive real `mouseover`
 and `focus` events and assert the computed style changes — React synthesises `onMouseEnter` from a
