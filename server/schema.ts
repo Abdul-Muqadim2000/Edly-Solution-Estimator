@@ -15,6 +15,7 @@ import { joinNotes, withSlugs } from '../src/lib/format.js';
 import { usdOf } from '../src/domain/aiPrice.js';
 import { aiSpent, aiStep, DEFAULT_AI_LIMIT } from '../src/domain/tender.js';
 import { categoryLabel, readCategory, readDay, readStatus, readTopic, statusLabel, topicLabel } from '../src/domain/salesLegal.js';
+import { withoutDemo } from '../src/domain/demo.js';
 
 /**
  * The bridge between app state and spreadsheet rows.
@@ -541,11 +542,14 @@ export function countRows(state: PersistedState | null): number {
   return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length + state.salesLegal.length;
 }
 
-/** Narrow an untrusted request body to the persisted shape. */
+/**
+ * Narrow an untrusted request body to the persisted shape. The demo estimation's records are taken
+ * out whatever a client sends: the browser never sends them, and this makes sure none is stored.
+ */
 export function coerceState(body: unknown): PersistedState {
   const raw = (body ?? {}) as Partial<PersistedState>;
   const array = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
-  return {
+  return withoutDemo({
     estimations: array<Estimation>(raw.estimations),
     requests: array<EstimateRequest>(raw.requests),
     solutions: array<AddedSolution>(raw.solutions),
@@ -557,5 +561,5 @@ export function coerceState(body: unknown): PersistedState {
       raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)
         ? (raw.settings as Record<string, unknown>)
         : {}
-  };
+  });
 }

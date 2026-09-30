@@ -83,3 +83,23 @@ export function removeStorage(key: string): void {
 export function changedSlices(previous: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>): string[] {
   return Object.keys(next).filter((key) => previous[key] !== next[key]);
 }
+
+/**
+ * `next`, keeping `previous`'s value for each array slice whose items are the very same records, in
+ * the same order. The demo is taken out of every slice before it is written (`toPersisted`), which
+ * makes a new array each time even when no real record changed, and `changedSlices` compares by
+ * reference: without this, every slice would be written on every change, the two-tab echo above.
+ */
+export function stableSlices(previous: Readonly<Record<string, unknown>>, next: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(next)) {
+    const before = previous[key];
+    const same =
+      Array.isArray(value) &&
+      Array.isArray(before) &&
+      before.length === value.length &&
+      value.every((item, index) => item === before[index]);
+    out[key] = same ? before : value;
+  }
+  return out;
+}

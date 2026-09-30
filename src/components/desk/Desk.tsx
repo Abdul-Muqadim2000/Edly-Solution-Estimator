@@ -2,7 +2,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { EstimateRequest } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import type { AppState } from '@/state/reducer';
-import { platformEstimations, platformRequests, requestsFor } from '@/state/reducer';
+import { deskQueue, platformEstimations, requestsFor } from '@/state/reducer';
+import { isDemoEstimation, isDemoRequest, isDemoSolution } from '@/domain/demo';
 import { calcEstimate } from '@/domain/estimate';
 import { categories, CX_BUNDLE_ID, guessBundle, subCategories } from '@/domain/catalog';
 import { importedFiles } from '@/domain/estimateImport';
@@ -11,7 +12,7 @@ import { ImportModal } from '@/components/ImportModal';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
 import { hours, hours1, money, plural, today } from '@/lib/format';
 import { AppHeader } from '@/components/AppHeader';
-import { Banner, Button, Chip, Empty, Field, Mono, Row, Select, Spacer, TextArea, useRowHover } from '@/components/ui';
+import { Banner, Button, Chip, DemoTag, Empty, Field, Mono, Row, Select, Spacer, TextArea, useRowHover } from '@/components/ui';
 import { allSolutions } from '@/domain/catalog';
 import { useHover } from '@/lib/useHover';
 import { isLiveCatalog } from '@/data/practices';
@@ -240,13 +241,14 @@ function DeskTabs(): JSX.Element {
 
 function RequestQueue(): JSX.Element {
   const { state } = useApp();
-  const all = platformRequests(state).filter((request) => !request.manual);
   const [filter, setFilter] = useState<'' | 'pending' | 'done'>('');
   const [deal, setDeal] = useState('');
   const deals = platformEstimations(state);
 
-  const requests = deal ? all.filter((request) => request.estId === deal) : all;
-  const rows = requests.filter((request) => {
+  /* the demo's requests are listed after the real ones, and the figures leave them out unless the
+     desk is looking at the demo: they are an example of the desk's work, not work waiting on it */
+  const { rows: listed, counted: requests, leftOut } = deskQueue(state, deal);
+  const rows = listed.filter((request) => {
     if (filter === 'pending') return !(Number(request.est) > 0);
     if (filter === 'done') return Number(request.est) > 0;
     return true;
@@ -262,12 +264,21 @@ function RequestQueue(): JSX.Element {
         <DeskStat value={String(returned)} label="estimated & returned" tone={color.brandInk} />
         <DeskStat value={`${hours(returnedHours)} h`} label="hours returned to sales" />
       </div>
+      {leftOut > 0 ? (
+        <div style={{ fontSize: 11.5, color: color.faint, marginTop: 8 }}>
+          The demo’s {plural(leftOut, 'request')} {leftOut === 1 ? 'is' : 'are'} listed below and left out of these figures. Pick the demo
+          under Estimation to count {leftOut === 1 ? 'it' : 'them'}.
+        </div>
+      ) : null}
 
       <Row gap={10} style={{ marginTop: 18 }}>
         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.muted }}>Estimation</span>
         <Select
           value={deal}
-          options={[{ value: '', label: 'All estimations' }, ...deals.map((one) => ({ value: one.id, label: one.client ? `${one.name} · ${one.client}` : one.name }))]}
+          options={[
+            { value: '', label: 'All estimations' },
+            ...deals.map((one) => ({ value: one.id, label: (one.client ? `${one.name} · ${one.client}` : one.name) + (isDemoEstimation(one) ? ' (demo)' : '') }))
+          ]}
           onChange={setDeal}
           /* sized by its content, capped — as the source does, so the Status pills sit beside it */
           style={{ width: 'auto', maxWidth: 320, padding: '8px 10px', fontSize: 12.5, borderRadius: 8 }}
@@ -364,8 +375,10 @@ function RequestCard({ request }: { request: EstimateRequest }): JSX.Element {
           {request.id}
         </span>
         <EstChip onClick={() => router.navigate({ screen: 'desk', estimation: deskSlug(state, request.estId) })}>
-          {(request.estName || 'General estimation') + (request.client ? ` · ${request.client}` : '')} ›
+          {/* blank only on requests from before each deal had its own estimation */}
+          {(request.estName || 'Unnamed estimation') + (request.client ? ` · ${request.client}` : '')} ›
         </EstChip>
+        {isDemoRequest(request) ? <DemoTag size="sm" /> : null}
         {estimation?.tag ? (
           <span style={{ fontSize: 10.5, fontWeight: 700, borderRadius: radius.pill, padding: '3px 10px', background: tagStyle(estimation.tag).bg, color: tagStyle(estimation.tag).co }}>
             {estimation.tag}
@@ -523,7 +536,10 @@ function EstimationList(): JSX.Element {
 
         return (
           <DeskCard key={estimation.id} pending={pending} onOpen={() => router.navigate({ screen: 'desk', estimation: estimation.slug || estimation.id })}>
-            <div style={{ fontFamily: font.display, fontSize: 15.5, fontWeight: 600, lineHeight: 1.3 }}>{estimation.name}</div>
+            <Row gap={8} align="flex-start" wrap={false}>
+              <div style={{ flex: 1, minWidth: 0, fontFamily: font.display, fontSize: 15.5, fontWeight: 600, lineHeight: 1.3 }}>{estimation.name}</div>
+              {isDemoEstimation(estimation) ? <DemoTag size="sm" /> : null}
+            </Row>
             {estimation.client ? <div style={{ fontSize: 12, color: color.muted, marginTop: 2 }}>{estimation.client}</div> : null}
             <Mono block size={11} style={{ marginTop: 10 }}>
                 {hours(numbers.grand)} h · {plural(numbers.selIds.length, 'solution')} · {plural(requests.length, 'custom item')}
@@ -597,6 +613,7 @@ function EstimationPage({ id, onBack }: { id: string; onBack: () => void }): JSX
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
           <h1 style={{ fontFamily: font.display, fontSize: 21, fontWeight: 700, margin: 0, letterSpacing: -0.3 }}>{estimation.name}</h1>
           {estimation.client ? <span style={{ fontSize: 13, color: color.muted }}>{estimation.client}</span> : null}
+          {isDemoEstimation(estimation) ? <DemoTag /> : null}
           <Spacer />
           <span
             style={{
@@ -842,7 +859,8 @@ function AddToCatalog(): JSX.Element {
   );
 
   const ownBundles = state.bundles.filter((entry) => (entry.plat || 'openedx') === (state.platform || 'openedx'));
-  const added = state.solutions.filter((entry) => (entry.plat || 'openedx') === (state.platform || 'openedx'));
+  /* the demo's estimates are part of the demo, not the desk's list of work */
+  const added = state.solutions.filter((entry) => (entry.plat || 'openedx') === (state.platform || 'openedx') && !isDemoSolution(entry));
   const imports = importedFiles(state.solutions, state.bundles, state.platform || 'openedx');
   const filed = new Set(catalog.bundles.filter((entry) => entry.id !== CX_BUNDLE_ID).map((entry) => entry.id));
   const unassigned = added.filter((entry) => !filed.has(entry.bundleId));

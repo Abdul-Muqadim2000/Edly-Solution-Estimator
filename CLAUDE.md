@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 969 tests across twenty-three files.
+`bun run test` runs 1,015 tests across twenty-four files.
 
 | File | Covers |
 |---|---|
@@ -154,7 +154,7 @@ reference.
 | `tests/router.test.ts` | URL to state and back, both directions, a link held through sign-in, the links between screens and each role's home |
 | `tests/pressable.test.ts` | a clickable card or row pressed from the keyboard: Enter and Space press it, keys meant for a field inside it are left alone |
 | `tests/schema.test.ts` | state to spreadsheet rows, chunking, round trip, the sync key |
-| `tests/api.test.ts` | `/api/state` end to end, and the empty-payload guard |
+| `tests/api.test.ts` | `/api/state` end to end, the empty-payload guard, and no demo record stored |
 | `tests/handler.test.ts` | the Vercel and web request adapters |
 | `tests/storage.test.ts` | browser storage, the store layer, Vercel Blob |
 | `tests/providers.test.ts` | Google Sheets, OneDrive, Dropbox, against a stubbed `fetch` |
@@ -171,18 +171,19 @@ reference.
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
 | `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
+| `tests/demo.test.ts` | the demo estimation against the master sheet we ship: priced, planned inside the team cap, staffed and laid out as the client's Excel sheet; which records are the demo's, and keeping it out of storage |
 | `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load; the favicon, manifest and logo files the page names are all shipped |
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-09-29):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-09-30):
 
 | | |
 |---|---|
-| Statements | 97.6% |
-| Lines | 98.6% |
-| Functions | 98.9% |
-| Branches | 88.0% |
+| Statements | 97.8% |
+| Lines | 98.7% |
+| Functions | 99.0% |
+| Branches | 88.3% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -585,6 +586,23 @@ The spreadsheets hold real deal names, client names and pricing.
 - **An un-estimated request round-trips with no hours at all, not `0`.** Zero reads as "estimated
   at nothing" and joins the totals. The same rule holds throughout: `null` means nobody has priced
   it.
+- **The demo estimation lives in memory and is never stored** (`src/domain/demo.ts`). The user
+  chose on 2026-09-30 to have it built in: a stored demo is shared, drifts as people try things on
+  it, and puts invented hours into the Requests and EstimatedSolutions sheets where a real deal
+  could quote them. It replaced the "General estimation" every empty browser used to seed, which
+  stores collected several copies of. The reducer adds it on the first `hydrate` and keeps it
+  through every later read (`withDemo`); `toPersisted` and the server's `coerceState` take it out
+  (`withoutDemo`); a request, the desk's estimate from one, or a sales and legal item made inside it
+  takes a DEMO id, so it goes with it. Keep three things. `stableSlices` reuses the array last
+  written when a slice's records are unchanged, because taking the demo out makes a new array and
+  `changedSlices` compares by reference: without it every slice is written on every change, the
+  two-tab echo. Its estimates join the catalog only while it is open (`catalogAdditions`), so a real
+  deal cannot quote them. And its id never goes into the synced open-estimation setting
+  (`storedOpenEstimation`), so opening it writes nothing to the store. It cannot be deleted, comes
+  first on the hub, and counts in none of the hub's or the desk's figures. Its solutions are picked
+  by id from the master sheet, and every bar of its plan is pinned to one lane per person; if the
+  sheet's hours change, `tests/demo.test.ts` says whether the plan still fits the team cap and the
+  total is still a whole number of hours.
 
 ---
 
@@ -607,6 +625,8 @@ The spreadsheets hold real deal names, client names and pricing.
 - **Concurrency is last-write-wins** across the whole workbook.
 - **Only Open edX has a client-proven catalog.** The other 19 platforms ship benchmark hours and
   are labelled *Sample* in the UI. Do not present them as delivery records.
+- **The demo estimation is on Open edX only**, and it is priced against the catalog in play: a
+  bundles workbook that replaces the master sheet drops the demo's lines whose ids it lacks.
 - **No i18n.** Copy is inline English.
 
 What it would take to lift the first three is in DEFERRED.md.

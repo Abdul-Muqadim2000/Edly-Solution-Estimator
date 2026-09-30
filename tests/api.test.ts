@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { handle } from '../api/state';
 import { storeKind } from '../server/store';
 import { coerceState, countRows, EMPTY_STATE } from '../server/schema';
+import { demoRecords } from '../src/domain/demo';
 import type { Estimation, PersistedState, SalesLegalItem, Tender } from '../src/types';
 
 /**
@@ -364,6 +365,36 @@ describe('the empty-payload guard', () => {
     expect(body.state.salesLegal[0]?.text).toBe('Notify the university of a data breach within one business day.');
     expect(((await (await get('?probe=1')).json()) as { hasData: boolean }).hasData).toBe(true);
     expect((await put(EMPTY_STATE)).status).toBe(409);
+  });
+});
+
+describe('the demo estimation', () => {
+  const demo = (): Omit<PersistedState, 'bundles' | 'tenders' | 'settings'> => demoRecords('2026-09-30');
+
+  it('stores none of it, whatever a client sends', async () => {
+    /* the browser never sends the demo; this is what makes sure none of it reaches the sheet anyway */
+    const theDemo = demo();
+    const body = state({
+      estimations: [estimation('EST-1'), ...theDemo.estimations],
+      requests: theDemo.requests,
+      solutions: theDemo.solutions,
+      salesLegal: [item('SL-01'), ...theDemo.salesLegal]
+    });
+    expect((await put(body)).status).toBe(200);
+
+    const stored = ((await (await get()).json()) as { state: PersistedState }).state;
+    expect(stored.estimations.map((one) => one.id)).toEqual(['EST-1']);
+    expect(stored.requests).toEqual([]);
+    expect(stored.solutions).toEqual([]);
+    expect(stored.salesLegal.map((one) => one.id)).toEqual(['SL-01']);
+  });
+
+  it('counts a payload holding only the demo as empty, so it cannot blank a store that holds rows', async () => {
+    await put(state({ estimations: [estimation('EST-1')] }));
+    expect((await put(state(demo()))).status).toBe(409);
+
+    const after = (await (await get()).json()) as { state: PersistedState };
+    expect(after.state.estimations.map((one) => one.id)).toEqual(['EST-1']);
   });
 });
 

@@ -32,9 +32,11 @@ import {
   addTokens,
   approvedToGoOn,
   canSpend,
+  highestId,
   newTender,
   planTermReads,
   sectionRanges,
+  serialId,
   splitTermRead,
   sortRequirements,
   splitRange,
@@ -46,6 +48,7 @@ import {
   type NewTenderInput
 } from '@/domain/tender';
 import { addTerms, copiedItems, deletable, handItem, patchItem, salesLegalDrafts, salesLegalItems, type ExtractedTerm, type HandItemInput, type SalesLegalPatch } from '@/domain/salesLegal';
+import { DEMO_ID, demoPrefix, isDemoEstimation, isDemoId, isDemoRequest, isDemoSolution, resetDemo, withDemo, withoutDemo } from '@/domain/demo';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
 import { planEstimateImport, removeImported, type EstimateRow } from '@/domain/estimateImport';
 import { nextBundleId } from '@/domain/catalog';
@@ -329,9 +332,19 @@ export type Action =
   | { type: 'splitTerms'; id: string; key: string; claim?: Claim }
   | { type: 'addSalesLegal'; estId: string; input: HandItemInput }
   | { type: 'patchSalesLegal'; ids: string[]; patch: SalesLegalPatch }
-  | { type: 'deleteSalesLegal'; id: string };
+  | { type: 'deleteSalesLegal'; id: string }
+  /* ---- the demo estimation, which lives in memory only ---- */
+  /** Put the demo back as prepared: whatever was tried on it, and anything made inside it, goes. */
+  | { type: 'resetDemo' };
 
 const platOf = (state: AppState): string => state.platform || 'openedx';
+
+/**
+ * The id the next request takes. Made while the demo is open it is a demo id, so trying the demo
+ * never spends a real number or writes a real row. The request modal quotes the same id in its mail.
+ */
+export const nextRequestId = (state: AppState): string =>
+  nextId(state.openEstimation === DEMO_ID ? demoPrefix('RQ') : 'RQ', state.requests, 'id');
 
 /**
  * The open estimation, with the live draft folded in.
@@ -438,19 +451,23 @@ const MATCH_CONTENT: (keyof RequirementMatch)[] = ['kind', 'solutionIds', 'remai
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    /* Whatever arrives, from browser storage, the store or another tab, holds no demo, because the
+       demo is never written anywhere; so it is put back into each collection that arrived. */
     case 'hydrate':
-      return { ...state, ...action.payload };
+      return withDemo(state, { ...state, ...action.payload }, today());
 
     /* A sibling tab rewrote the list. Anything open here keeps its local copy — the draft in
        this tab is unsaved work, and the other tab could not have known about it. */
     case 'mergeEstimations': {
-      if (!state.openEstimation || state.auth?.role === 'estimator') return { ...state, estimations: action.estimations };
+      /* the other tab's list never holds the demo, so it is kept from this one; `hydrate` is what adds it */
+      const keepDemo = (next: AppState): AppState => (state.estimations.some(isDemoEstimation) ? withDemo(state, next, today()) : next);
+      if (!state.openEstimation || state.auth?.role === 'estimator') return keepDemo({ ...state, estimations: action.estimations });
       const mine = state.estimations.find((estimation) => estimation.id === state.openEstimation);
-      if (!mine) return { ...state, estimations: action.estimations };
+      if (!mine) return keepDemo({ ...state, estimations: action.estimations });
       const merged = action.estimations.some((estimation) => estimation.id === state.openEstimation)
         ? action.estimations.map((estimation) => (estimation.id === state.openEstimation ? mine : estimation))
         : [...action.estimations, mine];
-      return { ...state, estimations: merged };
+      return keepDemo({ ...state, estimations: merged });
     }
 
     case 'ready':
@@ -529,6 +546,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, estimations: commitDraft(state), openEstimation: null, draft: { ...EMPTY_SNAPSHOT } };
 
     case 'deleteEstimation': {
+      /* the demo is always there: it is the example people learn the tool from */
+      if (isDemoId(action.id)) return state;
       const estimations = state.estimations.filter((estimation) => estimation.id !== action.id);
       const requests = state.requests.filter((request) => request.estId !== action.id);
       /* the deal's own list goes with it; a tender re-applied later copies its items again */
@@ -693,7 +712,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const open = state.estimations.find((estimation) => estimation.id === state.openEstimation);
       const request: EstimateRequest = {
         ...action.input,
-        id: nextId('RQ', state.requests, 'id'),
+        id: nextRequestId(state),
         plat: platOf(state),
         estId: state.openEstimation ?? '',
         estName: open?.name ?? '',
@@ -706,7 +725,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'addManualItem': {
       const open = state.estimations.find((estimation) => estimation.id === state.openEstimation);
       const request: EstimateRequest = {
-        id: nextId('RQ', state.requests, 'id'),
+        id: nextRequestId(state),
         plat: platOf(state),
         estId: state.openEstimation ?? '',
         estName: open?.name ?? '',
@@ -733,7 +752,8 @@ export function reducer(state: AppState, action: Action): AppState {
       const request = state.requests.find((candidate) => candidate.id === action.id);
       if (!request) return state;
       const { submission } = action;
-      const catalogId = request.csId || nextId('CS', state.solutions, 'id');
+      /* an estimate priced from a demo request stays in the demo, like the request */
+      const catalogId = request.csId || nextId(isDemoRequest(request) ? demoPrefix('CS') : 'CS', state.solutions, 'id');
       const stamp = today();
 
       const updated: EstimateRequest = {
@@ -1314,8 +1334,11 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'addSalesLegal': {
       const estimation = state.estimations.find((one) => one.id === action.estId);
-      const item = estimation ? handItem(state.salesLegal, action.input, estimation, today()) : null;
-      return item ? { ...state, salesLegal: [...state.salesLegal, item] } : state;
+      const made = estimation ? handItem(state.salesLegal, action.input, estimation, today()) : null;
+      if (!made) return state;
+      /* one added to the demo is numbered as the demo's, so it is never written and never takes a real number */
+      const item = estimation && isDemoEstimation(estimation) ? { ...made, id: serialId(demoPrefix('SL'), highestId(demoPrefix('SL'), state.salesLegal.map((one) => one.id)) + 1) } : made;
+      return { ...state, salesLegal: [...state.salesLegal, item] };
     }
 
     case 'patchSalesLegal': {
@@ -1337,6 +1360,13 @@ export function reducer(state: AppState, action: Action): AppState {
       const target = state.salesLegal.find((item) => item.id === action.id);
       if (!target || !deletable(target, new Set(state.tenders.map((tender) => tender.id)))) return state;
       return { ...state, salesLegal: state.salesLegal.filter((item) => item.id !== action.id) };
+    }
+
+    case 'resetDemo': {
+      const reset = resetDemo(state, today());
+      if (state.openEstimation !== DEMO_ID) return reset;
+      const fresh = reset.estimations.find(isDemoEstimation);
+      return fresh ? { ...reset, draft: { ...EMPTY_SNAPSHOT, ...fresh.snap } } : reset;
     }
 
     default:
@@ -1518,6 +1548,9 @@ export function catalogReady(state: AppState): boolean {
 export function platformTotals(state: AppState, catalog: Catalog): Record<string, CachedTotals> {
   const totals: Record<string, CachedTotals> = {};
   for (const estimation of platformEstimations(state)) {
+    /* its cached totals feed nothing (the hub leaves it out of hours in play, and it is never
+       saved), and caching them would give the estimations slice a change with nothing to write */
+    if (isDemoEstimation(estimation)) continue;
     /* the committed snapshot as it is, which is what the deal's hub card prices */
     const snap = estimation.id === state.openEstimation ? state.draft : estimation.snap;
     totals[estimation.id] = cachedTotals(calcEstimate(catalog, snap, requestsFor(state, estimation.id)));
@@ -1544,9 +1577,9 @@ export function showsSiteChrome(state: AppState): boolean {
   return state.auth.role !== 'estimator' && !state.openTender && Boolean(state.openEstimation);
 }
 
-/** The slice that belongs in the spreadsheet. */
+/** The slice that belongs in the spreadsheet, and in browser storage: everything but the demo. */
 export function toPersisted(state: AppState): PersistedState {
-  return {
+  return withoutDemo({
     estimations: commitDraft(state),
     requests: state.requests,
     solutions: state.solutions,
@@ -1554,5 +1587,61 @@ export function toPersisted(state: AppState): PersistedState {
     tenders: state.tenders,
     salesLegal: state.salesLegal,
     settings: {}
-  };
+  });
+}
+
+/**
+ * The open estimation as browser storage keeps it. That key is synced to the store's Settings
+ * sheet, so the demo's id is never written: opening the demo must not change the store.
+ */
+export const storedOpenEstimation = (state: Pick<AppState, 'openEstimation'>): string =>
+  isDemoId(state.openEstimation) ? '' : state.openEstimation ?? '';
+
+/**
+ * The desk's estimates the catalog in play shows. The demo's appear only while the demo is open:
+ * their hours were written for the demo, and a real deal must never be able to quote them.
+ */
+export function catalogAdditions(solutions: AddedSolution[], openEstimation: string | null): AddedSolution[] {
+  if (openEstimation === DEMO_ID || !solutions.some(isDemoSolution)) return solutions;
+  return solutions.filter((solution) => !isDemoSolution(solution));
+}
+
+/** The hub's cards: the demo first, where a newcomer finds it, then the rest, the most recently updated first. */
+export function hubEstimations(state: AppState): Estimation[] {
+  return platformEstimations(state)
+    .slice()
+    .sort((a, b) => Number(isDemoEstimation(b)) - Number(isDemoEstimation(a)) || String(b.up).localeCompare(String(a.up)));
+}
+
+export interface HubStats {
+  /** Deals not closed. */
+  open: number;
+  /** Their hours, as each caches them. */
+  hours: number;
+  /** Requests still waiting on the desk. */
+  awaiting: number;
+}
+
+/** The hub's three figures, which are about real deals, so the demo counts in none of them. */
+export function hubStats(state: AppState): HubStats {
+  const real = platformEstimations(state).filter((estimation) => !isDemoEstimation(estimation));
+  const open = real.filter((estimation) => estimation.tag !== 'Closed');
+  const awaiting = real.reduce(
+    (total, estimation) => total + requestsFor(state, estimation.id).filter((request) => !request.manual && !(Number(request.est) > 0)).length,
+    0
+  );
+  return { open: open.length, hours: open.reduce((total, estimation) => total + Number(estimation.total ?? 0), 0), awaiting };
+}
+
+/**
+ * The desk's request queue for one deal, or for all of them when `deal` is blank. `rows` lists the
+ * demo's requests after the real ones; `counted` is what the figures above the queue add up, which
+ * leaves the demo out unless the desk is looking at the demo itself, and `leftOut` says how many
+ * listed requests the figures leave out, so the screen can say so.
+ */
+export function deskQueue(state: AppState, deal: string): { rows: EstimateRequest[]; counted: EstimateRequest[]; leftOut: number } {
+  const all = platformRequests(state).filter((request) => !request.manual && (!deal || request.estId === deal));
+  const rows = [...all.filter((request) => !isDemoRequest(request)), ...all.filter(isDemoRequest)];
+  const counted = deal === DEMO_ID ? rows : rows.filter((request) => !isDemoRequest(request));
+  return { rows, counted, leftOut: rows.length - counted.length };
 }

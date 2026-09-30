@@ -27,9 +27,17 @@ import {
   catalogPin,
   catalogWorkbooks,
   sourceAfterImport,
+  catalogAdditions,
+  deskQueue,
+  hubEstimations,
+  hubStats,
+  nextRequestId,
+  storedOpenEstimation,
   type Action,
   type AppState
 } from '../src/state/reducer';
+import { DEMO_ID, DEMO_SLUG, demoRecords, isDemoId, isDemoRequest, isDemoSolution } from '../src/domain/demo';
+import { today } from '../src/lib/format';
 import { TO_UNASSIGNED, toBundle, toNew, type EstimateRow } from '../src/domain/estimateImport';
 import { EMPTY_REVIEW, setGroup, setRow } from '../src/domain/importReview';
 import type { Catalog, EstimateRequest, Estimation, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
@@ -1955,3 +1963,197 @@ describe('the bundles workbooks the import history lists', () => {
     expect(catalogWorkbooks(state).files).toEqual([]);
   });
 });
+
+/* ------------------------------------------------------------ the demo estimation */
+
+describe('the demo estimation', () => {
+  /** A workspace as the app has it after its first read: the reducer adds the demo there. */
+  const booted = (payload: Partial<AppState> = {}): AppState =>
+    reducer(workspace(), { type: 'hydrate', payload: { estimations: [], requests: [], solutions: [], salesLegal: [], ...payload } });
+
+  const prepared = () => demoRecords(today());
+
+  const ask = { title: 'Zoom attendance', details: 'Attendance back to the gradebook', area: '', urgency: '', integrations: 'Zoom', name: '', email: 'sales@example.com', org: '' };
+  const legalItem = { text: 'Insurance certificate for the tender', category: 'legal' as const, owner: 'Legal', due: '', note: '', priority: 'must' as const };
+
+  it('is added on the first read of a workspace, beside the real deals', () => {
+    const next = booted({ estimations: [estimation('EST-1')] });
+
+    expect(next.estimations.map((one) => one.id)).toEqual(['EST-1', DEMO_ID]);
+    expect(requestsFor(next, DEMO_ID)).toEqual(prepared().requests);
+    expect(salesLegalFor(next, DEMO_ID)).toEqual(prepared().salesLegal);
+    expect(next.solutions).toEqual(prepared().solutions);
+  });
+
+  it('survives every later read as it stands in memory, so a background read does not undo what someone is trying', () => {
+    const tried = run(booted(), { type: 'openEstimation', id: DEMO_ID }, { type: 'toggleSolution', id: 'EDU-071' }, { type: 'closeEstimation' });
+    expect(tried.estimations.find((one) => one.id === DEMO_ID)?.snap.sel['EDU-071']).toBeUndefined();
+
+    /* the store's copy, which never holds the demo */
+    const read = reducer(tried, { type: 'hydrate', payload: { estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })] } });
+    expect(read.estimations.map((one) => one.id)).toEqual(['EST-1', DEMO_ID]);
+    expect(read.estimations.find((one) => one.id === DEMO_ID)?.snap.sel['EDU-071']).toBeUndefined();
+    expect(requestsFor(read, DEMO_ID)).toEqual(prepared().requests);
+
+    /* a sibling tab's requests alone, as a storage event brings them */
+    const sibling = reducer(read, { type: 'hydrate', payload: { requests: [] } });
+    expect(requestsFor(sibling, DEMO_ID)).toEqual(prepared().requests);
+  });
+
+  it('is kept when a sibling tab rewrites the list, open here or not', () => {
+    const state = booted({ estimations: [estimation('EST-1')] });
+    const incoming = [estimation('EST-1', { name: 'Renamed elsewhere' }), estimation('EST-2')];
+
+    expect(reducer(state, { type: 'mergeEstimations', estimations: incoming }).estimations.map((one) => one.id)).toEqual(['EST-1', 'EST-2', DEMO_ID]);
+    const open = reducer(state, { type: 'openEstimation', id: DEMO_ID });
+    expect(reducer(open, { type: 'mergeEstimations', estimations: incoming }).estimations.map((one) => one.id)).toEqual(['EST-1', 'EST-2', DEMO_ID]);
+  });
+
+  it('cannot be deleted, because it is the example people learn the tool from', () => {
+    const state = booted();
+    expect(reducer(state, { type: 'deleteEstimation', id: DEMO_ID })).toBe(state);
+  });
+
+  it('opens from a link to its slug, like any deal', () => {
+    const next = reducer(booted(), { type: 'applyRoute', route: { screen: 'builder', platform: 'openedx', estimation: DEMO_SLUG } });
+    expect(next.openEstimation).toBe(DEMO_ID);
+    expect(next.draft.sel).toEqual(prepared().estimations[0]?.snap.sel);
+  });
+
+  it('numbers a request asked for inside it as the demo’s, and spends no real number', () => {
+    const inside = run(
+      booted({ estimations: [estimation('EST-1')], requests: [request('RQ-04', { estId: 'EST-1' })] }),
+      { type: 'openEstimation', id: DEMO_ID },
+      { type: 'addRequest', input: ask },
+      { type: 'addManualItem', title: 'Onboarding workshop', hours: 6 }
+    );
+    expect(requestsFor(inside, DEMO_ID).slice(-2).map((one) => one.id)).toEqual(['RQ-DEMO-07', 'RQ-DEMO-08']);
+    /* the request modal quotes this id in its mail, so it must be the one the reducer gives */
+    expect(nextRequestId(inside)).toBe('RQ-DEMO-09');
+
+    const real = reducer(inside, { type: 'openEstimation', id: 'EST-1' });
+    expect(nextRequestId(real)).toBe('RQ-05');
+    expect(reducer(real, { type: 'addRequest', input: ask }).requests.at(-1)?.id).toBe('RQ-05');
+  });
+
+  it('keeps an estimate the desk prices from a demo request inside the demo', () => {
+    const asked = run(booted(), { type: 'openEstimation', id: DEMO_ID }, { type: 'addRequest', input: ask });
+    const priced = reducer(asked, { type: 'submitEstimate', id: 'RQ-DEMO-07', submission });
+    expect(priced.solutions.at(-1)).toMatchObject({ id: 'CS-DEMO-07', from: 'RQ-DEMO-07' });
+
+    /* one the demo came with already has its estimate, which is updated rather than doubled */
+    const repriced = reducer(priced, { type: 'submitEstimate', id: 'RQ-DEMO-01', submission: { ...submission, hours: 100 } });
+    expect(repriced.solutions.filter((one) => one.id === 'CS-DEMO-01').map((one) => one.first)).toEqual([100]);
+    expect(toPersisted(repriced).solutions).toEqual([]);
+  });
+
+  it('numbers a sales and legal item added to it as the demo’s', () => {
+    const next = reducer(booted(), { type: 'addSalesLegal', estId: DEMO_ID, input: legalItem });
+    expect(salesLegalFor(next, DEMO_ID).at(-1)).toMatchObject({ id: 'SL-DEMO-07', text: legalItem.text });
+    /* a real deal's first item still takes the first real number */
+    const real = reducer(booted({ estimations: [estimation('EST-1')] }), { type: 'addSalesLegal', estId: 'EST-1', input: legalItem });
+    expect(salesLegalFor(real, 'EST-1').map((one) => one.id)).toEqual(['SL-01']);
+  });
+
+  it('writes none of itself to the store, including what was made inside it and the open draft', () => {
+    const state = run(
+      booted({ estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })] }),
+      { type: 'openEstimation', id: DEMO_ID },
+      { type: 'toggleSolution', id: 'EDU-071' },
+      { type: 'addManualItem', title: 'Onboarding workshop', hours: 6 },
+      { type: 'addSalesLegal', estId: DEMO_ID, input: legalItem }
+    );
+    const stored = toPersisted(state);
+
+    expect(stored.estimations.map((one) => one.id)).toEqual(['EST-1']);
+    expect(stored.requests.map((one) => one.id)).toEqual(['RQ-01']);
+    expect(stored.solutions).toEqual([]);
+    expect(stored.salesLegal).toEqual([]);
+  });
+
+  it('never names itself as the open estimation in the synced settings', () => {
+    /* that key goes to the store's Settings sheet, and opening the demo must not write there */
+    expect(storedOpenEstimation({ openEstimation: DEMO_ID })).toBe('');
+    expect(storedOpenEstimation({ openEstimation: 'EST-1' })).toBe('EST-1');
+    expect(storedOpenEstimation({ openEstimation: null })).toBe('');
+  });
+
+  it('resets to the prepared version, and the open draft with it', () => {
+    const tried = run(booted(), { type: 'openEstimation', id: DEMO_ID }, { type: 'clearSelection' }, { type: 'addManualItem', title: 'Onboarding workshop', hours: 6 });
+    const reset = reducer(tried, { type: 'resetDemo' });
+
+    expect(reset.openEstimation).toBe(DEMO_ID);
+    expect(reset.draft).toEqual({ ...EMPTY_SNAPSHOT, ...prepared().estimations[0]?.snap });
+    expect(requestsFor(reset, DEMO_ID)).toEqual(prepared().requests);
+  });
+
+  it('resets without touching a real deal that is open instead', () => {
+    const state = run(booted({ estimations: [estimation('EST-1')] }), { type: 'openEstimation', id: 'EST-1' }, { type: 'toggleSolution', id: 'OX-1' });
+    const reset = reducer(state, { type: 'resetDemo' });
+    expect(reset.draft).toBe(state.draft);
+    expect(reset.estimations.find((one) => one.id === 'EST-1')).toBe(state.estimations.find((one) => one.id === 'EST-1'));
+  });
+
+  it('shows its estimates in the catalog only while it is open, so a real deal cannot quote them', () => {
+    const { solutions } = booted();
+    expect(catalogAdditions(solutions, null).some(isDemoSolution)).toBe(false);
+    expect(catalogAdditions(solutions, 'EST-1').some(isDemoSolution)).toBe(false);
+    expect(catalogAdditions(solutions, DEMO_ID)).toBe(solutions);
+    /* with none of its estimates in the list, the very same list, so the catalog is not rebuilt */
+    const plain = solutions.filter((one) => !isDemoSolution(one));
+    expect(catalogAdditions(plain, null)).toBe(plain);
+  });
+
+  it('comes first on the hub, and counts in none of its figures', () => {
+    const state = booted({
+      estimations: [estimation('EST-1', { up: '2026-09-29', total: 40 }), estimation('EST-2', { up: '2026-09-30', total: 10, tag: 'Closed' })],
+      requests: [request('RQ-01', { estId: 'EST-1' })]
+    });
+    expect(hubEstimations(state).map((one) => one.id)).toEqual([DEMO_ID, 'EST-2', 'EST-1']);
+    expect(hubStats(state)).toEqual({ open: 1, hours: 40, awaiting: 1 });
+    /* on another platform there is no demo at all */
+    expect(hubEstimations({ ...state, platform: 'moodle' })).toEqual([]);
+  });
+
+  it('lists its requests after the real ones at the desk, and counts them only when the desk looks at the demo', () => {
+    const state = booted({ estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })] });
+    const all = deskQueue(state, '');
+
+    expect(all.rows[0]?.id).toBe('RQ-01');
+    expect(all.rows.slice(1).every(isDemoRequest)).toBe(true);
+    expect(all.counted.map((one) => one.id)).toEqual(['RQ-01']);
+    /* the screen says how many listed requests the figures leave out, or "0 estimated" reads wrong */
+    expect(all.leftOut).toBe(prepared().requests.length);
+
+    const demo = deskQueue(state, DEMO_ID);
+    expect(demo.rows.map((one) => one.id)).toEqual(prepared().requests.map((one) => one.id));
+    expect(demo.counted).toEqual(demo.rows);
+    expect(demo.leftOut).toBe(0);
+    expect(deskQueue(state, 'EST-1').leftOut).toBe(0);
+  });
+
+  it('caches no totals, so the hub gives the estimations list nothing to rewrite', () => {
+    const book: Catalog = {
+      meta: { title: 'Mine', subtitle: '', compiled: '', totals: { features: 0, buildHrs: null, firstHrs: null, repeatHrs: null, saved: null, noEstimate: 0, inDev: 0 }, notes: [] },
+      bundles: []
+    };
+    const totals = platformTotals(booted({ estimations: [estimation('EST-1')] }), book);
+    expect(Object.keys(totals)).toEqual(['EST-1']);
+  });
+
+  it('is never matched by an estimates workbook, which adds a row of the same name as a real estimate', () => {
+    const state = booted();
+    const theirs = prepared().solutions[0]!;
+    const next = reducer(state, { type: 'importEstimates', rows: [row(1, { name: theirs.name, client: '' })], file: 'nordic.xlsx', catalogBundles: onScreen });
+
+    expect(next.solutions.filter((one) => one.imported === 'nordic.xlsx').map((one) => one.id)).toEqual(['CS-01']);
+    expect(next.solutions.find((one) => one.id === theirs.id)).toEqual(theirs);
+    expect(toPersisted(next).solutions.map((one) => one.id)).toEqual(['CS-01']);
+  });
+
+  it('gives every record it holds a demo id, so nothing of it can pass for real', () => {
+    const { estimations, requests, solutions, salesLegal } = prepared();
+    expect([...estimations, ...requests, ...solutions, ...salesLegal].every((one) => isDemoId(one.id))).toBe(true);
+  });
+});
+

@@ -1,7 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { EstimationTag } from '@/types';
 import { useApp, usePlatformEstimations } from '@/state/AppProvider';
-import { requestsFor } from '@/state/reducer';
+import { hubStats, requestsFor } from '@/state/reducer';
+import { isDemoEstimation } from '@/domain/demo';
 import { openByEstimation } from '@/domain/salesLegal';
 import { calcEstimate } from '@/domain/estimate';
 import { color, dueInfo, font, radius, shadow, tagStyle } from '@/theme';
@@ -11,7 +12,7 @@ import { LANDING, platformTrail } from '@/lib/router';
 import { pressable } from '@/lib/pressable';
 import { BackTo, Breadcrumbs } from '@/components/Nav';
 import { AppHeader } from '@/components/AppHeader';
-import { Banner, Button, Empty, Field, Mono, Row, SearchInput, Select, Spacer, Stat, useRowHover } from '@/components/ui';
+import { Banner, Button, DemoTag, Empty, Field, Mono, Row, SearchInput, Select, Spacer, Stat, useRowHover } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
 import { TenderIntake } from '@/components/tender/TenderIntake';
 import { TenderStrip } from '@/components/tender/TenderList';
@@ -106,12 +107,8 @@ export function EstimationsHub(): JSX.Element {
 
   /* one pass for every card, rather than a filter of the whole list per card */
   const openLegal = useMemo(() => openByEstimation(state.salesLegal), [state.salesLegal]);
-  const live = estimations.filter((estimation) => estimation.tag !== 'Closed');
-  const pendingCount = estimations.reduce(
-    (total, estimation) => total + requestsFor(state, estimation.id).filter((request) => !request.manual && !(Number(request.est) > 0)).length,
-    0
-  );
-  const totalHours = live.reduce((total, estimation) => total + Number(estimation.total ?? 0), 0);
+  /* about real deals only: the demo is not work in play */
+  const stats = useMemo(() => hubStats(state), [state]);
   const sampleCatalog = !isLiveCatalog(state.platform) && !state.loadedCatalogs[state.platform];
 
   const create = (): void => {
@@ -158,9 +155,9 @@ export function EstimationsHub(): JSX.Element {
             </p>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, flex: '1 1 330px' }}>
-            <Stat value={String(live.length)} label={live.length === 1 ? 'open deal' : 'open deals'} />
-            <Stat value={hours(totalHours)} label="hours in play" tone={color.brandDeep} />
-            <Stat value={String(pendingCount)} label="awaiting estimates" tone={pendingCount > 0 ? color.amber : color.quiet} />
+            <Stat value={String(stats.open)} label={stats.open === 1 ? 'open deal' : 'open deals'} />
+            <Stat value={hours(stats.hours)} label="hours in play" tone={color.brandDeep} />
+            <Stat value={String(stats.awaiting)} label="awaiting estimates" tone={stats.awaiting > 0 ? color.amber : color.quiet} />
           </div>
         </Row>
 
@@ -243,6 +240,7 @@ export function EstimationsHub(): JSX.Element {
             const numbers = calcEstimate(catalog, estimation.snap, requests);
             const asking = confirmDelete === estimation.id;
             const legalOpen = openLegal.get(estimation.id) ?? 0;
+            const demo = isDemoEstimation(estimation);
 
             return (
               <EstimationCard key={estimation.id} pending={pending} accent={style.co}>
@@ -255,6 +253,7 @@ export function EstimationsHub(): JSX.Element {
                       <div style={{ fontFamily: font.display, fontSize: 17, fontWeight: 600, lineHeight: 1.28 }}>{estimation.name}</div>
                       <div style={{ fontSize: 12.5, color: color.faint, marginTop: 3 }}>{estimation.client || 'No client set'}</div>
                     </div>
+                    {demo ? <DemoTag /> : null}
                     <span
                       style={{
                         fontSize: 10,
@@ -307,51 +306,63 @@ export function EstimationsHub(): JSX.Element {
                   ) : null}
                 </div>
 
-                <Row
-                  gap={7}
-                  style={{ padding: '11px 20px', background: color.surfaceSoft, borderTop: `1px solid ${color.hairlineSoft}` }}
-                >
-                  <Select
-                    value={shown}
-                    options={TAGS.map((value) => ({ value, label: value }))}
-                    onChange={(value) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { tag: value } })}
-                    hint="Status tag"
-                  />
-                  <input
-                    type="date"
-                    value={estimation.due}
-                    title="Deadline"
-                    onChange={(event) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { due: event.target.value } })}
-                    style={{
-                      border: `1px solid ${color.hairline}`,
-                      borderRadius: radius.sm,
-                      padding: '4px 7px',
-                      fontSize: 11,
-                      color: color.inkSoft,
-                      background: color.surface,
-                      outline: 'none'
-                    }}
-                  />
-                  <Spacer />
-                  <span style={{ fontSize: 10.5, color: color.quiet, whiteSpace: 'nowrap' }}>Updated {estimation.up || estimation.at || '—'}</span>
-                  <Button
-                    size="sm"
-                    tone={asking ? 'danger' : 'ghost'}
-                    title={asking ? 'Click again to permanently delete this estimation and its custom requests' : 'Delete estimation'}
-                    onClick={() => {
-                      if (asking) {
-                        dispatch({ type: 'deleteEstimation', id: estimation.id });
-                        setConfirmDelete('');
-                      } else {
-                        setConfirmDelete(estimation.id);
-                        setTimeout(() => setConfirmDelete(''), 4000);
-                      }
-                    }}
-                    style={{ padding: asking ? '3px 9px' : '2px 6px', fontSize: asking ? 11 : 15 }}
+                {demo ? (
+                  /* nothing to set or delete on the demo: it is always there, and never saved */
+                  <Row gap={7} style={{ padding: '11px 20px', background: color.surfaceSoft, borderTop: `1px solid ${color.hairlineSoft}` }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, lineHeight: 1.45, color: color.muted }}>
+                      A finished example to learn from. Try anything in it: nothing is saved.
+                    </span>
+                    <Button size="sm" tone="ghost" title="Put the demo back as it was prepared" onClick={() => dispatch({ type: 'resetDemo' })}>
+                      Reset
+                    </Button>
+                  </Row>
+                ) : (
+                  <Row
+                    gap={7}
+                    style={{ padding: '11px 20px', background: color.surfaceSoft, borderTop: `1px solid ${color.hairlineSoft}` }}
                   >
-                    {asking ? 'Delete?' : '×'}
-                  </Button>
-                </Row>
+                    <Select
+                      value={shown}
+                      options={TAGS.map((value) => ({ value, label: value }))}
+                      onChange={(value) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { tag: value } })}
+                      hint="Status tag"
+                    />
+                    <input
+                      type="date"
+                      value={estimation.due}
+                      title="Deadline"
+                      onChange={(event) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { due: event.target.value } })}
+                      style={{
+                        border: `1px solid ${color.hairline}`,
+                        borderRadius: radius.sm,
+                        padding: '4px 7px',
+                        fontSize: 11,
+                        color: color.inkSoft,
+                        background: color.surface,
+                        outline: 'none'
+                      }}
+                    />
+                    <Spacer />
+                    <span style={{ fontSize: 10.5, color: color.quiet, whiteSpace: 'nowrap' }}>Updated {estimation.up || estimation.at || '—'}</span>
+                    <Button
+                      size="sm"
+                      tone={asking ? 'danger' : 'ghost'}
+                      title={asking ? 'Click again to permanently delete this estimation and its custom requests' : 'Delete estimation'}
+                      onClick={() => {
+                        if (asking) {
+                          dispatch({ type: 'deleteEstimation', id: estimation.id });
+                          setConfirmDelete('');
+                        } else {
+                          setConfirmDelete(estimation.id);
+                          setTimeout(() => setConfirmDelete(''), 4000);
+                        }
+                      }}
+                      style={{ padding: asking ? '3px 9px' : '2px 6px', fontSize: asking ? 11 : 15 }}
+                    >
+                      {asking ? 'Delete?' : '×'}
+                    </Button>
+                  </Row>
+                )}
 
                 {pending > 0 ? (
                   <div style={{ background: color.amberWash, borderTop: `1px solid ${color.amberEdgeSoft}`, padding: '8px 20px', fontSize: 11, fontWeight: 700, color: color.amberInk }}>

@@ -104,6 +104,31 @@ export function Chip({
   );
 }
 
+/**
+ * The label on the built-in demo estimation, wherever it is listed. Solid ink, so it reads as a label
+ * and looks like none of the status tags beside it.
+ */
+export function DemoTag({ size = 'md' }: { size?: 'sm' | 'md' }): JSX.Element {
+  return (
+    <span
+      title="The built-in demo estimation: an example to learn from. Nothing in it is saved."
+      style={{
+        background: color.ink,
+        color: color.onSolid,
+        borderRadius: radius.pill,
+        padding: size === 'sm' ? '3px 9px' : '4px 10px',
+        fontSize: size === 'sm' ? 9.5 : 10,
+        fontWeight: 700,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap'
+      }}
+    >
+      Demo
+    </span>
+  );
+}
+
 export function Card({
   children,
   onClick,

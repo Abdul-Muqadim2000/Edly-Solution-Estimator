@@ -24,7 +24,7 @@ this directory.
 ## verify-domain.html — the logic and the schema
 
 Runs `tests/domain.test.ts` and `tests/schema.test.ts` against the real sources, with a small
-`describe/it/expect` shim. **102 assertions**, all green on 2026-09-29 (81 on 2026-09-27, 59 on 2026-09-26). Same code Vitest runs, so a
+`describe/it/expect` shim. **103 assertions**, all green on 2026-09-30 (102 on 2026-09-29, 81 on 2026-09-27, 59 on 2026-09-26). Same code Vitest runs, so a
 green run here and a green `bun run test` mean the same thing. The shim covers `toMatchObject` and
 `.not` since that date, and `toMatch` and `toHaveProperty` since 2026-09-27; before each, some
 assertions failed on the shim rather than on the code.
@@ -64,7 +64,8 @@ not "Open ›". That exposed a real bug, an estimator switched to sales on picki
 fixed on `feat/clickable-navigation`: 29 of 31 pass there, 26 of 31 on `main` (e3ea7b5). The two
 left are the runner's own: the hover probe looks for a card with a transform transition the hub
 cards do not have, and the focus probe reads no ring in a page the runner has not focused (a real
-Tab shows it).
+Tab shows it). On 2026-09-30, with the demo estimation built in, the same 29 of 31 pass and the
+same two fail.
 
 Eight of those steps guard the *design and the feel*, not the logic. Two drive real `mouseover`
 and `focus` events and assert the computed style changes — React synthesises `onMouseEnter` from a
@@ -190,6 +191,29 @@ Found on the way, and fixed: the local file store rewrote its file in place, and
 mid-write parsed as a workbook missing sheets or rows (271 of 644 reads during saves). It now
 writes beside the file and renames over it (`server/providers/builtin.ts`). Also fixed: the tab
 said nothing about requirements read as out of scope and not yet approved.
+
+## The demo estimation, driven
+
+Driven on 2026-09-30 in headless Chrome on a test server at :3002, run from a copy of the working
+tree and pointed at a copy of the local store, so nothing touched `data/edly-state.xlsx` or the
+server the user had open on :3000. Every check passed, with no console errors.
+
+- The hub: the demo is the first card, tagged Demo, at 2,013 h and $99,022, with a Reset and no
+  status, deadline or delete controls; the figures above the cards count the one real deal only.
+- The builder: its own URL (`/p/openedx/e/demo-global-certification-academy`), the tag and the
+  banner, 34 of 93 selected, six estimated requests, every line hour priced (1,650 h), six estimates
+  in the catalog, seven roles and none unassigned; the timeline at 9.5 weeks, peak 7 people, no
+  over-capacity warning; the sheet panel's contact and comments written and nothing blocked.
+- The downloaded workbook: Introduction, Task Breakdown, Team Composition and Delivery Plan; the
+  team sheet reads nine people, weeks 1 to 10, 2,013 h and $99,022; no sales and legal item in it.
+- Sales & legal: six items, five open and one handled. Presenting hides the banner.
+- Removing a line moved the total; Reset put 2,013 h back, and so did a reload after another edit.
+- The desk: the demo's six requests listed with the tag, the queue's figures leaving them out and
+  saying so, and counting them (6, 488 h) with the demo picked; its desk page at 2,013 h; a demo
+  request re-priced in memory; the desk's own estimates list without the demo's.
+- A real deal's catalog showed no demo estimate. The store copy never held a demo record, nor the
+  demo's id as the open estimation, at any point.
+- The builder fits at 1440, 1150 and 900 px.
 
 ## What these do not cover
 
