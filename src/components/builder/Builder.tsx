@@ -3,12 +3,14 @@ import { useApp } from '@/state/AppProvider';
 import { catalogSourceLabel, openEstimationRecord, salesLegalFor, showsSiteChrome } from '@/state/reducer';
 import { ALL_BUNDLES } from '@/lib/router';
 import { allSolutions, bundlesOfKind, kindCounts, solutionKind, type CatalogKind } from '@/domain/catalog';
+import { isDemoEstimation } from '@/domain/demo';
+import { ESTIMATION_STAGES, stageOf } from '@/domain/stages';
 import { color, dueInfo, font, radius, tagStyle } from '@/theme';
 import { hours } from '@/lib/format';
 import { findPlatform } from '@/data/practices';
 import { useLayout } from '@/lib/useViewport';
 import { EDLY_LINKS } from '@/data/nav';
-import { Button, Link, SearchInput } from '@/components/ui';
+import { Button, DemoTag, Link, SearchInput } from '@/components/ui';
 import { HeaderPill, UserChip } from '@/components/AppHeader';
 import { AppLink, HomeLogo } from '@/components/Nav';
 import { homeOf } from '@/lib/router';
@@ -27,6 +29,7 @@ import { RequestModal } from '@/components/builder/RequestModal';
 import { SalesLegalPanel } from '@/components/builder/SalesLegalPanel';
 import { SheetPanel } from '@/components/builder/SheetPanel';
 import { SummaryPanel } from '@/components/builder/SummaryPanel';
+import { StagePicker } from '@/components/stages';
 
 /**
  * The bundle builder: a three-column app shell. While a deal is presented, the edly.io header
@@ -137,6 +140,7 @@ export function Builder(): JSX.Element {
   const platformLabel = platformRef?.platform.name ?? '';
 
   const estChipLabel = estimation ? estimation.name + (estimation.client ? ` · ${estimation.client}` : '') : '';
+  const demo = estimation ? isDemoEstimation(estimation) : false;
   const openLegal = estimation ? salesLegalFor(state, estimation.id).filter((item) => item.status === 'open').length : 0;
   const due = dueInfo(estimation?.due);
 
@@ -213,6 +217,7 @@ export function Builder(): JSX.Element {
             >
               {estChipLabel}
             </span>
+            {demo ? <DemoTag /> : null}
             {estimation?.tag ? (
               <span style={{ fontSize: 11, fontWeight: 700, borderRadius: radius.pill, padding: '5px 11px', background: tagStyle(estimation.tag).bg, color: tagStyle(estimation.tag).co }}>
                 {estimation.tag}
@@ -220,6 +225,16 @@ export function Builder(): JSX.Element {
             ) : null}
             {due ? (
               <span style={{ fontSize: 11, fontWeight: 700, borderRadius: radius.pill, padding: '5px 11px', background: due.bg, color: due.co }}>{due.label}</span>
+            ) : null}
+            {/* internal, like Rates: "Pending rates" is not something to screen-share to a client */}
+            {estimation && !state.presenting ? (
+              <StagePicker
+                stages={ESTIMATION_STAGES}
+                value={stageOf(estimation)}
+                onChange={(stage) => dispatch({ type: 'patchEstimation', id: estimation.id, patch: { stage } })}
+                variant="header"
+                stepper
+              />
             ) : null}
           </div>
 
@@ -338,6 +353,8 @@ export function Builder(): JSX.Element {
           />
 
           <main style={{ overflowY: layout.paneOverflow, minWidth: 0, padding: layout.mainPad }}>
+            {/* internal, like Rates: the client being shown the demo does not need the tool explained */}
+            {demo && !state.presenting ? <DemoBanner onReset={() => dispatch({ type: 'resetDemo' })} /> : null}
             <KindFilter kind={kind} counts={counts} onPick={pickKind} />
 
             {searching ? (
@@ -510,6 +527,39 @@ export function Builder(): JSX.Element {
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+/** What the demo estimation is, above its catalog, with the way to put it back. */
+function DemoBanner({ onReset }: { onReset: () => void }): JSX.Element {
+  return (
+    <div
+      style={{
+        maxWidth: 1000,
+        marginBottom: 16,
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '10px 16px',
+        background: color.surface,
+        border: `1px dashed ${color.rule}`,
+        borderRadius: radius.lg,
+        padding: '14px 18px'
+      }}
+    >
+      <DemoTag />
+      <div style={{ flex: '1 1 340px', minWidth: 0 }}>
+        <div style={{ fontFamily: font.display, fontSize: 14, fontWeight: 600, color: color.ink }}>This is the demo estimation</div>
+        <div style={{ fontSize: 12.5, lineHeight: 1.55, color: color.muted, marginTop: 2 }}>
+          A finished deal to learn from. Every line has a role on the rate card, the estimation desk has priced the custom requests,
+          and the timeline, the Excel sheet and Sales &amp; legal are filled in. Change anything you like: nothing here is saved, and
+          Reset or a reload puts it back.
+        </div>
+      </div>
+      <Button size="sm" onClick={onReset} title="Put the demo back as it was prepared">
+        Reset demo
+      </Button>
     </div>
   );
 }

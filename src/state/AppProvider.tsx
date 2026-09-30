@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import type { Catalog, EstimateResult, Estimation, PersistedState, Schedule } from '@/types';
-import { EMPTY_SNAPSHOT, INITIAL_STATE, reducer, catalogPin, catalogReady, commitDraft, effectiveDisplay, openRequests, platformEstimations, platformTotals, SERVED_CATALOG_FILE, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
-import { changedSlices, readStorage, removeStorage, STORAGE_KEYS, writeStorage } from '@/state/keys';
+import { INITIAL_STATE, reducer, catalogAdditions, catalogPin, catalogReady, effectiveDisplay, hubEstimations, openRequests, platformTotals, SERVED_CATALOG_FILE, storedOpenEstimation, toPersisted, type Action, type AppState, type DisplayPrefs } from '@/state/reducer';
+import { changedSlices, readStorage, removeStorage, stableSlices, STORAGE_KEYS, writeStorage } from '@/state/keys';
 import { useSync, type SyncApi } from '@/state/useSync';
 import { useRouting, type RouterApi } from '@/state/useRouting';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
@@ -11,7 +11,7 @@ import { schedule as buildSchedule } from '@/domain/planner';
 import { readSheetPrefs } from '@/domain/taskBreakdown';
 import { fetchCatalog } from '@/lib/catalogSheet';
 import { fingerprint } from '@/lib/xlsx';
-import { today, withSlugs } from '@/lib/format';
+import { withSlugs } from '@/lib/format';
 
 /**
  * One provider holds the workspace: reducer state, persistence, server sync, and the derived
@@ -49,29 +49,9 @@ export interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-/**
- * A brand-new workspace gets one estimation to work in, rather than an empty hub with a
- * "create one first" wall. It carries requests that predate per-deal estimations, which is why
- * the source design seeded it too.
- */
-function seedEstimation(): Estimation {
-  const stamp = today();
-  return {
-    id: `EST-${Date.now().toString(36)}`,
-    plat: 'openedx',
-    name: 'General estimation',
-    slug: 'general-estimation',
-    client: '',
-    tag: '',
-    due: '',
-    at: stamp,
-    up: stamp,
-    total: 0,
-    cost: 0,
-    items: 0,
-    snap: { ...EMPTY_SNAPSHOT }
-  };
-}
+/* A brand-new workspace used to be given a "General estimation" to work in, and every browser that
+   opened one empty wrote its own, so stores collected several. The hub now always has the demo
+   estimation (`domain/demo.ts`), which the reducer adds on the first hydrate and nothing saves. */
 
 function hydrateFromStorage(): Partial<AppState> {
   const platform = readStorage<{ practice?: string; plat?: string } | null>(STORAGE_KEYS.platform, null);
@@ -83,7 +63,7 @@ function hydrateFromStorage(): Partial<AppState> {
     lastPlatform: platform?.plat && findPlatform(platform.plat) ? platform.plat : '',
     /* records saved before slugs existed get one here, so every deal has a URL from the first
        render — `routeOfState` would otherwise fall back to the raw id in the address bar */
-    estimations: withSlugs(stored.length > 0 ? stored : [seedEstimation()]),
+    estimations: withSlugs(stored),
     requests: readStorage(STORAGE_KEYS.requests, []),
     solutions: readStorage(STORAGE_KEYS.solutions, []),
     bundles: readStorage(STORAGE_KEYS.bundles, []),
@@ -109,8 +89,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   /* Boot from storage once. What was just read is already in storage, so it counts as written:
      writing it straight back could only overwrite something a sibling tab saved in the meantime,
      which is how a tab opening mid-extraction put a failed range back to "claimed". Estimations
-     are the exception when the list was seeded or slugs were filled in, because then the written
-     copy really is new. */
+     are the exception when slugs were filled in, because then the written copy really is new. */
   useEffect(() => {
     const payload = hydrateFromStorage();
     const stored = readStorage<Estimation[]>(STORAGE_KEYS.estimations, []);
@@ -122,7 +101,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       [STORAGE_KEYS.salesLegal]: payload.salesLegal,
       [STORAGE_KEYS.loadedCatalogs]: payload.loadedCatalogs,
       [STORAGE_KEYS.catalogSource]: payload.catalogSource,
-      ...(stored.length > 0 && stored.every((one) => one.slug) ? { [STORAGE_KEYS.estimations]: payload.estimations } : {})
+      ...(stored.every((one) => one.slug) ? { [STORAGE_KEYS.estimations]: payload.estimations } : {})
     });
     dispatch({ type: 'hydrate', payload });
   }, []);
@@ -176,23 +155,26 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   }, []);
 
   /* Persist the slices the app owns, but only the ones this tab changed: see `changedSlices` for
-     the two-tab bug that rewriting all of them caused. */
+     the two-tab bug that rewriting all of them caused. They are written without the demo, which
+     lives in memory only, and taking it out makes a new array every time; `stableSlices` keeps the
+     last one written when its records are the same, or every slice would count as changed. */
   useEffect(() => {
     if (!state.ready) return;
-    const slices: Record<string, unknown> = {
-      [STORAGE_KEYS.estimations]: commitDraft(state),
-      [STORAGE_KEYS.requests]: state.requests,
-      [STORAGE_KEYS.solutions]: state.solutions,
-      [STORAGE_KEYS.bundles]: state.bundles,
-      [STORAGE_KEYS.tenders]: state.tenders,
-      [STORAGE_KEYS.salesLegal]: state.salesLegal,
+    const data = toPersisted(state);
+    const slices = stableSlices(written.current, {
+      [STORAGE_KEYS.estimations]: data.estimations,
+      [STORAGE_KEYS.requests]: data.requests,
+      [STORAGE_KEYS.solutions]: data.solutions,
+      [STORAGE_KEYS.bundles]: data.bundles,
+      [STORAGE_KEYS.tenders]: data.tenders,
+      [STORAGE_KEYS.salesLegal]: data.salesLegal,
       [STORAGE_KEYS.loadedCatalogs]: state.loadedCatalogs,
       [STORAGE_KEYS.catalogSource]: state.catalogSource
-    };
+    });
     for (const key of changedSlices(written.current, slices)) writeStorage(key, slices[key]);
     written.current = slices;
     writeStorage(STORAGE_KEYS.workspace, { display: state.display, sheet: state.sheet });
-    writeStorage(STORAGE_KEYS.openEstimation, state.openEstimation ?? '');
+    writeStorage(STORAGE_KEYS.openEstimation, storedOpenEstimation(state));
     if (state.platform) writeStorage(STORAGE_KEYS.platform, { practice: state.practice, plat: state.platform });
     if (state.auth) writeStorage(STORAGE_KEYS.auth, state.auth);
     else removeStorage(STORAGE_KEYS.auth);
@@ -266,18 +248,8 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     };
   }, [state.platform, readServedCatalog]);
 
-  const persisted = useMemo<PersistedState>(
-    () => ({
-      estimations: commitDraft(state),
-      requests: state.requests,
-      solutions: state.solutions,
-      bundles: state.bundles,
-      tenders: state.tenders,
-      salesLegal: state.salesLegal,
-      settings: {}
-    }),
-    [state]
-  );
+  /* what the store is sent: everything but the demo */
+  const persisted = useMemo<PersistedState>(() => toPersisted(state), [state]);
 
   /* What the store sends goes into this tab's memory, not back into browser storage. Storage is
      the working copy every tab in this browser shares, and it is newer than the store for anything
@@ -333,9 +305,11 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     );
   }, [state.platform, state.loadedCatalogs]);
 
+  /* the demo's estimates join it only while the demo is open */
+  const added = useMemo(() => catalogAdditions(state.solutions, state.openEstimation), [state.solutions, state.openEstimation]);
   const catalog = useMemo<Catalog>(
-    () => composeCatalog({ base: baseCatalog, platform: state.platform || 'openedx', added: state.solutions, ownBundles: state.bundles }),
-    [baseCatalog, state.platform, state.solutions, state.bundles]
+    () => composeCatalog({ base: baseCatalog, platform: state.platform || 'openedx', added, ownBundles: state.bundles }),
+    [baseCatalog, state.platform, added, state.bundles]
   );
 
   /* Each deal caches its totals for the hub's "hours in play" and the sheet's readable columns,
@@ -385,11 +359,8 @@ export function useApp(): AppContextValue {
   return value;
 }
 
-/** Estimations for the platform in play, newest first. */
+/** Estimations for the platform in play: the demo first, then the most recently updated. */
 export function usePlatformEstimations(): AppState['estimations'] {
   const { state } = useApp();
-  return useMemo(
-    () => platformEstimations(state).slice().sort((a, b) => String(b.up).localeCompare(String(a.up))),
-    [state]
-  );
+  return useMemo(() => hubEstimations(state), [state]);
 }

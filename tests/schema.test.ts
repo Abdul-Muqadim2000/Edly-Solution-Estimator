@@ -3,6 +3,7 @@ import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
 import { coerceState, COLUMNS, countRows, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
 import type { Catalog, PersistedState, SalesLegalItem, Tender, TenderRequirement } from '../src/types';
 import { DEFAULT_SHEET, readSheetPrefs } from '../src/domain/taskBreakdown';
+import { ESTIMATION_STAGES } from '../src/domain/stages';
 
 /**
  * These tests exist because every one of them once failed.
@@ -709,6 +710,10 @@ describe('the sync key', () => {
     const pending = state.requests[2];
     /* typed into a textarea, so it ends in a newline the reader will trim */
     if (pending) pending.details = 'Still pending, see the thread\n';
+    /* where the desk and the deal are, as the board sets them */
+    if (pending) pending.stage = 'info';
+    const deal = state.estimations[0];
+    if (deal) deal.stage = 'rates';
     const priced = state.requests[0];
     /* the desk left the notes blank: '' here, and no cell at all in the sheet */
     if (priced) priced.catNotes = '';
@@ -1042,5 +1047,126 @@ describe('the sales, account and legal sheet', () => {
   it('reads a workbook written before the sheet existed as holding none', async () => {
     const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.estimations]: [[...COLUMNS.estimations]] })));
     expect(back.salesLegal).toEqual([]);
+  });
+});
+
+describe('where deals and requests stand', () => {
+  const rowsOf = (state: PersistedState, sheet: string): Record<string, unknown>[] => {
+    const [header = [], ...rows] = stateToSheets(state)[sheet] ?? [];
+    return rows.map((row) => Object.fromEntries(header.map((name, i) => [String(name), row[i]])));
+  };
+
+  it('keeps every stage a deal can be at, and writes it in words for whoever scans the sheet', async () => {
+    const state = sample();
+    const [first] = state.estimations;
+    if (!first) throw new Error('no deal');
+    state.estimations = ESTIMATION_STAGES.map((one, i) => ({ ...first, id: `EST-${i + 1}`, slug: `deal-${i + 1}`, stage: one.id }));
+
+    const back = await roundTrip(state);
+    expect(back.estimations.map((one) => one.stage)).toEqual(['backlog', 'progress', 'custom', 'rates', 'review', 'done']);
+    expect(rowsOf(state, SHEETS.estimations).map((row) => row.stage)).toEqual([
+      'Backlog', 'In progress', 'Pending custom estimates', 'Pending rates', 'In review', 'Completed'
+    ]);
+    /* the tag is its own column and comes back untouched */
+    expect(back.estimations.every((one) => one.tag === 'Urgent')).toBe(true);
+  });
+
+  it('writes a stage for a deal the browser holds from before stages, so every row in the sheet has one', () => {
+    const state = sample();
+    expect(state.estimations.every((one) => one.stage === undefined)).toBe(true);
+    /* EST-1 is Urgent and EST-2 is Closed */
+    expect(rowsOf(state, SHEETS.estimations).map((row) => row.stage)).toEqual(['In progress', 'Completed']);
+  });
+
+  it('reads a sheet written before the stage column: Completed when Closed, In progress otherwise', async () => {
+    const columns = COLUMNS.estimations.filter((name) => name !== 'stage');
+    const row = (id: string, tag: string): (string | number)[] => [id, 'openedx', `Deal ${id}`, `deal-${id}`, 'Acme Academy', tag, '', '2026-09-01', '2026-09-02', 0, 0, 0, '{}'];
+    const back = sheetsToState(
+      await readWorkbook(writeWorkbook({ [SHEETS.estimations]: [columns, row('EST-1', 'Closed'), row('EST-2', 'Active'), row('EST-3', 'On hold'), row('EST-4', '')] }))
+    );
+    expect(back.estimations.map((one) => one.stage)).toEqual(['done', 'progress', 'progress', 'progress']);
+  });
+
+  it('reads a stage a person typed over the sheet, and falls back to the tag for one it cannot read', async () => {
+    const columns = [...COLUMNS.estimations];
+    const at = columns.indexOf('stage');
+    const row = (id: string, tag: string, stage: string): (string | number)[] => {
+      const cells: (string | number)[] = [id, 'openedx', `Deal ${id}`, `deal-${id}`, '', tag, '', '', '2026-09-01', '2026-09-02', 0, 0, 0, '{}'];
+      cells[at] = stage;
+      return cells;
+    };
+    const back = sheetsToState(
+      await readWorkbook(
+        writeWorkbook({ [SHEETS.estimations]: [columns, row('EST-1', 'Active', 'in review'), row('EST-2', 'Active', 'DONE'), row('EST-3', 'Closed', 'next week?'), row('EST-4', 'Active', 'next week?')] })
+      )
+    );
+    expect(back.estimations.map((one) => one.stage)).toEqual(['review', 'done', 'done', 'progress']);
+  });
+
+  it('keeps where the desk is with each request, and leaves a request nobody has picked up with no stage', async () => {
+    const state = sample();
+    /* RQ-03 is the one still waiting on the desk */
+    const waiting = state.requests[2];
+    if (waiting) waiting.stage = 'info';
+    const back = await roundTrip(state);
+    expect(back.requests[2]?.stage).toBe('info');
+    expect(rowsOf(state, SHEETS.requests)[2]?.status).toBe('Needs info');
+
+    if (waiting) delete waiting.stage;
+    const fresh = await roundTrip(state);
+    expect(rowsOf(state, SHEETS.requests)[2]?.status).toBe('Backlog');
+    /* how the reducer holds it, so a reload is not a change */
+    expect(fresh.requests[2]).not.toHaveProperty('stage');
+  });
+
+  it('writes a priced request as Estimated and reads it back with no desk stage, even one a tab left on it', async () => {
+    const state = sample();
+    const priced = state.requests[0];
+    /* a tab from before stages keeps whatever it read when it prices the request */
+    if (priced) priced.stage = 'review';
+    expect(rowsOf(state, SHEETS.requests)[0]?.status).toBe('Estimated');
+    const back = await roundTrip(state);
+    expect(back.requests[0]?.est).toBe(48);
+    expect(back.requests[0]).not.toHaveProperty('stage');
+  });
+
+  it('reads a status typed over the sheet, and never takes Estimated from the word on a request with no hours', async () => {
+    const columns = ['id', 'plat', 'estimationId', 'title', 'status', 'estimateHours'];
+    const back = sheetsToState(
+      await readWorkbook(
+        writeWorkbook({
+          [SHEETS.requests]: [
+            columns,
+            ['RQ-01', 'openedx', 'EST-1', 'Custom SSO', 'blocked', ''],
+            ['RQ-02', 'openedx', 'EST-1', 'Proctoring', 'Estimated', ''],
+            ['RQ-03', 'openedx', 'EST-1', 'Zoom attendance', 'in progress', '']
+          ]
+        })
+      )
+    );
+    expect(back.requests[0]?.stage).toBe('info');
+    /* no hours, so it is still waiting, whatever the word says */
+    expect(back.requests[1]).not.toHaveProperty('stage');
+    expect(back.requests[1]?.est).toBeUndefined();
+    expect(back.requests[2]?.stage).toBe('progress');
+  });
+
+  it('reads a requests sheet written before the status column as every request in Backlog', async () => {
+    const back = sheetsToState(await readWorkbook(writeWorkbook({ [SHEETS.requests]: [['id', 'plat', 'estimationId', 'title'], ['RQ-01', 'openedx', 'EST-1', 'Custom SSO']] })));
+    expect(back.requests[0]).not.toHaveProperty('stage');
+  });
+
+  it('changes the sync key when a deal or a request moves, so the move is saved', () => {
+    const state = sample();
+    const base = syncKey(state);
+    const moved = sample();
+    const deal = moved.estimations[0];
+    if (deal) deal.stage = 'review';
+    expect(syncKey(moved)).not.toBe(base);
+
+    const picked = sample();
+    const waiting = picked.requests[2];
+    if (waiting) waiting.stage = 'progress';
+    expect(syncKey(picked)).not.toBe(base);
   });
 });

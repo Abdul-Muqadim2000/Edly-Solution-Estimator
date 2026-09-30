@@ -101,6 +101,21 @@ export const color = {
   /** Violet legible on the dark estimate column. */
   violetGlow: '#B7A6F5',
 
+  /* Three hues the stages needed that nothing else uses. Each ink reads at 5.8:1 or better on its
+     wash, so a chip's small bold label passes AA. */
+  blue: '#2F6FB5',
+  blueInk: '#1F5A96',
+  blueWash: '#EAF1FA',
+  blueEdge: '#B9D0EA',
+  rose: '#C4507A',
+  roseInk: '#9E3A62',
+  roseWash: '#FBEEF3',
+  roseEdge: '#EDC0D1',
+  cyan: '#1C93A8',
+  cyanInk: '#0E6878',
+  cyanWash: '#E6F5F8',
+  cyanEdge: '#B5DEE6',
+
   dark: '#242424',
   darkSoft: '#363636',
   /** The raised state of a control on a dark panel. */
@@ -183,6 +198,34 @@ export const tagStyle = (tag: string): { bg: string; co: string } =>
     'On hold': { bg: color.amberWash, co: color.amber },
     Closed: { bg: color.surfaceMuted, co: color.muted }
   })[tag] ?? { bg: color.brandWashDeep, co: color.brandInk };
+
+export interface StageStyle {
+  /** The column's dot, its top rule and the builder's track. */
+  dot: string;
+  /** A chip's fill, and a column's fill while something is dragged over it. */
+  bg: string;
+  /** Text on `bg`. */
+  co: string;
+  edge: string;
+}
+
+/**
+ * A stage's colours, for a deal or a desk request. Pending custom estimates is amber because amber
+ * already means "waiting on the desk" everywhere else, and violet stays with estimates. The two
+ * boards share In review and Backlog, and the desk's Needs info borrows Pending rates' rose, since
+ * the two never sit side by side.
+ */
+export const stageStyle = (stage: string): StageStyle =>
+  ({
+    backlog: { dot: color.ghost, bg: color.surfaceMuted, co: color.muted, edge: color.rule },
+    progress: { dot: color.blue, bg: color.blueWash, co: color.blueInk, edge: color.blueEdge },
+    custom: { dot: color.amber, bg: color.amberWash, co: color.amber, edge: color.amberEdge },
+    rates: { dot: color.rose, bg: color.roseWash, co: color.roseInk, edge: color.roseEdge },
+    info: { dot: color.rose, bg: color.roseWash, co: color.roseInk, edge: color.roseEdge },
+    review: { dot: color.cyan, bg: color.cyanWash, co: color.cyanInk, edge: color.cyanEdge },
+    done: { dot: color.brand, bg: color.brandWashDeep, co: color.brandInk, edge: color.brandEdge },
+    estimated: { dot: color.brand, bg: color.brandWashDeep, co: color.brandInk, edge: color.brandEdge }
+  })[stage] ?? { dot: color.ghost, bg: color.surfaceMuted, co: color.muted, edge: color.rule };
 
 export interface DueInfo {
   label: string;

@@ -88,6 +88,9 @@ describe('hours', () => {
 
   it('pluralises the way a sentence needs', () => {
     expect(plural(1, 'person')).toBe('1 person');
+    /* the planner and the client's plain-text quote say "7 people", not "7 persons" */
+    expect(plural(7, 'person', 'people')).toBe('7 people');
+    expect(plural(1, 'person', 'people')).toBe('1 person');
     expect(plural(0, 'week')).toBe('0 weeks');
     expect(plural(3, 'week')).toBe('3 weeks');
     /* an import preview counts past a thousand, and "1203 estimates" reads as a code, not a count */

@@ -963,7 +963,7 @@ export function quoteText(input: QuoteInput): string {
     `TOTAL: ${hours(estimate.grand)} h ≈ ${hours1(estimate.days)} person-days` +
       (display.money ? ` · ${money(estimate.usd, currency)} @ ${rateLabel(estimate.rate, currency)}` : '')
   );
-  lines.push(`Delivery span: ${hours1(plan.end)} weeks at peak ${plural(plan.peak, 'person')}`);
+  lines.push(`Delivery span: ${hours1(plan.end)} weeks at peak ${plural(plan.peak, 'person', 'people')}`);
 
   if (display.savings && estimate.savedPct !== null) {
     lines.push(`Effort saved vs building new: ${estimate.savedPct}%`);

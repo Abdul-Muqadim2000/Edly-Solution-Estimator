@@ -4,6 +4,7 @@ import { useApp } from '@/state/AppProvider';
 import { openEstimationRecord, openRequests } from '@/state/reducer';
 import { allSolutions, solutionKind } from '@/domain/catalog';
 import { roleLabel } from '@/domain/estimate';
+import { awaitingLabel, ticketStage } from '@/domain/stages';
 import { findPlatform } from '@/data/practices';
 import { EDLY_LINKS } from '@/data/nav';
 import { color, font, roleColor } from '@/theme';
@@ -427,6 +428,8 @@ export function SummaryPanel({
             </div>
             {requests.map((request) => {
               const estimated = Number(request.est) > 0;
+              /* the one the desk is waiting on sales for stands out, except to a client watching */
+              const asked = !estimated && !state.presenting && ticketStage(request) === 'info';
               return (
                 <div key={request.id} style={{ display: 'flex', alignItems: request.catNotes ? 'flex-start' : 'center', gap: 8, padding: '5px 0' }}>
                   <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: color.onDark, lineHeight: 1.4 }}>
@@ -452,17 +455,18 @@ export function SummaryPanel({
                     ) : null}
                   </span>
                   <span
+                    title={asked ? 'The desk has asked for more detail on this request' : undefined}
                     style={{
                       fontSize: 10,
                       fontWeight: 600,
-                      color: AMBER,
-                      background: color.amberOnDark,
+                      color: asked ? color.redGlow : AMBER,
+                      background: asked ? color.redOnDark : color.amberOnDark,
                       borderRadius: 999,
                       padding: '2px 8px',
                       whiteSpace: 'nowrap'
                     }}
                   >
-                    {estimated ? `${hours(Number(request.est) * factor)} h` : 'Awaiting hours'}
+                    {estimated ? `${hours(Number(request.est) * factor)} h` : awaitingLabel(ticketStage(request), state.presenting)}
                   </span>
                   <Remove onClick={() => dispatch({ type: 'deleteRequest', id: request.id })} />
                 </div>

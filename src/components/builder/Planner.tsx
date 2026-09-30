@@ -120,7 +120,7 @@ export function Planner({ onClose }: { onClose: () => void }): JSX.Element {
       <div style={{ fontFamily: font.display, fontSize: 20, fontWeight: 700 }}>Delivery timeline</div>
       <div style={{ fontSize: 12.5, color: color.muted, marginTop: 2 }}>
         {hours1(plan.end)} weeks end to end · {hours(estimate.grand)} h · {plan.hpw} h per person per week · peak{' '}
-        {plural(plan.peak, 'person')} at once{start ? ` · finishes ${dateAt(plan.end)}` : ''}
+        {plural(plan.peak, 'person', 'people')} at once{start ? ` · finishes ${dateAt(plan.end)}` : ''}
       </div>
     </>
   );

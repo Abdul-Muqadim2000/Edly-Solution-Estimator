@@ -15,6 +15,8 @@ import { joinNotes, withSlugs } from '../src/lib/format.js';
 import { usdOf } from '../src/domain/aiPrice.js';
 import { aiSpent, aiStep, DEFAULT_AI_LIMIT } from '../src/domain/tender.js';
 import { categoryLabel, readCategory, readDay, readStatus, readTopic, statusLabel, topicLabel } from '../src/domain/salesLegal.js';
+import { withoutDemo } from '../src/domain/demo.js';
+import { defaultStage, readRequestStage, readStage, stageLabel, stageOf, ticketLabel, ticketStage } from '../src/domain/stages.js';
 
 /**
  * The bridge between app state and spreadsheet rows.
@@ -38,9 +40,14 @@ export const COLUMNS = {
   /* `slug` sits beside `name` rather than at the end: every column is read by name, so inserting
      one cannot break an older file, and burying it past the 28 KB snapshotJson cell would defeat
      the point of keeping the scalar columns scannable in Excel. */
-  estimations: ['id', 'plat', 'name', 'slug', 'client', 'tag', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions', 'snapshotJson'],
+  estimations: ['id', 'plat', 'name', 'slug', 'client', 'tag', 'stage', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions', 'snapshotJson'],
+  /* `stage` and `status` are written as the words a person reads ("In review", "Needs info") and
+     read back from whatever a person typed there, like the sales and legal list. A row from before
+     either existed has a blank there: a deal reads as Completed when tagged Closed and In progress
+     otherwise, and a request as Backlog. A priced request is written as Estimated, and its hours,
+     not the word, are what say so on the way back. */
   requests: [
-    'id', 'plat', 'estimationId', 'estimationName', 'client', 'title', 'details', 'area', 'urgency',
+    'id', 'plat', 'estimationId', 'estimationName', 'client', 'title', 'status', 'details', 'area', 'urgency',
     'integrations', 'requestedBy', 'email', 'org', 'submitted', 'estimateHours', 'repeatHours',
     'catalogId', 'bundleId', 'estimatedBy', 'estimatedOn', 'note', 'tenderId', 'tenderRequirement', 'extraJson'
   ],
@@ -125,7 +132,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
   const estimations = header('estimations');
   for (const e of state.estimations ?? []) {
     estimations.push([
-      str(e.id), str(e.plat || 'openedx'), str(e.name), str(e.slug), str(e.client), str(e.tag || 'Active'), str(e.due),
+      str(e.id), str(e.plat || 'openedx'), str(e.name), str(e.slug), str(e.client), str(e.tag || 'Active'), stageLabel(stageOf(e)), str(e.due),
       str(e.at), str(e.up), Number(e.total ?? 0), Number(e.cost ?? 0), Number(e.items ?? 0), toJson(e.snap)
     ]);
   }
@@ -134,7 +141,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
   const requests = header('requests');
   for (const r of state.requests ?? []) {
     requests.push([
-      str(r.id), str(r.plat || 'openedx'), str(r.estId), str(r.estName), str(r.client), str(r.title),
+      str(r.id), str(r.plat || 'openedx'), str(r.estId), str(r.estName), str(r.client), str(r.title), ticketLabel(ticketStage(r)),
       str(r.details), str(r.area), str(r.urgency), str(r.integrations), str(r.name), str(r.email), str(r.org),
       str(r.at),
       r.est !== undefined && r.est !== null ? Number(r.est) : '',
@@ -255,6 +262,7 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       slug: r.slug ?? '',
       client: r.client ?? '',
       tag: asTag(r.tag),
+      stage: readStage(r.stage) ?? defaultStage(asTag(r.tag)),
       due: r.due ?? '',
       at: r.created ?? '',
       up: r.updated ?? '',
@@ -295,6 +303,9 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       /* an un-estimated request must come back with NO hours: 0 would join the totals */
       const est = num(r.estimateHours);
       if (est !== null) out.est = est;
+      /* Backlog is the absence of a stage, and a priced request carries none: its hours place it */
+      const stage = readRequestStage(r.status);
+      if (stage && stage !== 'backlog' && !(Number(out.est) > 0)) out.stage = stage;
       const repeat = num(r.repeatHours);
       if (repeat !== null) out.repeatEst = repeat;
       if (extra.manual) out.manual = true;
@@ -541,11 +552,14 @@ export function countRows(state: PersistedState | null): number {
   return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length + state.salesLegal.length;
 }
 
-/** Narrow an untrusted request body to the persisted shape. */
+/**
+ * Narrow an untrusted request body to the persisted shape. The demo estimation's records are taken
+ * out whatever a client sends: the browser never sends them, and this makes sure none is stored.
+ */
 export function coerceState(body: unknown): PersistedState {
   const raw = (body ?? {}) as Partial<PersistedState>;
   const array = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
-  return {
+  return withoutDemo({
     estimations: array<Estimation>(raw.estimations),
     requests: array<EstimateRequest>(raw.requests),
     solutions: array<AddedSolution>(raw.solutions),
@@ -557,5 +571,5 @@ export function coerceState(body: unknown): PersistedState {
       raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)
         ? (raw.settings as Record<string, unknown>)
         : {}
-  };
+  });
 }

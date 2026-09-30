@@ -145,7 +145,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 969 tests across twenty-three files.
+`bun run test` runs 1,078 tests across twenty-five files.
 
 | File | Covers |
 |---|---|
@@ -154,7 +154,7 @@ reference.
 | `tests/router.test.ts` | URL to state and back, both directions, a link held through sign-in, the links between screens and each role's home |
 | `tests/pressable.test.ts` | a clickable card or row pressed from the keyboard: Enter and Space press it, keys meant for a field inside it are left alone |
 | `tests/schema.test.ts` | state to spreadsheet rows, chunking, round trip, the sync key |
-| `tests/api.test.ts` | `/api/state` end to end, and the empty-payload guard |
+| `tests/api.test.ts` | `/api/state` end to end, the empty-payload guard, and no demo record stored |
 | `tests/handler.test.ts` | the Vercel and web request adapters |
 | `tests/storage.test.ts` | browser storage, the store layer, Vercel Blob |
 | `tests/providers.test.ts` | Google Sheets, OneDrive, Dropbox, against a stubbed `fetch` |
@@ -171,18 +171,20 @@ reference.
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
 | `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
+| `tests/stages.test.ts` | where a deal and a desk request stand: the stages in order, reading them back from the sheet, the moves filing and pricing make by themselves, what sales sees of the desk, and the boards' columns, order and totals |
+| `tests/demo.test.ts` | the demo estimation against the master sheet we ship: priced, planned inside the team cap, staffed and laid out as the client's Excel sheet; which records are the demo's, and keeping it out of storage |
 | `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load; the favicon, manifest and logo files the page names are all shipped |
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-09-29):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-09-30, with stages):
 
 | | |
 |---|---|
-| Statements | 97.6% |
-| Lines | 98.6% |
-| Functions | 98.9% |
-| Branches | 88.0% |
+| Statements | 97.8% |
+| Lines | 98.8% |
+| Functions | 99.2% |
+| Branches | 88.7% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -302,6 +304,12 @@ pipe-wrapped like the long settings. An estimate imported from a workbook is an
 filled in; "Remove import", the import history and a second import of the same file all work by
 those columns. Rows imported before `importedOn` existed have none, and the history dates them by
 the bundles they made.
+
+A deal's `stage` and a request's `status` are written as words ("In review", "Needs info") and read
+back from whatever a person typed there, by `readStage` and `readRequestStage` in
+`src/domain/stages.ts`. A deal row from before the column reads as Completed when tagged Closed and In
+progress otherwise; a request row reads as Backlog. A priced request is written as Estimated, and its
+hours, never the word, are what say so on the way back.
 
 `SalesAccountLegal` has no JSON column at all: one row per item, scalar columns only, because the
 legal and account teams filter and assign these rows in Google Sheets itself. Its category and
@@ -585,6 +593,42 @@ The spreadsheets hold real deal names, client names and pricing.
 - **An un-estimated request round-trips with no hours at all, not `0`.** Zero reads as "estimated
   at nothing" and joins the totals. The same rule holds throughout: `null` means nobody has priced
   it.
+- **A deal has a stage and a tag, and they never move each other.** The stage (Backlog, In progress,
+  Pending custom estimates, Pending rates, In review, Completed) is where the work stands and is what
+  the hub's board lays out; the tag (Active, Urgent, On hold, Closed) stays as it was. The user chose
+  to keep both on 2026-09-30, so On hold is a tag and not a column. One automatic move was agreed:
+  filing a desk request moves a Backlog or In progress deal to Pending custom estimates, and pricing
+  or removing its last waiting request moves it back to In progress (`stageOnFiling`,
+  `stageOnSettled`, `moveDeal` in the reducer). Neither counts as an edit, so `up` stays put, and
+  nothing moves a deal out of Pending rates, In review or Completed. Updating an estimate already
+  given moves nothing. A request's stage (Backlog, In progress, In review, Needs info) is the desk's
+  until its hours go back; a priced request carries none, and only the pricing form puts one in
+  Estimated, which is why a drop on that column opens the form. "Needs info" reaches sales in the
+  builder, and while presenting the client sees only "Awaiting hours". The stage pill in the builder
+  is hidden while presenting, like Rates.
+- **Cards or Board is one browser's choice, in `VIEW_KEYS`, never synced and never in the URL.** In
+  the URL, Back flipped it and a link to a deal lost it; synced, one person's view became everyone's.
+  The boards leave the demo out of their column totals, as every other figure does, and say "+ demo"
+  where it sits in a column. Completed and Estimated only grow, so each shows its latest six
+  (`FINISHED_SHOWN`) before "Show more". A move changes only the column: the order inside one is the
+  deal's deadline or the request's age, because nothing stores a hand-made order.
+- **The demo estimation lives in memory and is never stored** (`src/domain/demo.ts`). The user
+  chose on 2026-09-30 to have it built in: a stored demo is shared, drifts as people try things on
+  it, and puts invented hours into the Requests and EstimatedSolutions sheets where a real deal
+  could quote them. It replaced the "General estimation" every empty browser used to seed, which
+  stores collected several copies of. The reducer adds it on the first `hydrate` and keeps it
+  through every later read (`withDemo`); `toPersisted` and the server's `coerceState` take it out
+  (`withoutDemo`); a request, the desk's estimate from one, or a sales and legal item made inside it
+  takes a DEMO id, so it goes with it. Keep three things. `stableSlices` reuses the array last
+  written when a slice's records are unchanged, because taking the demo out makes a new array and
+  `changedSlices` compares by reference: without it every slice is written on every change, the
+  two-tab echo. Its estimates join the catalog only while it is open (`catalogAdditions`), so a real
+  deal cannot quote them. And its id never goes into the synced open-estimation setting
+  (`storedOpenEstimation`), so opening it writes nothing to the store. It cannot be deleted, comes
+  first on the hub, and counts in none of the hub's or the desk's figures. Its solutions are picked
+  by id from the master sheet, and every bar of its plan is pinned to one lane per person; if the
+  sheet's hours change, `tests/demo.test.ts` says whether the plan still fits the team cap and the
+  total is still a whole number of hours.
 
 ---
 
@@ -607,6 +651,8 @@ The spreadsheets hold real deal names, client names and pricing.
 - **Concurrency is last-write-wins** across the whole workbook.
 - **Only Open edX has a client-proven catalog.** The other 19 platforms ship benchmark hours and
   are labelled *Sample* in the UI. Do not present them as delivery records.
+- **The demo estimation is on Open edX only**, and it is priced against the catalog in play: a
+  bundles workbook that replaces the master sheet drops the demo's lines whose ids it lacks.
 - **No i18n.** Copy is inline English.
 
 What it would take to lift the first three is in DEFERRED.md.

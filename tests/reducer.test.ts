@@ -27,9 +27,17 @@ import {
   catalogPin,
   catalogWorkbooks,
   sourceAfterImport,
+  catalogAdditions,
+  deskQueue,
+  hubEstimations,
+  hubStats,
+  nextRequestId,
+  storedOpenEstimation,
   type Action,
   type AppState
 } from '../src/state/reducer';
+import { DEMO_ID, DEMO_SLUG, demoRecords, isDemoId, isDemoRequest, isDemoSolution } from '../src/domain/demo';
+import { today } from '../src/lib/format';
 import { TO_UNASSIGNED, toBundle, toNew, type EstimateRow } from '../src/domain/estimateImport';
 import { EMPTY_REVIEW, setGroup, setRow } from '../src/domain/importReview';
 import type { Catalog, EstimateRequest, Estimation, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
@@ -1285,6 +1293,17 @@ describe('tenders', () => {
     expect(sentRequirementIds(again, 'TND-1')).toEqual(new Set(['R-01', 'R-02', 'R-03']));
   });
 
+  it('moves the estimation a tender made to Pending custom estimates once its desk requests go', () => {
+    const applied = run(withTender(), { type: 'applyTender', id: 'TND-1', input: { name: 'Acme deal', client: 'Acme Academy', tag: 'Active', due: '' }, solutionIds: [] });
+    const made = (state: AppState): Estimation | undefined => state.estimations.find((one) => one.id === tender(state).estId);
+    /* a tender's estimation starts where one made from the hub does */
+    expect(made(applied)?.stage).toBe('progress');
+
+    const draft: DeskDraft = { reqId: 'R-01', kind: 'custom', title: 'Custom R-01', details: 'Details', area: 'Assessment', integrations: '', source: '', skip: false, sent: false };
+    const sent = run(applied, { type: 'sendTenderRequests', id: 'TND-1', drafts: [draft], contact: { name: 'Sara', email: 'sara@edly.io', org: 'Edly' } });
+    expect(made(sent)?.stage).toBe('custom');
+  });
+
   it('sends nothing before the estimation exists', () => {
     const state = withTender();
     expect(run(state, { type: 'sendTenderRequests', id: 'TND-1', drafts: [], contact: { name: '', email: '', org: '' } })).toBe(state);
@@ -1953,5 +1972,351 @@ describe('the bundles workbooks the import history lists', () => {
   it('lists none on a platform with nothing loaded, whatever another platform holds', () => {
     const state = workspace({ platform: 'moodle', loadedCatalogs: { openedx: loaded({ name: 'Nordic bundles.xlsx' }) } });
     expect(catalogWorkbooks(state).files).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------ the demo estimation */
+
+describe('the demo estimation', () => {
+  /** A workspace as the app has it after its first read: the reducer adds the demo there. */
+  const booted = (payload: Partial<AppState> = {}): AppState =>
+    reducer(workspace(), { type: 'hydrate', payload: { estimations: [], requests: [], solutions: [], salesLegal: [], ...payload } });
+
+  const prepared = () => demoRecords(today());
+
+  const ask = { title: 'Zoom attendance', details: 'Attendance back to the gradebook', area: '', urgency: '', integrations: 'Zoom', name: '', email: 'sales@example.com', org: '' };
+  const legalItem = { text: 'Insurance certificate for the tender', category: 'legal' as const, owner: 'Legal', due: '', note: '', priority: 'must' as const };
+
+  it('is added on the first read of a workspace, beside the real deals', () => {
+    const next = booted({ estimations: [estimation('EST-1')] });
+
+    expect(next.estimations.map((one) => one.id)).toEqual(['EST-1', DEMO_ID]);
+    expect(requestsFor(next, DEMO_ID)).toEqual(prepared().requests);
+    expect(salesLegalFor(next, DEMO_ID)).toEqual(prepared().salesLegal);
+    expect(next.solutions).toEqual(prepared().solutions);
+  });
+
+  it('survives every later read as it stands in memory, so a background read does not undo what someone is trying', () => {
+    const tried = run(booted(), { type: 'openEstimation', id: DEMO_ID }, { type: 'toggleSolution', id: 'EDU-071' }, { type: 'closeEstimation' });
+    expect(tried.estimations.find((one) => one.id === DEMO_ID)?.snap.sel['EDU-071']).toBeUndefined();
+
+    /* the store's copy, which never holds the demo */
+    const read = reducer(tried, { type: 'hydrate', payload: { estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })] } });
+    expect(read.estimations.map((one) => one.id)).toEqual(['EST-1', DEMO_ID]);
+    expect(read.estimations.find((one) => one.id === DEMO_ID)?.snap.sel['EDU-071']).toBeUndefined();
+    expect(requestsFor(read, DEMO_ID)).toEqual(prepared().requests);
+
+    /* a sibling tab's requests alone, as a storage event brings them */
+    const sibling = reducer(read, { type: 'hydrate', payload: { requests: [] } });
+    expect(requestsFor(sibling, DEMO_ID)).toEqual(prepared().requests);
+  });
+
+  it('is kept when a sibling tab rewrites the list, open here or not', () => {
+    const state = booted({ estimations: [estimation('EST-1')] });
+    const incoming = [estimation('EST-1', { name: 'Renamed elsewhere' }), estimation('EST-2')];
+
+    expect(reducer(state, { type: 'mergeEstimations', estimations: incoming }).estimations.map((one) => one.id)).toEqual(['EST-1', 'EST-2', DEMO_ID]);
+    const open = reducer(state, { type: 'openEstimation', id: DEMO_ID });
+    expect(reducer(open, { type: 'mergeEstimations', estimations: incoming }).estimations.map((one) => one.id)).toEqual(['EST-1', 'EST-2', DEMO_ID]);
+  });
+
+  it('cannot be deleted, because it is the example people learn the tool from', () => {
+    const state = booted();
+    expect(reducer(state, { type: 'deleteEstimation', id: DEMO_ID })).toBe(state);
+  });
+
+  it('opens from a link to its slug, like any deal', () => {
+    const next = reducer(booted(), { type: 'applyRoute', route: { screen: 'builder', platform: 'openedx', estimation: DEMO_SLUG } });
+    expect(next.openEstimation).toBe(DEMO_ID);
+    expect(next.draft.sel).toEqual(prepared().estimations[0]?.snap.sel);
+  });
+
+  it('numbers a request asked for inside it as the demo’s, and spends no real number', () => {
+    const inside = run(
+      booted({ estimations: [estimation('EST-1')], requests: [request('RQ-04', { estId: 'EST-1' })] }),
+      { type: 'openEstimation', id: DEMO_ID },
+      { type: 'addRequest', input: ask },
+      { type: 'addManualItem', title: 'Onboarding workshop', hours: 6 }
+    );
+    expect(requestsFor(inside, DEMO_ID).slice(-2).map((one) => one.id)).toEqual(['RQ-DEMO-07', 'RQ-DEMO-08']);
+    /* the request modal quotes this id in its mail, so it must be the one the reducer gives */
+    expect(nextRequestId(inside)).toBe('RQ-DEMO-09');
+
+    const real = reducer(inside, { type: 'openEstimation', id: 'EST-1' });
+    expect(nextRequestId(real)).toBe('RQ-05');
+    expect(reducer(real, { type: 'addRequest', input: ask }).requests.at(-1)?.id).toBe('RQ-05');
+  });
+
+  it('keeps an estimate the desk prices from a demo request inside the demo', () => {
+    const asked = run(booted(), { type: 'openEstimation', id: DEMO_ID }, { type: 'addRequest', input: ask });
+    const priced = reducer(asked, { type: 'submitEstimate', id: 'RQ-DEMO-07', submission });
+    expect(priced.solutions.at(-1)).toMatchObject({ id: 'CS-DEMO-07', from: 'RQ-DEMO-07' });
+
+    /* one the demo came with already has its estimate, which is updated rather than doubled */
+    const repriced = reducer(priced, { type: 'submitEstimate', id: 'RQ-DEMO-01', submission: { ...submission, hours: 100 } });
+    expect(repriced.solutions.filter((one) => one.id === 'CS-DEMO-01').map((one) => one.first)).toEqual([100]);
+    expect(toPersisted(repriced).solutions).toEqual([]);
+  });
+
+  it('numbers a sales and legal item added to it as the demo’s', () => {
+    const next = reducer(booted(), { type: 'addSalesLegal', estId: DEMO_ID, input: legalItem });
+    expect(salesLegalFor(next, DEMO_ID).at(-1)).toMatchObject({ id: 'SL-DEMO-07', text: legalItem.text });
+    /* a real deal's first item still takes the first real number */
+    const real = reducer(booted({ estimations: [estimation('EST-1')] }), { type: 'addSalesLegal', estId: 'EST-1', input: legalItem });
+    expect(salesLegalFor(real, 'EST-1').map((one) => one.id)).toEqual(['SL-01']);
+  });
+
+  it('writes none of itself to the store, including what was made inside it and the open draft', () => {
+    const state = run(
+      booted({ estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })] }),
+      { type: 'openEstimation', id: DEMO_ID },
+      { type: 'toggleSolution', id: 'EDU-071' },
+      { type: 'addManualItem', title: 'Onboarding workshop', hours: 6 },
+      { type: 'addSalesLegal', estId: DEMO_ID, input: legalItem }
+    );
+    const stored = toPersisted(state);
+
+    expect(stored.estimations.map((one) => one.id)).toEqual(['EST-1']);
+    expect(stored.requests.map((one) => one.id)).toEqual(['RQ-01']);
+    expect(stored.solutions).toEqual([]);
+    expect(stored.salesLegal).toEqual([]);
+  });
+
+  it('never names itself as the open estimation in the synced settings', () => {
+    /* that key goes to the store's Settings sheet, and opening the demo must not write there */
+    expect(storedOpenEstimation({ openEstimation: DEMO_ID })).toBe('');
+    expect(storedOpenEstimation({ openEstimation: 'EST-1' })).toBe('EST-1');
+    expect(storedOpenEstimation({ openEstimation: null })).toBe('');
+  });
+
+  it('resets to the prepared version, and the open draft with it', () => {
+    const tried = run(booted(), { type: 'openEstimation', id: DEMO_ID }, { type: 'clearSelection' }, { type: 'addManualItem', title: 'Onboarding workshop', hours: 6 });
+    const reset = reducer(tried, { type: 'resetDemo' });
+
+    expect(reset.openEstimation).toBe(DEMO_ID);
+    expect(reset.draft).toEqual({ ...EMPTY_SNAPSHOT, ...prepared().estimations[0]?.snap });
+    expect(requestsFor(reset, DEMO_ID)).toEqual(prepared().requests);
+  });
+
+  it('resets without touching a real deal that is open instead', () => {
+    const state = run(booted({ estimations: [estimation('EST-1')] }), { type: 'openEstimation', id: 'EST-1' }, { type: 'toggleSolution', id: 'OX-1' });
+    const reset = reducer(state, { type: 'resetDemo' });
+    expect(reset.draft).toBe(state.draft);
+    expect(reset.estimations.find((one) => one.id === 'EST-1')).toBe(state.estimations.find((one) => one.id === 'EST-1'));
+  });
+
+  it('shows its estimates in the catalog only while it is open, so a real deal cannot quote them', () => {
+    const { solutions } = booted();
+    expect(catalogAdditions(solutions, null).some(isDemoSolution)).toBe(false);
+    expect(catalogAdditions(solutions, 'EST-1').some(isDemoSolution)).toBe(false);
+    expect(catalogAdditions(solutions, DEMO_ID)).toBe(solutions);
+    /* with none of its estimates in the list, the very same list, so the catalog is not rebuilt */
+    const plain = solutions.filter((one) => !isDemoSolution(one));
+    expect(catalogAdditions(plain, null)).toBe(plain);
+  });
+
+  it('comes first on the hub, and counts in none of its figures', () => {
+    const state = booted({
+      estimations: [estimation('EST-1', { up: '2026-09-29', total: 40 }), estimation('EST-2', { up: '2026-09-30', total: 10, tag: 'Closed' })],
+      requests: [request('RQ-01', { estId: 'EST-1' })]
+    });
+    expect(hubEstimations(state).map((one) => one.id)).toEqual([DEMO_ID, 'EST-2', 'EST-1']);
+    expect(hubStats(state)).toEqual({ open: 1, hours: 40, awaiting: 1 });
+    /* on another platform there is no demo at all */
+    expect(hubEstimations({ ...state, platform: 'moodle' })).toEqual([]);
+  });
+
+  it('lists its requests after the real ones at the desk, and counts them only when the desk looks at the demo', () => {
+    const state = booted({ estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })] });
+    const all = deskQueue(state, '');
+
+    expect(all.rows[0]?.id).toBe('RQ-01');
+    expect(all.rows.slice(1).every(isDemoRequest)).toBe(true);
+    expect(all.counted.map((one) => one.id)).toEqual(['RQ-01']);
+    /* the screen says how many listed requests the figures leave out, or "0 estimated" reads wrong */
+    expect(all.leftOut).toBe(prepared().requests.length);
+
+    const demo = deskQueue(state, DEMO_ID);
+    expect(demo.rows.map((one) => one.id)).toEqual(prepared().requests.map((one) => one.id));
+    expect(demo.counted).toEqual(demo.rows);
+    expect(demo.leftOut).toBe(0);
+    expect(deskQueue(state, 'EST-1').leftOut).toBe(0);
+  });
+
+  it('caches no totals, so the hub gives the estimations list nothing to rewrite', () => {
+    const book: Catalog = {
+      meta: { title: 'Mine', subtitle: '', compiled: '', totals: { features: 0, buildHrs: null, firstHrs: null, repeatHrs: null, saved: null, noEstimate: 0, inDev: 0 }, notes: [] },
+      bundles: []
+    };
+    const totals = platformTotals(booted({ estimations: [estimation('EST-1')] }), book);
+    expect(Object.keys(totals)).toEqual(['EST-1']);
+  });
+
+  it('is never matched by an estimates workbook, which adds a row of the same name as a real estimate', () => {
+    const state = booted();
+    const theirs = prepared().solutions[0]!;
+    const next = reducer(state, { type: 'importEstimates', rows: [row(1, { name: theirs.name, client: '' })], file: 'nordic.xlsx', catalogBundles: onScreen });
+
+    expect(next.solutions.filter((one) => one.imported === 'nordic.xlsx').map((one) => one.id)).toEqual(['CS-01']);
+    expect(next.solutions.find((one) => one.id === theirs.id)).toEqual(theirs);
+    expect(toPersisted(next).solutions.map((one) => one.id)).toEqual(['CS-01']);
+  });
+
+  it('gives every record it holds a demo id, so nothing of it can pass for real', () => {
+    const { estimations, requests, solutions, salesLegal } = prepared();
+    expect([...estimations, ...requests, ...solutions, ...salesLegal].every((one) => isDemoId(one.id))).toBe(true);
+  });
+});
+
+
+describe('where a deal stands', () => {
+  const ask = { title: 'Custom SSO', details: 'Okta', area: 'Auth', urgency: '', integrations: 'Okta', name: 'Rep', email: 'rep@edly.io', org: 'Edly' };
+  const stageOfDeal = (state: AppState, id = 'EST-1'): Estimation['stage'] => state.estimations.find((one) => one.id === id)?.stage;
+  const opened = (over: Partial<Estimation> = {}): AppState =>
+    workspace({ estimations: [estimation('EST-1', { stage: 'progress', ...over })], openEstimation: 'EST-1' });
+
+  it('starts a deal made from the hub In progress, or wherever it was asked to start', () => {
+    const made = reducer(workspace(), { type: 'createEstimation', input: { name: 'Acme Academy', client: '', tag: 'Active', due: '' } });
+    expect(made.estimations[0]?.stage).toBe('progress');
+    const logged = reducer(workspace(), { type: 'createEstimation', input: { name: 'Nordic University', client: '', tag: 'Active', due: '', stage: 'backlog' } });
+    expect(logged.estimations[0]?.stage).toBe('backlog');
+  });
+
+  it('moves a deal to another stage and counts it as an edit', () => {
+    const next = reducer(opened(), { type: 'patchEstimation', id: 'EST-1', patch: { stage: 'review' } });
+    expect(stageOfDeal(next)).toBe('review');
+    expect(next.estimations[0]?.up).toBe(today());
+  });
+
+  it('does nothing when a card is dropped back on its own column, so the deal does not jump up the hub', () => {
+    const state = opened();
+    expect(reducer(state, { type: 'patchEstimation', id: 'EST-1', patch: { stage: 'progress' } })).toBe(state);
+    /* a deal saved before stages reads as In progress, so moving it there is no change either */
+    const older = workspace({ estimations: [estimation('EST-1')] });
+    expect(reducer(older, { type: 'patchEstimation', id: 'EST-1', patch: { stage: 'progress' } })).toBe(older);
+    expect(reducer(older, { type: 'patchEstimation', id: 'EST-1', patch: { tag: 'Active' } })).toBe(older);
+    expect(reducer(older, { type: 'patchEstimation', id: 'EST-GONE', patch: { stage: 'done' } })).toBe(older);
+  });
+
+  it('keeps the tag and the stage apart: moving one never moves the other', () => {
+    const tagged = reducer(opened(), { type: 'patchEstimation', id: 'EST-1', patch: { tag: 'Closed' } });
+    expect(stageOfDeal(tagged)).toBe('progress');
+    const staged = reducer(tagged, { type: 'patchEstimation', id: 'EST-1', patch: { stage: 'review' } });
+    expect(staged.estimations[0]?.tag).toBe('Closed');
+  });
+
+  it('keeps the stage through closing the deal, when its draft is folded in', () => {
+    const next = run(opened(), { type: 'patchEstimation', id: 'EST-1', patch: { stage: 'rates' } }, { type: 'toggleSolution', id: 'SSO-1' }, { type: 'closeEstimation' });
+    expect(stageOfDeal(next)).toBe('rates');
+    expect(next.estimations[0]?.snap.sel['SSO-1']).toBe(true);
+  });
+
+  it('moves a deal still being built to Pending custom estimates when sales files a request, without counting it as an edit', () => {
+    const next = reducer(opened(), { type: 'addRequest', input: ask });
+    expect(stageOfDeal(next)).toBe('custom');
+    /* the deal did not change hands: sales is still in it */
+    expect(next.estimations[0]?.up).toBe('2026-01-01');
+    expect(stageOfDeal(reducer(opened({ stage: 'backlog' }), { type: 'addRequest', input: ask }))).toBe('custom');
+    /* and one saved before stages, which reads as In progress */
+    expect(stageOfDeal(reducer(opened({ stage: undefined }), { type: 'addRequest', input: ask }))).toBe('custom');
+  });
+
+  it('leaves a deal someone moved past building where they put it when a request is filed', () => {
+    for (const stage of ['rates', 'review', 'done'] as const) {
+      expect(stageOfDeal(reducer(opened({ stage }), { type: 'addRequest', input: ask }))).toBe(stage);
+    }
+  });
+
+  it('does not move a deal for a placeholder sales typed hours into', () => {
+    const state = opened();
+    const next = reducer(state, { type: 'addManualItem', title: 'Discovery workshop', hours: 12 });
+    expect(next.estimations).toBe(state.estimations);
+  });
+
+  it('hands the deal back to sales when the desk prices its last waiting request', () => {
+    const filed = run(opened(), { type: 'addRequest', input: ask }, { type: 'addRequest', input: { ...ask, title: 'Proctoring' } });
+    expect(stageOfDeal(filed)).toBe('custom');
+
+    const one = reducer(filed, { type: 'submitEstimate', id: 'RQ-01', submission });
+    /* one is still waiting */
+    expect(stageOfDeal(one)).toBe('custom');
+    const both = reducer(one, { type: 'submitEstimate', id: 'RQ-02', submission });
+    expect(stageOfDeal(both)).toBe('progress');
+    /* a recount, not an edit, like the totals: the deal keeps its place on the hub */
+    expect(both.estimations[0]?.up).toBe('2026-01-01');
+  });
+
+  it('does not move a deal when the desk only updates an estimate it already gave', () => {
+    const priced = run(opened(), { type: 'addRequest', input: ask }, { type: 'submitEstimate', id: 'RQ-01', submission });
+    /* someone put it back to wait on the desk for something that is not a request */
+    const parked = reducer(priced, { type: 'patchEstimation', id: 'EST-1', patch: { stage: 'custom' } });
+    const updated = reducer(parked, { type: 'submitEstimate', id: 'RQ-01', submission: { ...submission, hours: 30 } });
+    expect(stageOfDeal(updated)).toBe('custom');
+  });
+
+  it('leaves a deal in Pending rates, In review or Completed when its last request is priced', () => {
+    for (const stage of ['rates', 'review', 'done'] as const) {
+      const filed = run(opened(), { type: 'addRequest', input: ask }, { type: 'patchEstimation', id: 'EST-1', patch: { stage } });
+      expect(stageOfDeal(reducer(filed, { type: 'submitEstimate', id: 'RQ-01', submission }))).toBe(stage);
+    }
+  });
+
+  it('hands the deal back when its last waiting request is taken out, and not when a priced one is', () => {
+    const filed = reducer(opened(), { type: 'addRequest', input: ask });
+    expect(stageOfDeal(reducer(filed, { type: 'deleteRequest', id: 'RQ-01' }))).toBe('progress');
+
+    const priced = run(opened(), { type: 'addRequest', input: ask }, { type: 'submitEstimate', id: 'RQ-01', submission }, { type: 'patchEstimation', id: 'EST-1', patch: { stage: 'custom' } });
+    expect(stageOfDeal(reducer(priced, { type: 'deleteRequest', id: 'RQ-01' }))).toBe('custom');
+
+    const state = opened();
+    expect(reducer(state, { type: 'deleteRequest', id: 'RQ-99' })).toBe(state);
+  });
+
+  it('moves the demo like any deal, in memory, and keeps it out of what is saved', () => {
+    const booted = reducer(workspace(), { type: 'hydrate', payload: { estimations: [], requests: [], solutions: [], salesLegal: [] } });
+    expect(stageOfDeal(booted, DEMO_ID)).toBe('review');
+    const moved = reducer(booted, { type: 'patchEstimation', id: DEMO_ID, patch: { stage: 'done' } });
+    expect(stageOfDeal(moved, DEMO_ID)).toBe('done');
+    expect(toPersisted(moved).estimations).toEqual([]);
+    expect(stageOfDeal(reducer(moved, { type: 'resetDemo' }), DEMO_ID)).toBe('review');
+  });
+});
+
+describe('where a desk request stands', () => {
+  const desk = (over: Partial<EstimateRequest> = {}): AppState =>
+    workspace({ estimations: [estimation('EST-1', { stage: 'custom' })], requests: [request('RQ-01', { estId: 'EST-1', ...over })] });
+
+  it('moves a request the desk is working on, and back to Backlog by dropping the stage altogether', () => {
+    const picked = reducer(desk(), { type: 'setRequestStage', id: 'RQ-01', stage: 'progress' });
+    expect(picked.requests[0]?.stage).toBe('progress');
+    const asked = reducer(picked, { type: 'setRequestStage', id: 'RQ-01', stage: 'info' });
+    expect(asked.requests[0]?.stage).toBe('info');
+    /* how a request nobody has picked up reads back from the sheet, so a reload is not a change */
+    const back = reducer(asked, { type: 'setRequestStage', id: 'RQ-01', stage: 'backlog' });
+    expect(back.requests[0]).not.toHaveProperty('stage');
+  });
+
+  it('does not move a priced request, whose hours already say it is Estimated', () => {
+    const state = desk({ est: 16 });
+    expect(reducer(state, { type: 'setRequestStage', id: 'RQ-01', stage: 'review' })).toBe(state);
+  });
+
+  it('does nothing for a stage it already has or a request that is gone', () => {
+    const state = desk({ stage: 'review' });
+    expect(reducer(state, { type: 'setRequestStage', id: 'RQ-01', stage: 'review' })).toBe(state);
+    expect(reducer(state, { type: 'setRequestStage', id: 'RQ-99', stage: 'progress' })).toBe(state);
+    const fresh = desk();
+    expect(reducer(fresh, { type: 'setRequestStage', id: 'RQ-01', stage: 'backlog' })).toBe(fresh);
+  });
+
+  it('drops the desk stage once the hours go back, and hands the deal back to sales', () => {
+    const priced = run(desk({ stage: 'review' }), { type: 'submitEstimate', id: 'RQ-01', submission });
+    expect(priced.requests[0]).not.toHaveProperty('stage');
+    expect(priced.estimations[0]?.stage).toBe('progress');
+  });
+
+  it('never moves a deal when only a request stage changes', () => {
+    const state = desk();
+    expect(reducer(state, { type: 'setRequestStage', id: 'RQ-01', stage: 'progress' }).estimations).toBe(state.estimations);
   });
 });

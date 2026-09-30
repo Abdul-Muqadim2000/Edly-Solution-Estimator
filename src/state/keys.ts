@@ -25,6 +25,13 @@ export const STORAGE_KEYS = {
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
 
+/**
+ * Cards or board, for the hub and for the desk's queue. Kept apart from `STORAGE_KEYS` on purpose:
+ * this is one browser's preference, never synced, so one person's view does not become everyone's.
+ * Not in the URL either, where Back would flip it and a link to a deal would lose it.
+ */
+export const VIEW_KEYS = { hub: 'quotient-hub-view-v1', queue: 'quotient-queue-view-v1' } as const;
+
 /** Keys whose contents belong in the spreadsheet. */
 export const SYNCED_DATA_KEYS = [
   STORAGE_KEYS.estimations,
@@ -82,4 +89,24 @@ export function removeStorage(key: string): void {
  */
 export function changedSlices(previous: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>): string[] {
   return Object.keys(next).filter((key) => previous[key] !== next[key]);
+}
+
+/**
+ * `next`, keeping `previous`'s value for each array slice whose items are the very same records, in
+ * the same order. The demo is taken out of every slice before it is written (`toPersisted`), which
+ * makes a new array each time even when no real record changed, and `changedSlices` compares by
+ * reference: without this, every slice would be written on every change, the two-tab echo above.
+ */
+export function stableSlices(previous: Readonly<Record<string, unknown>>, next: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(next)) {
+    const before = previous[key];
+    const same =
+      Array.isArray(value) &&
+      Array.isArray(before) &&
+      before.length === value.length &&
+      value.every((item, index) => item === before[index]);
+    out[key] = same ? before : value;
+  }
+  return out;
 }

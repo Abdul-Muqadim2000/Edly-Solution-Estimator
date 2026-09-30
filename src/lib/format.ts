@@ -39,8 +39,9 @@ export function hours1(n: number): string {
   return (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
 }
 
-export function plural(n: number, word: string): string {
-  return `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
+/** "1 week", "3 weeks"; `many` for a word whose plural is not an added s, as in "7 people". */
+export function plural(n: number, word: string, many = `${word}s`): string {
+  return `${n.toLocaleString('en-US')} ${n === 1 ? word : many}`;
 }
 
 /**

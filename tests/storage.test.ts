@@ -7,6 +7,7 @@ import {
   changedSlices,
   readStorage,
   removeStorage,
+  stableSlices,
   STORAGE_KEYS,
   SYNCED_DATA_KEYS,
   SYNCED_SETTING_KEYS,
@@ -131,6 +132,35 @@ describe('browser storage', () => {
     expect(changedSlices(before, before)).toEqual([]);
     /* the first write after boot has nothing to compare with, so it writes everything */
     expect(changedSlices({}, before)).toEqual([STORAGE_KEYS.tenders, STORAGE_KEYS.estimations]);
+  });
+
+  it('keeps the slice last written when its records are the same ones, so taking the demo out writes nothing', () => {
+    /* The demo lives in memory beside the real records and is filtered out before each write, which
+       makes a new array every time. Compared by reference, every slice would then count as changed
+       on every render, and an idle tab would echo its copy over a sibling's, as above. */
+    const deal = { id: 'EST-1' };
+    const written = { [STORAGE_KEYS.estimations]: [deal] };
+    const filtered = [deal, { id: 'EST-DEMO' }].filter((one) => one.id !== 'EST-DEMO');
+
+    const slices = stableSlices(written, { [STORAGE_KEYS.estimations]: filtered });
+    expect(slices[STORAGE_KEYS.estimations]).toBe(written[STORAGE_KEYS.estimations]);
+    expect(changedSlices(written, slices)).toEqual([]);
+  });
+
+  it('takes the new slice when a record in it changed, came or went', () => {
+    const deal = { id: 'EST-1' };
+    const written = { [STORAGE_KEYS.estimations]: [deal] };
+    for (const next of [[{ ...deal }], [deal, { id: 'EST-2' }], []]) {
+      const slices = stableSlices(written, { [STORAGE_KEYS.estimations]: next });
+      expect(slices[STORAGE_KEYS.estimations]).toBe(next);
+      expect(changedSlices(written, slices)).toEqual([STORAGE_KEYS.estimations]);
+    }
+  });
+
+  it('compares anything that is not a list by reference, as before', () => {
+    const catalogs = { openedx: { bundles: [] } };
+    expect(stableSlices({ [STORAGE_KEYS.loadedCatalogs]: catalogs }, { [STORAGE_KEYS.loadedCatalogs]: { ...catalogs } })[STORAGE_KEYS.loadedCatalogs]).not.toBe(catalogs);
+    expect(stableSlices({}, { [STORAGE_KEYS.catalogSource]: null })[STORAGE_KEYS.catalogSource]).toBeNull();
   });
 });
 

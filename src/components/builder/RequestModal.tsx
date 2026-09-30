@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { mailOne } from '@/lib/mail';
 import { useApp } from '@/state/AppProvider';
-import { nextId, today } from '@/lib/format';
+import { today } from '@/lib/format';
+import { nextRequestId } from '@/state/reducer';
 import { color, font } from '@/theme';
 import { Button, Field, Modal, Row, Select, Spacer, TextArea } from '@/components/ui';
 
@@ -9,7 +10,7 @@ import { Button, Field, Modal, Row, Select, Spacer, TextArea } from '@/component
 export function RequestModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitted?: () => void }): JSX.Element {
   const { state, dispatch, catalog } = useApp();
   /* the mail quotes the id the reducer is about to assign, so both agree */
-  const nextRequestId = nextId('RQ', state.requests, 'id');
+  const requestId = nextRequestId(state);
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
   const [area, setArea] = useState('');
@@ -46,7 +47,7 @@ export function RequestModal({ onClose, onSubmitted }: { onClose: () => void; on
     /* the desk already has it; the email is a courtesy copy for the team's inbox */
     void mailOne({
       ...input,
-      id: nextRequestId,
+      id: requestId,
       plat: '',
       estId: '',
       estName: '',

@@ -30,8 +30,11 @@ src/
     salesLegal.ts       sales, account and legal items: what a tender offers, what the estimation keeps
     taskBreakdown.ts    the Excel sheet: deliverables per area, lines, totals, column choices
     team.ts             team composition: rate-card role and seniority, people and weeks from the plan
+    demo.ts             the demo estimation: built in, held in memory, never stored
+    stages.ts           where a deal and a desk request stand: the stages, reading them back, the
+                        moves filing and pricing make by themselves, and the boards' order
   state/
-    keys.ts             browser storage keys, and which are synced
+    keys.ts             browser storage keys, which are synced, and the per-browser Cards / Board choice
     reducer.ts          all workspace state and every transition (pure, exported)
     AppProvider.tsx     context: reducer + persistence + sync + routing + derived values
     useSync.ts          spreadsheet ↔ browser, with the three safety rules
@@ -55,6 +58,11 @@ src/
     tender/             tender intake: upload modal, then requirements, match, apply, and the
                         Sales, account and legal tab beside the steps
     salesLegal/         the status and team pieces the tab, the apply step and the panel share
+    Board.tsx           a kanban board: a column per stage, drag, Shift and an arrow key, a spoken move
+    stages.tsx          the stage chip, the six-step track, the menu that moves a deal or a request,
+                        and the Cards / Board switch
+    EstimationBoard.tsx the hub as a board
+    desk/RequestBoard.tsx  the desk's request queue as a board
     …                   remaining screens and primitives
   data/nav.ts           the real edly.io nav tree and links
   data/brand.ts         the product name, Quotient, and its logo files in public/brand/
@@ -260,6 +268,24 @@ extract (outOfScope) ─► match (kind out) ─► sort (team) ─┐
 tick at the start ─► after extraction: terms per document ─┴─► tab: accept, re-team, leave out
       ─► create the estimation ─► items copied ─► builder panel: owner, status, due, note ─► SalesAccountLegal sheet
 ```
+
+## The demo estimation
+
+Every Open edX hub opens with one finished deal to learn from, tagged Demo: 34 solutions from 14
+bundles, six custom requests the desk has priced, a seven-role rate card with every line assigned,
+a pinned nine-and-a-half-week plan, and the Excel sheet's cover and notes written. Decided with the
+user on 2026-09-30, and built in rather than stored.
+
+- **In memory beside the real records.** Its estimation, requests, desk estimates and sales and
+  legal items sit in the same collections as everything else, so every screen works on it without
+  knowing. The reducer adds them on the first `hydrate` and keeps them through every later read.
+- **Out of everything that is written.** `toPersisted` (browser storage and the store) and the
+  server's `coerceState` drop every record whose id is a demo id, and anything made inside the demo
+  takes one. A reload, or Reset, brings back the prepared version.
+- **Its estimates stay in the demo.** They join the catalog only while it is open, and an estimates
+  import never matches one, so a real deal cannot quote an invented hour.
+- **Dated from today.** Its deadline is three weeks out and its plan starts the Monday after five,
+  so it never goes overdue.
 
 ## Scoping
 
