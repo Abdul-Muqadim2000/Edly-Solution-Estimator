@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -13,9 +13,10 @@ import {
   SYNCED_SETTING_KEYS,
   writeStorage
 } from '../src/state/keys';
-import { discover, exportBytes, loadState, saveState, storeLabel } from '../server/store';
+import { discover, exportBytes, loadState, loadStore, loadUsers, saveState, saveUsers, storeLabel } from '../server/store';
+import { USER_COLUMNS, USERS_SHEET } from '../server/users';
 import { EMPTY_STATE } from '../server/schema';
-import { readWorkbook } from '../src/lib/xlsx';
+import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
 import type { AddedSolution, Estimation, PersistedState } from '../src/types';
 import { BEACON_LIMIT, pullStep, unloadPlan, type PullInput } from '../src/state/syncPolicy';
 
@@ -302,6 +303,117 @@ describe('the store layer', () => {
     /* store:probe has to print something useful when the credentials are missing entirely */
     process.env.EDLY_STORE = 'gsheet';
     expect(await storeLabel()).toContain('gsheet');
+  });
+});
+
+/* ------------------------------------------------- the accounts in a file store */
+
+describe('the accounts in a file store', () => {
+  let dir: string;
+  let path: string;
+  let previous: Record<string, string | undefined>;
+
+  const KEYS = ['EDLY_STORE', 'EDLY_STATE_PATH'];
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'edly-accounts-'));
+    path = join(dir, 'edly-state.xlsx');
+    previous = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
+    process.env.EDLY_STORE = 'local';
+    process.env.EDLY_STATE_PATH = path;
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const deal = (id: string): Estimation => ({
+    id,
+    plat: 'openedx',
+    name: `Deal ${id}`,
+    slug: id.toLowerCase(),
+    client: 'Nordic University',
+    tag: 'Active',
+    due: '',
+    at: '2026-09-01',
+    up: '2026-09-01',
+    total: 40,
+    cost: 4800,
+    items: 1,
+    snap: { sel: { 'OX-1': true }, buf: {}, bufPct: 0 },
+    assigned: [{ user: 'nadia', by: 'admin', at: '2026-09-30T09:00:00.000Z' }]
+  });
+
+  /** A Users tab as a person may have left it: a role in their own words, an @ typed, a note row that is no account. */
+  const handTyped = (): string[][] => [
+    [...USER_COLUMNS],
+    ['nadia', 'Nadia Rahman', 'Desk', '2026-09-01', '2026-09-02', 'pbkdf2-sha256$600000$c2FsdHNhbHRzYWx0c2FsdA==$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g='],
+    ['@Farid', 'Farid Anwar', 'estimator', '', '', ''],
+    ['two words', 'Not an account, a note someone typed', '', '', '', '']
+  ];
+
+  const tabsOnDisk = async (): Promise<Record<string, string[][]>> => readWorkbook(new Uint8Array(readFileSync(path)));
+
+  it('keeps a Users tab it did not write, cell for cell, through a save of the work', async () => {
+    writeFileSync(path, writeWorkbook({ Estimations: [['id', 'plat', 'name'], ['EST-OLD', 'openedx', 'Replaced by the save']], [USERS_SHEET]: handTyped() }));
+    const before = (await tabsOnDisk())[USERS_SHEET];
+    expect(before?.length).toBe(4);
+
+    await saveState({ ...EMPTY_STATE, estimations: [deal('EST-1')] });
+
+    const after = await tabsOnDisk();
+    /* carried over raw, not read into accounts and written back: the note row and the typed @ stay */
+    expect(after[USERS_SHEET]).toEqual(before);
+    expect((await loadState())?.estimations.map((one) => one.id)).toEqual(['EST-1']);
+  });
+
+  it('keeps the tab through save after save', async () => {
+    writeFileSync(path, writeWorkbook({ [USERS_SHEET]: handTyped() }));
+    const before = (await tabsOnDisk())[USERS_SHEET];
+    for (const id of ['EST-1', 'EST-2', 'EST-3']) await saveState({ ...EMPTY_STATE, estimations: [deal(id)] });
+    expect((await tabsOnDisk())[USERS_SHEET]).toEqual(before);
+    expect((await loadUsers()).map((one) => one.username)).toEqual(['nadia', 'farid']);
+  });
+
+  it('writes no Users tab into a store that never had one', async () => {
+    await saveState({ ...EMPTY_STATE, estimations: [deal('EST-1')] });
+    expect(Object.keys(await tabsOnDisk())).not.toContain(USERS_SHEET);
+  });
+
+  it('fails a save of the work over a file it cannot read, rather than write it without the accounts', async () => {
+    writeFileSync(path, 'this is not a zip');
+    await expect(saveState({ ...EMPTY_STATE, estimations: [deal('EST-1')] })).rejects.toThrow();
+    /* the file is left exactly as it was, for someone to look at */
+    expect(readFileSync(path, 'utf8')).toBe('this is not a zip');
+  });
+
+  it('reads a store holding only accounts as holding no work, and still hands back the accounts', async () => {
+    await saveUsers([{ username: 'nadia', name: 'Nadia Rahman', role: 'estimator', created: '2026-09-30', updated: '2026-09-30', hash: 'h' }]);
+    const { state, users } = await loadStore();
+    expect(state).toBeNull();
+    expect(users.map((one) => one.username)).toEqual(['nadia']);
+    expect(await loadState()).toBeNull();
+  });
+
+  it('saves the accounts without touching the work', async () => {
+    await saveState({ ...EMPTY_STATE, estimations: [deal('EST-1')], settings: { 'edly-workspace-v2': { display: { money: false } } } });
+    const before = await loadState();
+
+    await saveUsers([{ username: 'nadia', name: 'Nadia Rahman', role: 'estimator', created: '2026-09-30', updated: '2026-09-30', hash: 'h' }]);
+
+    expect(await loadState()).toEqual(before);
+    expect(before?.estimations[0]?.assigned).toEqual([{ user: 'nadia', by: 'admin', at: '2026-09-30T09:00:00.000Z' }]);
+    expect((await loadUsers()).map((one) => one.name)).toEqual(['Nadia Rahman']);
+  });
+
+  it('leaves the accounts out of the exported workbook', async () => {
+    writeFileSync(path, writeWorkbook({ [USERS_SHEET]: handTyped() }));
+    await saveState({ ...EMPTY_STATE, estimations: [deal('EST-1')] });
+    expect(Object.keys(await readWorkbook(await exportBytes()))).not.toContain(USERS_SHEET);
   });
 });
 

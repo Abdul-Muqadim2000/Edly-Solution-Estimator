@@ -57,6 +57,7 @@ const viewOf = (route: Route): ViewParts => {
 /** The route a given state is already showing. The projection, before view parts are folded in. */
 export function routeOfState(state: AppState): Route {
   if (!state.auth) return { screen: 'root' };
+  if (state.adminPanel) return { screen: 'admin' };
   if (!state.platform) return state.practice ? { screen: 'practices', practice: state.practice } : { screen: 'practices' };
 
   if (state.auth.role === 'estimator') {

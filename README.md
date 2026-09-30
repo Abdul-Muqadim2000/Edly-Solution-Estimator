@@ -22,7 +22,9 @@ bun run state:seed     # creates ./data/edly-state.xlsx
 bun dev                # http://localhost:3000
 ```
 
-Sign in with `admin` / `admin`, pick a role, then pick a practice and platform.
+Sign in with `admin` / `admin`, pick a role, then pick a practice and platform. The admin adds
+everyone else under Users (`/admin`): a name, a username, a role and a password, no email needed.
+They sign in with their own and land in their role's workspace.
 
 | Command | Does |
 |---|---|
@@ -275,8 +277,10 @@ still to come, are in DEFERRED.md.
 
 ## Notes and limits
 
-- **Sign-in is a demo gate** (`admin` / `admin`, client-side). Put Vercel Authentication or an SSO
-  proxy in front of the deployment before it holds live client numbers. Deep links make this more
+- **Sign-in checks a password, and nothing checks it after that.** The admin is `admin` with
+  `EDLY_ADMIN_PASSWORD` as its password (`admin` when unset); everyone else has an account the admin
+  made. Put Vercel Authentication or an SSO proxy in front of the deployment before it holds live
+  client numbers. Deep links make this more
   urgent, not less: a shared link names a deal, so the gate in front of it has to be real.
 - **`/api/state` is unauthenticated.** Anyone with the URL can read or overwrite your spreadsheet.
   The same gate fixes this.

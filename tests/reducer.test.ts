@@ -33,14 +33,18 @@ import {
   hubStats,
   nextRequestId,
   storedOpenEstimation,
+  inWorkspace,
   type Action,
   type AppState
 } from '../src/state/reducer';
+import { parseRoute } from '../src/lib/router';
+import { noticesFor } from '../src/domain/notifications';
+import { routeOfState } from '../src/state/useRouting';
 import { DEMO_ID, DEMO_SLUG, demoRecords, isDemoId, isDemoRequest, isDemoSolution } from '../src/domain/demo';
 import { today } from '../src/lib/format';
 import { TO_UNASSIGNED, toBundle, toNew, type EstimateRow } from '../src/domain/estimateImport';
 import { EMPTY_REVIEW, setGroup, setRow } from '../src/domain/importReview';
-import type { Catalog, EstimateRequest, Estimation, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
+import type { Catalog, EstimateRequest, Estimation, Person, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
 import { NO_TOKENS, type DeskDraft, type ExtractedRequirement, type NewTenderInput } from '../src/domain/tender';
 import { deleteTender } from '../src/state/deleteTender';
 
@@ -2318,5 +2322,479 @@ describe('where a desk request stands', () => {
   it('never moves a deal when only a request stage changes', () => {
     const state = desk();
     expect(reducer(state, { type: 'setRequestStage', id: 'RQ-01', stage: 'progress' }).estimations).toBe(state.estimations);
+  });
+});
+
+describe('what a person deleted, for a save that holds nothing', () => {
+  const legal = { text: 'Insurance certificate for the tender', category: 'legal' as const, owner: 'Legal', due: '', note: '', priority: 'must' as const };
+  const withDeal = (): AppState =>
+    run(
+      workspace({ estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })] }),
+      { type: 'addSalesLegal', estId: 'EST-1', input: legal }
+    );
+
+  it('names the deal a person deletes, and the requests and items that go with it', () => {
+    const state = withDeal();
+    const itemId = state.salesLegal[0]?.id ?? '';
+    const next = reducer(state, { type: 'deleteEstimation', id: 'EST-1' });
+    expect(new Set(next.deleted)).toEqual(new Set(['EST-1', 'RQ-01', itemId]));
+  });
+
+  it('sends that list with a save that holds nothing, so deleting the last deal is not refused', () => {
+    /* the demo is never stored, so this deal was the whole store; without the names the server
+       refused the empty save and the next read brought the deal back */
+    const next = reducer(withDeal(), { type: 'deleteEstimation', id: 'EST-1' });
+    const saved = toPersisted(next);
+    expect(saved.estimations).toEqual([]);
+    expect(new Set(saved.deleted)).toEqual(new Set(next.deleted));
+  });
+
+  it('sends no list with a save that still holds rows, which goes exactly as it always has', () => {
+    const state = workspace({ estimations: [estimation('EST-1'), estimation('EST-2')] });
+    const next = reducer(state, { type: 'deleteEstimation', id: 'EST-1' });
+    expect(next.deleted).toEqual(['EST-1']);
+    expect(toPersisted(next)).not.toHaveProperty('deleted');
+  });
+
+  it('never takes a read that comes back short for a delete', () => {
+    /* an empty read applied by mistake is the failure the server guard exists for; it must not
+       arrive at the server looking like a person's choice */
+    const state = withDeal();
+    const read = reducer(state, { type: 'hydrate', payload: { estimations: [], requests: [], salesLegal: [] } });
+    expect(read.deleted).toEqual([]);
+    expect(toPersisted(read)).not.toHaveProperty('deleted');
+    const merged = reducer(state, { type: 'mergeEstimations', estimations: [] });
+    expect(merged.deleted).toEqual([]);
+  });
+
+  it('names what each other delete removes: a request, a desk estimate, a bundle, a tender, an item', () => {
+    const state = workspace({
+      estimations: [estimation('EST-1')],
+      requests: [request('RQ-01', { estId: 'EST-1' })],
+      solutions: [{ id: 'CS-01', plat: 'openedx', bundleId: 'CB-01', name: 'Proctoring', desc: '', first: 8, repeat: 4, form: '', deploy: '', integrations: '', category: '', subCategory: '', account: '', notes: '', from: '', estAt: '2026-09-01' }],
+      bundles: [{ id: 'CB-01', plat: 'openedx', name: 'Compliance', pitch: '', offerWhen: '', pairsWith: null, at: '2026-09-01' }]
+    });
+    const next = run(
+      state,
+      { type: 'deleteRequest', id: 'RQ-01' },
+      { type: 'removeSolution', id: 'CS-01' },
+      { type: 'removeBundle', id: 'CB-01' }
+    );
+    expect(next.deleted).toEqual(['RQ-01', 'CS-01', 'CB-01']);
+  });
+
+  it('never names the demo, whose records are never stored', () => {
+    const booted = reducer(workspace(), { type: 'hydrate', payload: { estimations: [], requests: [], solutions: [], salesLegal: [] } });
+    const demoRequest = booted.requests.find((one) => one.estId === DEMO_ID);
+    const next = reducer(booted, { type: 'deleteRequest', id: demoRequest?.id ?? '' });
+    expect(next.requests.length).toBe(booted.requests.length - 1);
+    expect(next.deleted).toEqual([]);
+    /* and the demo itself cannot be deleted at all */
+    expect(reducer(booted, { type: 'deleteEstimation', id: DEMO_ID })).toBe(booted);
+  });
+
+  it('keeps each id once, however often it comes up', () => {
+    const state = workspace({ estimations: [estimation('EST-1')], deleted: ['EST-1'] });
+    expect(reducer(state, { type: 'deleteEstimation', id: 'EST-1' }).deleted).toEqual(['EST-1']);
+  });
+});
+
+/* ------------------------------------------------------------------ people */
+
+describe('who is on a deal or a request', () => {
+  const AT = '2026-09-30T09:00:00.000Z';
+  const LATER = '2026-09-30T11:00:00.000Z';
+  const as = (user: string, over: Partial<AppState> = {}): AppState =>
+    workspace({ auth: { user, role: 'sales', at: 0 }, estimations: [estimation('EST-1')], requests: [request('RQ-01', { estId: 'EST-1' })], ...over });
+  const assign = (ticket: 'deal' | 'request', id: string, users: string[], at: string = AT): Action => ({ type: 'setAssignees', ticket, id, users, at });
+
+  it('puts people on a deal, stamped with who did it and when, without counting it as an edit', () => {
+    const next = reducer(as('nadia'), assign('deal', 'EST-1', ['@Sara', 'muqadim']));
+    expect(next.estimations[0]?.assigned).toEqual([
+      { user: 'sara', by: 'nadia', at: AT },
+      { user: 'muqadim', by: 'nadia', at: AT }
+    ]);
+    /* the deal's numbers did not change, so it keeps its place on the hub */
+    expect(next.estimations[0]?.up).toBe('2026-01-01');
+  });
+
+  it('puts people on a desk request the same way, and leaves the deals alone', () => {
+    const state = as('sara');
+    const next = reducer(state, assign('request', 'RQ-01', ['muqadim']));
+    expect(next.requests[0]?.assigned).toEqual([{ user: 'muqadim', by: 'sara', at: AT }]);
+    expect(next.estimations).toBe(state.estimations);
+  });
+
+  it('keeps who put someone on and when, when the list is saved again with more people', () => {
+    /* a new stamp would be a new notification for someone who was already told */
+    const first = reducer(as('nadia'), assign('deal', 'EST-1', ['sara']));
+    const second = reducer({ ...first, auth: { user: 'omar', role: 'sales', at: 0 } }, assign('deal', 'EST-1', ['sara', 'muqadim'], LATER));
+    expect(second.estimations[0]?.assigned).toEqual([
+      { user: 'sara', by: 'nadia', at: AT },
+      { user: 'muqadim', by: 'omar', at: LATER }
+    ]);
+  });
+
+  it('stamps the time itself when none is given', () => {
+    const next = reducer(as('nadia'), { type: 'setAssignees', ticket: 'request', id: 'RQ-01', users: ['sara'] });
+    const at = next.requests[0]?.assigned?.[0]?.at ?? '';
+    expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(Number.isNaN(Date.parse(at))).toBe(false);
+  });
+
+  it('records the admin as who assigned, when the admin did it', () => {
+    const next = reducer(as('admin'), assign('deal', 'EST-1', ['sara']));
+    expect(next.estimations[0]?.assigned?.[0]?.by).toBe('admin');
+  });
+
+  it('takes everyone off by removing the entry, which is how a ticket nobody is on reads back', () => {
+    const on = run(as('nadia'), assign('deal', 'EST-1', ['sara']), assign('request', 'RQ-01', ['muqadim']));
+    const off = run(on, assign('deal', 'EST-1', []), assign('request', 'RQ-01', []));
+    expect(off.estimations[0]).not.toHaveProperty('assigned');
+    expect(off.requests[0]).not.toHaveProperty('assigned');
+  });
+
+  it('hands back the same state when nothing would change, so no save is made', () => {
+    const on = reducer(as('nadia'), assign('deal', 'EST-1', ['sara', 'muqadim']));
+    /* the same people in the same order, however they were typed, and whenever */
+    expect(reducer(on, assign('deal', 'EST-1', ['@SARA', 'muqadim', 'sara'], LATER))).toBe(on);
+    const nobody = as('nadia');
+    expect(reducer(nobody, assign('request', 'RQ-01', []))).toBe(nobody);
+    expect(reducer(nobody, assign('deal', 'EST-1', [' ']))).toBe(nobody);
+    expect(reducer(nobody, assign('deal', 'EST-GONE', ['sara']))).toBe(nobody);
+    expect(reducer(nobody, assign('request', 'RQ-99', ['sara']))).toBe(nobody);
+  });
+
+  it('puts nobody on the demo or its requests, whose records are never stored', () => {
+    /* a notification is read from the stored records, so nobody on the demo would ever be told */
+    const booted = reducer(as('nadia'), { type: 'hydrate', payload: { estimations: [], requests: [], solutions: [], salesLegal: [] } });
+    const demoRequest = booted.requests.find((one) => one.estId === DEMO_ID);
+    expect(demoRequest).toBeDefined();
+    expect(reducer(booted, assign('deal', DEMO_ID, ['sara']))).toBe(booted);
+    expect(reducer(booted, assign('request', demoRequest?.id ?? '', ['sara']))).toBe(booted);
+  });
+
+  it('keeps the people on an open deal when its draft is folded in, and saves them', () => {
+    const open = as('nadia', { openEstimation: 'EST-1', draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-1': true } } });
+    const assigned = reducer(open, assign('deal', 'EST-1', ['sara']));
+    expect(toPersisted(assigned).estimations[0]?.assigned).toEqual([{ user: 'sara', by: 'nadia', at: AT }]);
+    const closed = reducer(assigned, { type: 'closeEstimation' });
+    expect(closed.estimations[0]?.assigned).toEqual([{ user: 'sara', by: 'nadia', at: AT }]);
+    expect(closed.estimations[0]?.snap.sel).toEqual({ 'OX-1': true });
+  });
+});
+
+describe('filing a request as someone', () => {
+  const ask = { title: 'Custom SSO', details: 'Okta', area: 'Auth', urgency: '', integrations: 'Okta', name: 'Sara', email: 'sara@edly.io', org: 'Edly' };
+  const opened = (): AppState => workspace({ auth: { user: 'sara', role: 'sales', at: 0 }, estimations: [estimation('EST-1')], openEstimation: 'EST-1' });
+
+  it('records who filed it, which is who is told when the hours come back', () => {
+    expect(reducer(opened(), { type: 'addRequest', input: ask }).requests[0]?.by).toBe('sara');
+  });
+
+  it('puts the people named on it as it is filed, once each, stamped with the filer', () => {
+    const filed = reducer(opened(), { type: 'addRequest', input: { ...ask, assign: ['@Muqadim', 'nadia', 'muqadim'] } }).requests[0];
+    expect(filed?.assigned?.map((one) => one.user)).toEqual(['muqadim', 'nadia']);
+    expect(filed?.assigned?.every((one) => one.by === 'sara' && !Number.isNaN(Date.parse(one.at)))).toBe(true);
+    /* the list to assign is an instruction, not a field the request keeps */
+    expect(filed).not.toHaveProperty('assign');
+  });
+
+  it('files a request with nobody on it when nobody is named', () => {
+    expect(reducer(opened(), { type: 'addRequest', input: ask }).requests[0]).not.toHaveProperty('assigned');
+    expect(reducer(opened(), { type: 'addRequest', input: { ...ask, assign: [] } }).requests[0]).not.toHaveProperty('assigned');
+  });
+
+  it('puts nobody on a request filed on the demo', () => {
+    const booted = reducer(opened(), { type: 'hydrate', payload: { estimations: [], requests: [], solutions: [], salesLegal: [] } });
+    const next = run(booted, { type: 'openEstimation', id: DEMO_ID }, { type: 'addRequest', input: { ...ask, assign: ['muqadim'] } });
+    const filed = next.requests.at(-1);
+    expect(filed?.estId).toBe(DEMO_ID);
+    expect(filed).not.toHaveProperty('assigned');
+  });
+});
+
+describe('what the desk records for the bell', () => {
+  const NOW = '2026-09-30T12:34:56.000Z';
+  const desk = (over: Partial<EstimateRequest> = {}): AppState =>
+    workspace({
+      auth: { user: 'muqadim', role: 'estimator', at: 0 },
+      estimations: [estimation('EST-1', { stage: 'custom' })],
+      requests: [request('RQ-01', { estId: 'EST-1', by: 'sara', ...over })]
+    });
+
+  afterEach(() => vi.useRealTimers());
+  const at = (iso: string): void => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(iso));
+  };
+
+  it('records who moved a request and when, which is what a Needs info notice names', () => {
+    at(NOW);
+    const asked = reducer(desk(), { type: 'setRequestStage', id: 'RQ-01', stage: 'info' });
+    expect(asked.requests[0]?.staged).toEqual({ by: 'muqadim', at: NOW });
+  });
+
+  it('records the move back to Backlog as well, with the stage itself left out', () => {
+    at(NOW);
+    const back = reducer(desk({ stage: 'info', staged: { by: 'nadia', at: '2026-09-29T08:00:00.000Z' } }), { type: 'setRequestStage', id: 'RQ-01', stage: 'backlog' });
+    expect(back.requests[0]).not.toHaveProperty('stage');
+    expect(back.requests[0]?.staged).toEqual({ by: 'muqadim', at: NOW });
+  });
+
+  it('records who returned the hours and when, to the second', () => {
+    at(NOW);
+    const priced = reducer(desk(), { type: 'submitEstimate', id: 'RQ-01', submission });
+    expect(priced.requests[0]?.priced).toEqual({ by: 'muqadim', at: NOW });
+    /* estBy stays what the form said; priced is the username the bell names */
+    expect(priced.requests[0]?.estBy).toBe('desk@edly.io');
+  });
+
+  it('records a new time when the desk prices a request again, so the filer is told again', () => {
+    at(NOW);
+    const once = reducer(desk(), { type: 'submitEstimate', id: 'RQ-01', submission });
+    at('2026-10-01T09:00:00.000Z');
+    const again = reducer(once, { type: 'submitEstimate', id: 'RQ-01', submission: { ...submission, hours: 30 } });
+    expect(again.requests[0]?.priced?.at).toBe('2026-10-01T09:00:00.000Z');
+  });
+
+  it('tells the filer each step: the question, then the hours, and never both at once', () => {
+    at(NOW);
+    const asked = reducer(desk(), { type: 'setRequestStage', id: 'RQ-01', stage: 'info' });
+    const told = noticesFor('sara', asked);
+    expect(told.map((one) => one.kind)).toEqual(['info']);
+    at('2026-09-30T15:00:00.000Z');
+    const priced = reducer(asked, { type: 'submitEstimate', id: 'RQ-01', submission });
+    expect(noticesFor('sara', priced).map((one) => `${one.kind} ${one.hours ?? ''}`.trim())).toEqual(['estimated 24']);
+    /* the desk did both, so it is told of neither */
+    expect(noticesFor('muqadim', priced)).toEqual([]);
+  });
+});
+
+describe('signing in as a person', () => {
+  it('keeps the display name on the session', () => {
+    const next = reducer(workspace({ auth: null }), { type: 'signIn', user: 'sara', role: 'estimator', name: 'Sara Khan' });
+    expect(next.auth).toMatchObject({ user: 'sara', role: 'estimator', name: 'Sara Khan' });
+  });
+
+  it('leaves the name out when none is given, as on a session from before names', () => {
+    expect(reducer(workspace({ auth: null }), { type: 'signIn', user: 'admin', role: 'sales' }).auth).not.toHaveProperty('name');
+  });
+
+  it('closes the admin panel for whoever signs in next, and on the way out', () => {
+    expect(reducer(workspace({ adminPanel: true }), { type: 'signIn', user: 'sara', role: 'sales', name: 'Sara Khan' }).adminPanel).toBe(false);
+    expect(reducer(workspace({ adminPanel: true }), { type: 'signOut' }).adminPanel).toBe(false);
+  });
+});
+
+describe('the list of people from each read', () => {
+  const sara: Person = { username: 'sara', name: 'Sara Khan', role: 'sales' };
+  const omar: Person = { username: 'omar', name: 'Omar Farooq', role: 'estimator' };
+  const saraSignedIn = { user: 'sara', role: 'sales' as const, at: 0, name: 'Sara Khan' };
+  const as = (auth: AppState['auth'], over: Partial<AppState> = {}): AppState => workspace({ auth, estimations: [estimation('EST-1')], ...over });
+
+  it('keeps the list for the @ picker and the bell', () => {
+    const next = reducer(as({ user: 'admin', role: 'sales', at: 0 }), { type: 'setPeople', people: [sara, omar] });
+    expect(next.people).toEqual([sara, omar]);
+  });
+
+  it('changes nothing when a read lists the same people, so nothing renders or saves again', () => {
+    const state = as(saraSignedIn, { people: [sara, omar] });
+    expect(reducer(state, { type: 'setPeople', people: [{ ...sara }, { ...omar }] })).toBe(state);
+    const admin = as({ user: 'admin', role: 'sales', at: 0 }, { people: [sara] });
+    expect(reducer(admin, { type: 'setPeople', people: [{ ...sara }] })).toBe(admin);
+    const signedOut = as(null, { people: [sara] });
+    expect(reducer(signedOut, { type: 'setPeople', people: [{ ...sara }] })).toBe(signedOut);
+  });
+
+  it("puts a new name on the signed-in person's session, and leaves them where they are", () => {
+    const next = reducer(as(saraSignedIn, { openEstimation: 'EST-1' }), { type: 'setPeople', people: [{ ...sara, name: 'Sara K.' }] });
+    expect(next.auth).toMatchObject({ user: 'sara', role: 'sales', name: 'Sara K.' });
+    expect(next.openEstimation).toBe('EST-1');
+  });
+
+  it('names a session signed in before names were kept, on the first read', () => {
+    const next = reducer(as({ user: 'sara', role: 'sales', at: 0 }), { type: 'setPeople', people: [sara] });
+    expect(next.auth?.name).toBe('Sara Khan');
+  });
+
+  it('moves a person whose role changed to the home of their new workspace, keeping what they were editing', () => {
+    const state = as(saraSignedIn, {
+      openEstimation: 'EST-1',
+      draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-1': true } },
+      openTender: 'TND-1',
+      deskTab: 'add',
+      deskView: 'EST-1'
+    });
+    const next = reducer(state, { type: 'setPeople', people: [{ ...sara, role: 'estimator' }] });
+    expect(next.auth).toMatchObject({ user: 'sara', role: 'estimator' });
+    expect(next.openEstimation).toBeNull();
+    expect(next.openTender).toBeNull();
+    expect(next.deskView).toBeNull();
+    expect(next.platform).toBe('openedx');
+    expect(routeOfState(next)).toEqual({ screen: 'desk', platform: 'openedx', tab: 'queue' });
+    /* the deal they had open was committed on the way, not dropped */
+    expect(next.estimations[0]?.snap.sel).toEqual({ 'OX-1': true });
+  });
+
+  it('changes only the role of a person still choosing a platform', () => {
+    const next = reducer(as(saraSignedIn, { platform: '' }), { type: 'setPeople', people: [{ ...sara, role: 'estimator' }] });
+    expect(next.auth?.role).toBe('estimator');
+    expect(next.platform).toBe('');
+  });
+
+  it('signs out a person the admin removed, keeping the edits of the deal they had open', () => {
+    const state = as(saraSignedIn, { openEstimation: 'EST-1', draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-2': true } } });
+    const next = reducer(state, { type: 'setPeople', people: [omar] });
+    expect(next.auth).toBeNull();
+    expect(next.people).toEqual([omar]);
+    expect(toPersisted(next).estimations[0]?.snap.sel).toEqual({ 'OX-2': true });
+  });
+
+  it('signs nobody out on a list that came back empty, which says nothing about who was removed', () => {
+    const next = reducer(as(saraSignedIn, { people: [sara] }), { type: 'setPeople', people: [] });
+    expect(next.auth?.user).toBe('sara');
+    expect(next.people).toEqual([]);
+  });
+
+  it('never signs out or moves the admin, who is on no list', () => {
+    const state = as({ user: 'admin', role: 'estimator', at: 0 }, { openEstimation: 'EST-1' });
+    const next = reducer(state, { type: 'setPeople', people: [sara] });
+    expect(next.auth).toEqual(state.auth);
+    expect(next.openEstimation).toBe('EST-1');
+  });
+});
+
+describe('a link followed by someone locked to their workspace', () => {
+  const as = (user: string, role: 'sales' | 'estimator', over: Partial<AppState> = {}): AppState =>
+    workspace({
+      auth: { user, role, at: 0 },
+      estimations: [estimation('EST-1', { name: 'Acme Academy', slug: 'acme-academy' }), estimation('EST-2', { plat: 'moodle', name: 'Nordic University', slug: 'nordic-university' })],
+      ...over
+    });
+  const follow = (state: AppState, url: string): AppState => reducer(state, { type: 'applyRoute', route: parseRoute(url) });
+
+  it('opens a desk link to a deal in the builder for a sales person', () => {
+    const next = follow(as('sara', 'sales'), '/p/openedx/desk/e/acme-academy');
+    expect(next.auth?.role).toBe('sales');
+    expect(next.openEstimation).toBe('EST-1');
+    expect(routeOfState(next)).toEqual({ screen: 'builder', platform: 'openedx', estimation: 'acme-academy' });
+  });
+
+  it('opens any other desk link on the hub for a sales person', () => {
+    for (const url of ['/p/openedx/desk', '/p/openedx/desk/add']) {
+      const next = follow(as('sara', 'sales', { openEstimation: 'EST-1' }), url);
+      expect(next.auth?.role).toBe('sales');
+      expect(routeOfState(next)).toEqual({ screen: 'hub', platform: 'openedx' });
+    }
+  });
+
+  it('opens a deal link on the desk page for that deal for an estimator', () => {
+    const next = follow(as('muqadim', 'estimator'), '/p/openedx/e/acme-academy');
+    expect(next.auth?.role).toBe('estimator');
+    expect(next.deskView).toBe('EST-1');
+    expect(routeOfState(next)).toEqual({ screen: 'desk', platform: 'openedx', estimation: 'acme-academy', tab: 'estimations' });
+    /* a bundle or the planner on the link does not change which deal it is */
+    expect(follow(as('muqadim', 'estimator'), '/p/openedx/e/acme-academy/b/B03?plan=1').deskView).toBe('EST-1');
+  });
+
+  it('opens the hub or a tender link on the desk queue for an estimator', () => {
+    for (const url of ['/p/openedx', '/p/openedx/t/nordic-university-tender']) {
+      const next = follow(as('muqadim', 'estimator', { deskTab: 'add' }), url);
+      expect(next.auth?.role).toBe('estimator');
+      expect(routeOfState(next)).toEqual({ screen: 'desk', platform: 'openedx', tab: 'queue' });
+    }
+  });
+
+  it('follows a link into another platform, in their own workspace', () => {
+    const next = follow(as('muqadim', 'estimator'), '/p/moodle/e/nordic-university');
+    expect(next.platform).toBe('moodle');
+    expect(routeOfState(next)).toEqual({ screen: 'desk', platform: 'moodle', estimation: 'nordic-university', tab: 'estimations' });
+  });
+
+  it('still lets the admin switch workspace by following a link', () => {
+    const atDesk = follow(as('admin', 'sales'), '/p/openedx/desk/e/acme-academy');
+    expect(atDesk.auth?.role).toBe('estimator');
+    expect(atDesk.deskView).toBe('EST-1');
+    const back = follow(atDesk, '/p/openedx/e/acme-academy');
+    expect(back.auth?.role).toBe('sales');
+    expect(back.openEstimation).toBe('EST-1');
+  });
+
+  it('opens the admin panel over whatever was open, committing its draft, and any other link closes it', () => {
+    const building = as('admin', 'sales', { openEstimation: 'EST-1', draft: { ...EMPTY_SNAPSHOT, sel: { 'OX-1': true } } });
+    const panel = follow(building, '/admin');
+    expect(panel.adminPanel).toBe(true);
+    expect(panel.estimations[0]?.snap.sel).toEqual({ 'OX-1': true });
+    expect(routeOfState(panel)).toEqual({ screen: 'admin' });
+
+    const left = follow(panel, '/p/openedx');
+    expect(left.adminPanel).toBe(false);
+    expect(routeOfState(left)).toEqual({ screen: 'hub', platform: 'openedx' });
+    expect(follow(panel, '/practices').adminPanel).toBe(false);
+  });
+
+  it('ignores a link to the admin panel when nobody is signed in', () => {
+    const out = workspace({ auth: null });
+    expect(follow(out, '/admin')).toBe(out);
+  });
+});
+
+describe('inWorkspace', () => {
+  it('passes the root, the picker and the admin panel unchanged, whatever the role', () => {
+    for (const role of ['sales', 'estimator'] as const) {
+      for (const url of ['/', '/practices', '/practices/edtech', '/admin']) {
+        expect(inWorkspace(parseRoute(url), role)).toEqual(parseRoute(url));
+      }
+    }
+  });
+
+  it("passes a role's own links unchanged", () => {
+    for (const url of ['/p/openedx', '/p/openedx/e/acme-academy', '/p/openedx/e/acme-academy/b/B03?q=sso', '/p/openedx/t/nordic-tender']) {
+      expect(inWorkspace(parseRoute(url), 'sales')).toEqual(parseRoute(url));
+    }
+    for (const url of ['/p/openedx/desk', '/p/openedx/desk/add', '/p/openedx/desk/e/acme-academy']) {
+      expect(inWorkspace(parseRoute(url), 'estimator')).toEqual(parseRoute(url));
+    }
+  });
+
+  it('turns a desk link into the deal in the builder, or the hub, for sales', () => {
+    expect(inWorkspace(parseRoute('/p/openedx/desk/e/acme-academy'), 'sales')).toEqual({ screen: 'builder', platform: 'openedx', estimation: 'acme-academy' });
+    expect(inWorkspace(parseRoute('/p/openedx/desk/add'), 'sales')).toEqual({ screen: 'hub', platform: 'openedx' });
+  });
+
+  it('turns a deal link into its desk page, and anything else into the queue, for an estimator', () => {
+    expect(inWorkspace(parseRoute('/p/openedx/e/acme-academy/b/B03?q=sso&plan=1'), 'estimator')).toEqual({
+      screen: 'desk',
+      platform: 'openedx',
+      estimation: 'acme-academy',
+      tab: 'estimations'
+    });
+    expect(inWorkspace(parseRoute('/p/openedx'), 'estimator')).toEqual({ screen: 'desk', platform: 'openedx', tab: 'queue' });
+    expect(inWorkspace(parseRoute('/p/openedx/t/nordic-tender'), 'estimator')).toEqual({ screen: 'desk', platform: 'openedx', tab: 'queue' });
+  });
+
+  it('names no platform when the link named none', () => {
+    expect(inWorkspace({ screen: 'desk' }, 'sales')).toEqual({ screen: 'hub' });
+    expect(inWorkspace({ screen: 'hub' }, 'estimator')).toEqual({ screen: 'desk', tab: 'queue' });
+  });
+});
+
+describe('what of the people is saved', () => {
+  it("never saves the list of people or the admin panel, which are the server's and the tab's", () => {
+    /* the accounts are the admin panel's to change through /api/users; a browser that saved its
+       copy back would have nowhere to put it, and one that could would undo the admin's changes */
+    const state = workspace({ people: [{ username: 'sara', name: 'Sara Khan', role: 'sales' }], adminPanel: true, estimations: [estimation('EST-1')] });
+    const saved = toPersisted(state);
+    expect(saved).not.toHaveProperty('people');
+    expect(saved).not.toHaveProperty('adminPanel');
+    expect(Object.keys(saved).sort()).toEqual(['bundles', 'estimations', 'knowsPeople', 'requests', 'salesLegal', 'settings', 'solutions', 'tenders']);
+  });
+
+  /* without it the server takes the save for one from a tab on an older build and keeps the stored
+     people, so taking the last person off a ticket would never save */
+  it('marks every save as coming from a build that knows who is on a ticket', () => {
+    expect(toPersisted(workspace({ estimations: [estimation('EST-1')] })).knowsPeople).toBe(true);
+    expect(toPersisted(workspace({})).knowsPeople).toBe(true);
   });
 });

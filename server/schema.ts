@@ -1,5 +1,6 @@
 import type {
   AddedBundle,
+  Assignment,
   AddedSolution,
   EstimateRequest,
   Estimation,
@@ -16,6 +17,7 @@ import { usdOf } from '../src/domain/aiPrice.js';
 import { aiSpent, aiStep, DEFAULT_AI_LIMIT } from '../src/domain/tender.js';
 import { categoryLabel, readCategory, readDay, readStatus, readTopic, statusLabel, topicLabel } from '../src/domain/salesLegal.js';
 import { withoutDemo } from '../src/domain/demo.js';
+import { assignedDetail, assignedLabel, normalUsername, readAssigned, readEvent } from '../src/domain/people.js';
 import { defaultStage, readRequestStage, readStage, stageLabel, stageOf, ticketLabel, ticketStage } from '../src/domain/stages.js';
 
 /**
@@ -40,14 +42,20 @@ export const COLUMNS = {
   /* `slug` sits beside `name` rather than at the end: every column is read by name, so inserting
      one cannot break an older file, and burying it past the 28 KB snapshotJson cell would defeat
      the point of keeping the scalar columns scannable in Excel. */
-  estimations: ['id', 'plat', 'name', 'slug', 'client', 'tag', 'stage', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions', 'snapshotJson'],
+  estimations: [
+    'id', 'plat', 'name', 'slug', 'client', 'tag', 'stage', 'assignedTo', 'due', 'created', 'updated', 'totalHours', 'cost', 'solutions',
+    'assignedJson', 'snapshotJson'
+  ],
   /* `stage` and `status` are written as the words a person reads ("In review", "Needs info") and
      read back from whatever a person typed there, like the sales and legal list. A row from before
      either existed has a blank there: a deal reads as Completed when tagged Closed and In progress
      otherwise, and a request as Backlog. A priced request is written as Estimated, and its hours,
-     not the word, are what say so on the way back. */
+     not the word, are what say so on the way back.
+     `assignedTo` is the people on a deal or a request, as "@muqadim, @sara", and it is what says who
+     on the way back, so a name typed there assigns that person and one deleted there unassigns them.
+     Who assigned each and when sits in JSON beside it (`assignedJson`, or the request's `extraJson`). */
   requests: [
-    'id', 'plat', 'estimationId', 'estimationName', 'client', 'title', 'status', 'details', 'area', 'urgency',
+    'id', 'plat', 'estimationId', 'estimationName', 'client', 'title', 'status', 'assignedTo', 'details', 'area', 'urgency',
     'integrations', 'requestedBy', 'email', 'org', 'submitted', 'estimateHours', 'repeatHours',
     'catalogId', 'bundleId', 'estimatedBy', 'estimatedOn', 'note', 'tenderId', 'tenderRequirement', 'extraJson'
   ],
@@ -121,6 +129,8 @@ const fromJson = <T>(value: unknown): T | null => {
 };
 
 const TAGS: EstimationTag[] = ['Active', 'Urgent', 'On hold', 'Closed'];
+
+const assignedField = (assigned: Assignment[]): Pick<Estimation, 'assigned'> => (assigned.length > 0 ? { assigned } : {});
 const asTag = (value: unknown): EstimationTag => (TAGS.includes(value as EstimationTag) ? (value as EstimationTag) : 'Active');
 
 /* ------------------------------------------------------- state → rows ---- */
@@ -132,8 +142,9 @@ export function stateToSheets(state: PersistedState): WriteSheets {
   const estimations = header('estimations');
   for (const e of state.estimations ?? []) {
     estimations.push([
-      str(e.id), str(e.plat || 'openedx'), str(e.name), str(e.slug), str(e.client), str(e.tag || 'Active'), stageLabel(stageOf(e)), str(e.due),
-      str(e.at), str(e.up), Number(e.total ?? 0), Number(e.cost ?? 0), Number(e.items ?? 0), toJson(e.snap)
+      str(e.id), str(e.plat || 'openedx'), str(e.name), str(e.slug), str(e.client), str(e.tag || 'Active'), stageLabel(stageOf(e)),
+      assignedLabel(e.assigned), str(e.due), str(e.at), str(e.up), Number(e.total ?? 0), Number(e.cost ?? 0), Number(e.items ?? 0),
+      assignedDetail(e.assigned), toJson(e.snap)
     ]);
   }
   sheets[SHEETS.estimations] = estimations;
@@ -142,7 +153,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
   for (const r of state.requests ?? []) {
     requests.push([
       str(r.id), str(r.plat || 'openedx'), str(r.estId), str(r.estName), str(r.client), str(r.title), ticketLabel(ticketStage(r)),
-      str(r.details), str(r.area), str(r.urgency), str(r.integrations), str(r.name), str(r.email), str(r.org),
+      assignedLabel(r.assigned), str(r.details), str(r.area), str(r.urgency), str(r.integrations), str(r.name), str(r.email), str(r.org),
       str(r.at),
       r.est !== undefined && r.est !== null ? Number(r.est) : '',
       r.repeatEst !== undefined && r.repeatEst !== null ? Number(r.repeatEst) : '',
@@ -150,7 +161,9 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       toJson({
         manual: Boolean(r.manual),
         catForm: r.catForm, catDeploy: r.catDeploy, catInteg: r.catInteg,
-        catCategory: r.catCategory, catSub: r.catSub, catAccount: r.catAccount
+        catCategory: r.catCategory, catSub: r.catSub, catAccount: r.catAccount,
+        /* who filed it, who is on it and who last moved or priced it: what notifications are made from */
+        by: r.by || undefined, assigned: r.assigned?.length ? r.assigned : undefined, staged: r.staged, priced: r.priced
       })
     ]);
   }
@@ -235,7 +248,8 @@ export function stateToSheets(state: PersistedState): WriteSheets {
 
 /* ------------------------------------------------------- rows → state ---- */
 
-function objects(table: SheetTable | undefined): Record<string, string>[] {
+/** A tab's rows as objects keyed by its header, skipping blank rows. Columns are read by name, never by position. */
+export function objects(table: SheetTable | undefined): Record<string, string>[] {
   if (!table || table.length === 0) return [];
   const header = (table[0] ?? []).map((h) => String(h ?? '').trim());
   return table
@@ -269,7 +283,9 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       total: num(r.totalHours) ?? 0,
       cost: num(r.cost) ?? 0,
       items: num(r.solutions) ?? 0,
-      snap: fromJson<EstimationSnapshot>(r.snapshotJson) ?? { sel: {}, buf: {}, bufPct: 0 }
+      snap: fromJson<EstimationSnapshot>(r.snapshotJson) ?? { sel: {}, buf: {}, bufPct: 0 },
+      /* set only when someone is on it, so a deal nobody is on reads back exactly as it was written */
+      ...assignedField(readAssigned(r.assignedTo, r.assignedJson))
     }))
       .filter((e) => e.id)
   );
@@ -309,6 +325,14 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       const repeat = num(r.repeatHours);
       if (repeat !== null) out.repeatEst = repeat;
       if (extra.manual) out.manual = true;
+      const by = normalUsername(extra.by);
+      if (by) out.by = by;
+      const assigned = readAssigned(r.assignedTo, extra.assigned);
+      if (assigned.length > 0) out.assigned = assigned;
+      const staged = readEvent(extra.staged);
+      if (staged) out.staged = staged;
+      const priced = readEvent(extra.priced);
+      if (priced) out.priced = priced;
       for (const key of ['catForm', 'catDeploy', 'catInteg', 'catCategory', 'catSub', 'catAccount'] as const) {
         const value = extra[key];
         if (typeof value === 'string' && value) out[key] = value;
@@ -550,6 +574,23 @@ export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solu
 export function countRows(state: PersistedState | null): number {
   if (!state) return 0;
   return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length + state.salesLegal.length;
+}
+
+/**
+ * Whether a save that holds no rows names every row the store holds as one a person deleted.
+ *
+ * The demo is never stored, so deleting the last real deal leaves nothing to save, and the guard
+ * that stops a browser which lost its data from blanking the store refused it. A person's deletes
+ * are named by id (`deleted`, kept by the reducer), and an empty save goes through only when those
+ * names cover the whole store. A browser that lost its data names nothing, and a row another tab
+ * added since is not named, so both are still refused.
+ */
+export function namesEveryRow(stored: PersistedState | null, deleted: unknown): boolean {
+  if (!Array.isArray(deleted)) return false;
+  const named = new Set(deleted.filter((id): id is string => typeof id === 'string' && id !== ''));
+  if (named.size === 0) return false;
+  const rows = [stored?.estimations, stored?.requests, stored?.solutions, stored?.bundles, stored?.tenders, stored?.salesLegal];
+  return rows.every((list) => (list ?? []).every((row) => named.has(row.id)));
 }
 
 /**

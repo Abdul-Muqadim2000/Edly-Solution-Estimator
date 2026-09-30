@@ -11,6 +11,7 @@ import { TenderWorkspace } from '@/components/tender/TenderWorkspace';
 import { SyncPill } from '@/components/AppHeader';
 import { AppFooter } from '@/components/Brand';
 import { QuoteSheet } from '@/components/QuoteSheet';
+import { AdminPanel } from '@/components/AdminPanel';
 import { showsSiteChrome } from '@/state/reducer';
 import { color } from '@/theme';
 
@@ -36,6 +37,7 @@ function Framed({ header, children, footer }: { header?: ReactNode; children: Re
  * stayed a plain list of conditions when deep links arrived.
  *
  *   not signed in             → SignIn                          /
+ *   the admin panel           → AdminPanel                      /admin
  *   no platform chosen        → PracticePicker                  /practices[/:practice]
  *   estimator                 → Desk                            /p/:platform/desk[/…]
  *   sales, no estimation open → EstimationsHub                  /p/:platform
@@ -56,6 +58,8 @@ function Screens(): JSX.Element {
     return <div style={{ minHeight: '100vh', background: color.page }} />;
   }
   if (!state.auth) return <SignIn />;
+  /* it asks for the admin password itself, whoever is signed in */
+  if (state.adminPanel) return <Framed footer={<AppFooter />}><AdminPanel /></Framed>;
   if (!state.platform) return <Framed footer={<AppFooter />}><PracticePicker /></Framed>;
   if (state.auth.role === 'estimator') return <Framed footer={<AppFooter />}><Desk /></Framed>;
 

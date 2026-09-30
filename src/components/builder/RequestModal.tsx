@@ -5,6 +5,9 @@ import { today } from '@/lib/format';
 import { nextRequestId } from '@/state/reducer';
 import { color, font } from '@/theme';
 import { Button, Field, Modal, Row, Select, Spacer, TextArea } from '@/components/ui';
+import { DEMO_ASSIGN, MentionField } from '@/components/people';
+import { isAdmin } from '@/domain/people';
+import { DEMO_ID } from '@/domain/demo';
 
 /** Sales asks for something the catalog does not cover. It lands on the estimation desk. */
 export function RequestModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitted?: () => void }): JSX.Element {
@@ -16,7 +19,10 @@ export function RequestModal({ onClose, onSubmitted }: { onClose: () => void; on
   const [area, setArea] = useState('');
   const [urgency, setUrgency] = useState('');
   const [integrations, setIntegrations] = useState('');
-  const [name, setName] = useState('');
+  /* a signed-in person's own name, which is who is asking; the admin account is not a person */
+  const [name, setName] = useState(isAdmin(state.auth) ? '' : state.auth?.name ?? '');
+  const [assign, setAssign] = useState<string[]>([]);
+  const demo = state.openEstimation === DEMO_ID;
   const [email, setEmail] = useState('');
   const [org, setOrg] = useState('');
   const [error, setError] = useState('');
@@ -41,7 +47,7 @@ export function RequestModal({ onClose, onSubmitted }: { onClose: () => void; on
       email: email.trim(),
       org: org.trim()
     };
-    dispatch({ type: 'addRequest', input });
+    dispatch({ type: 'addRequest', input: { ...input, assign } });
     setSent(true);
     onSubmitted?.();
     /* the desk already has it; the email is a courtesy copy for the team's inbox */
@@ -104,6 +110,13 @@ export function RequestModal({ onClose, onSubmitted }: { onClose: () => void; on
           value={integrations}
           onChange={setIntegrations}
           placeholder="e.g. Salesforce, Azure AD, Stripe, internal HR system"
+        />
+        <MentionField
+          label="Assign to (optional)"
+          hint="Whoever you add is told in their notifications, and when the hours come back"
+          value={assign}
+          onChange={setAssign}
+          disabledReason={demo ? DEMO_ASSIGN : undefined}
         />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14 }}>
           <Field label="Your name" value={name} onChange={setName} placeholder="Full name" />

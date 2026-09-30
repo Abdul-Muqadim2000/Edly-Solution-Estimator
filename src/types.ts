@@ -135,9 +135,41 @@ export interface PlatformRef {
 export type Role = 'sales' | 'estimator';
 
 export interface Auth {
+  /** The username, or `admin` for the built-in admin account. */
   user: string;
   role: Role;
   at: number;
+  /** Display name. Absent on a session signed in before users existed, which was always the admin. */
+  name?: string;
+}
+
+/**
+ * Someone who can sign in, as every browser sees them. The admin creates them in the admin panel.
+ * The password hash stays on the server and is never part of this, or of anything a browser holds.
+ */
+export interface Person {
+  /** Lower case, fixed once created: assignments and notifications point at it. */
+  username: string;
+  name: string;
+  /** Which workspace they work in. Only the built-in admin can switch between the two. */
+  role: Role;
+}
+
+/** One person on a ticket: who, who put them there, and when. */
+export interface Assignment {
+  user: string;
+  /** Username of whoever assigned them. Blank when someone typed the name into the sheet by hand. */
+  by: string;
+  /** ISO timestamp. Blank when typed into the sheet by hand. */
+  at: string;
+}
+
+/** Who did something to a ticket, and when: what a notification about it says. */
+export interface TicketEvent {
+  /** Username. */
+  by: string;
+  /** ISO timestamp. */
+  at: string;
 }
 
 /** Which of the estimation desk's three tabs is showing. Lives here because the URL names it too. */
@@ -270,6 +302,8 @@ export interface Estimation {
   /** Cached count of selected solutions. */
   items: number;
   snap: EstimationSnapshot;
+  /** The people on this deal. Absent means nobody, as on every deal saved before assignment existed. */
+  assigned?: Assignment[];
 }
 
 /* ------------------------------------------------------------------ requests */
@@ -321,6 +355,15 @@ export interface EstimateRequest {
   /** Tender this request was drafted from, and the requirement within it. */
   tender?: string;
   tenderReq?: string;
+
+  /** Username of whoever filed it. Absent on requests filed before sign-in named people. */
+  by?: string;
+  /** The people on this request. Absent means nobody. */
+  assigned?: Assignment[];
+  /** Who last set the desk's stage, and when. What a "needs info" notification names. */
+  staged?: TicketEvent;
+  /** Who returned the hours, and when. What an "estimated" notification names. */
+  priced?: TicketEvent;
 }
 
 /** A solution added to a catalog by the estimation desk. */
@@ -646,6 +689,18 @@ export interface PersistedState {
   salesLegal: SalesLegalItem[];
   /** UI preferences and per-platform loaded catalogs, keyed by storage key. */
   settings: Record<string, unknown>;
+  /**
+   * Sent with a save that holds no rows, never stored: the ids a person deleted in this tab, so the
+   * server can tell someone deleting the last deal from a browser that lost its data
+   * (`namesEveryRow` in server/schema.ts).
+   */
+  deleted?: string[];
+  /**
+   * Sent with every save by a build that knows who is on a ticket, never stored. A save without it
+   * comes from a tab still running an older build, which never read the assignments and would drop
+   * them, so the server keeps the stored ones (`keepPeople` in api/state.ts).
+   */
+  knowsPeople?: true;
 }
 
 /* ------------------------------------------------------- computed estimates */

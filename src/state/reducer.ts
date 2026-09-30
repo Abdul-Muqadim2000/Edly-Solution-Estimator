@@ -11,6 +11,7 @@ import type {
   EstimationStage,
   EstimationTag,
   PersistedState,
+  Person,
   PlanEntry,
   RateRole,
   RequirementMatch,
@@ -55,6 +56,7 @@ import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, typ
 import { planEstimateImport, removeImported, type EstimateRow } from '@/domain/estimateImport';
 import { nextBundleId } from '@/domain/catalog';
 import { isAwaiting, stageOf, stageOnFiling, stageOnSettled } from '@/domain/stages';
+import { isAdmin, nextAssignments, sameAssignees } from '@/domain/people';
 import type { ImportReview } from '@/domain/importReview';
 import { nextId, today, uniqueSlug } from '@/lib/format';
 import { benchmarkCatalog, findPlatform, isLiveCatalog } from '@/data/practices';
@@ -120,6 +122,13 @@ export interface CatalogSource {
 export interface AppState {
   ready: boolean;
   auth: Auth | null;
+  /**
+   * Who can sign in, names and roles only, as the store last listed them. Never persisted and never
+   * saved back: the accounts are the admin panel's to change (`/api/users`).
+   */
+  people: Person[];
+  /** The admin panel is showing. It belongs to no platform. */
+  adminPanel: boolean;
 
   practice: string;
   platform: string;
@@ -157,11 +166,18 @@ export interface AppState {
   deskTab: DeskTab;
   /** An estimation opened as a full page at the desk. */
   deskView: string | null;
+  /**
+   * Every stored row a person deleted in this tab, by id. Held in memory only, and sent with a save
+   * that holds nothing, which the server otherwise refuses (see `toPersisted`).
+   */
+  deleted: string[];
 }
 
 export const INITIAL_STATE: AppState = {
   ready: false,
   auth: null,
+  people: [],
+  adminPanel: false,
   practice: '',
   platform: '',
   lastPlatform: '',
@@ -182,7 +198,8 @@ export const INITIAL_STATE: AppState = {
   catalogSource: null,
   autoAvail: false,
   deskTab: 'queue',
-  deskView: null
+  deskView: null,
+  deleted: []
 };
 
 export interface NewEstimationInput {
@@ -203,6 +220,8 @@ export interface NewRequestInput {
   name: string;
   email: string;
   org: string;
+  /** Usernames to put on it as it is filed. */
+  assign?: string[];
 }
 
 export interface EstimateSubmission {
@@ -248,7 +267,11 @@ export type Action =
   | { type: 'hydrate'; payload: Partial<AppState> }
   | { type: 'mergeEstimations'; estimations: Estimation[] }
   | { type: 'ready' }
-  | { type: 'signIn'; user: string; role: Role }
+  | { type: 'signIn'; user: string; role: Role; name?: string }
+  /** The store's list of people, from each read. */
+  | { type: 'setPeople'; people: Person[] }
+  /** Sets who is on a deal or a request. `at` is for tests; the reducer stamps the time otherwise. */
+  | { type: 'setAssignees'; ticket: 'deal' | 'request'; id: string; users: string[]; at?: string }
   | { type: 'signOut' }
   | { type: 'choosePlatform'; practice: string; platform: string }
   | { type: 'createEstimation'; input: NewEstimationInput }
@@ -470,7 +493,46 @@ function withTenderItems(state: AppState, tender: Tender, estimation: Estimation
 /** Fields that change what a match says, as opposed to whether it is approved or sent. */
 const MATCH_CONTENT: (keyof RequirementMatch)[] = ['kind', 'solutionIds', 'remainder', 'area', 'integrations'];
 
+/**
+ * The actions that are a person deleting something. Only these may name rows as deleted: a read that
+ * comes back short is not a delete, and taking one for a delete is how a store gets blanked.
+ */
+const DELETES: ReadonlySet<Action['type']> = new Set<Action['type']>([
+  'deleteEstimation',
+  'deleteRequest',
+  'removeSolution',
+  'removeBundle',
+  'removeImport',
+  'deleteTender',
+  'deleteSalesLegal'
+]);
+
+const storedRows = (state: Pick<AppState, 'estimations' | 'requests' | 'solutions' | 'bundles' | 'tenders' | 'salesLegal'>): { id: string }[] => [
+  ...state.estimations,
+  ...state.requests,
+  ...state.solutions,
+  ...state.bundles,
+  ...state.tenders,
+  ...state.salesLegal
+];
+
+/** Every row a delete took away, what it took with it included: a deal's requests and its items. The demo's are never stored. */
+function noteDeleted(before: AppState, after: AppState): AppState {
+  if (after === before) return after;
+  const kept = new Set(storedRows(after).map((row) => row.id));
+  const gone = storedRows(before)
+    .map((row) => row.id)
+    .filter((id) => !kept.has(id) && !isDemoId(id));
+  if (gone.length === 0) return after;
+  return { ...after, deleted: [...new Set([...after.deleted, ...gone])] };
+}
+
 export function reducer(state: AppState, action: Action): AppState {
+  const next = transition(state, action);
+  return DELETES.has(action.type) ? noteDeleted(state, next) : next;
+}
+
+function transition(state: AppState, action: Action): AppState {
   switch (action.type) {
     /* Whatever arrives, from browser storage, the store or another tab, holds no demo, because the
        demo is never written anywhere; so it is put back into each collection that arrived. */
@@ -503,7 +565,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         estimations: commitDraft(state),
-        auth: { user: action.user, role: action.role, at: Date.now() },
+        auth: { user: action.user, role: action.role, at: Date.now(), ...(action.name ? { name: action.name } : {}) },
+        adminPanel: false,
         practice: '',
         platform: '',
         lastPlatform: state.platform || state.lastPlatform,
@@ -517,6 +580,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         estimations: commitDraft(state),
         auth: null,
+        adminPanel: false,
         practice: '',
         platform: '',
         lastPlatform: state.platform || state.lastPlatform,
@@ -524,6 +588,59 @@ export function reducer(state: AppState, action: Action): AppState {
         openTender: null,
         deskView: null
       };
+
+    /* The admin may have changed someone's role or removed them since they signed in. The role
+       locks the workspace, so a changed one applies on the next read, and a removed person is
+       signed out. Only while the list names anyone: a list that came back empty says nothing
+       about who was removed, and signing everyone out on it would be worse than waiting. */
+    case 'setPeople': {
+      const same = JSON.stringify(state.people) === JSON.stringify(action.people);
+      const base = same ? state : { ...state, people: action.people };
+      const auth = base.auth;
+      if (!auth || isAdmin(auth) || action.people.length === 0) return base;
+      const me = action.people.find((one) => one.username === auth.user);
+      if (!me) return reducer(base, { type: 'signOut' });
+      if (me.role === auth.role && me.name === auth.name) return base;
+      const next: AppState = { ...base, auth: { ...auth, role: me.role, name: me.name } };
+      /* a new role is a new workspace: its home, not the other workspace's screen */
+      if (me.role === auth.role || !next.platform) return next;
+      const closed = next.openEstimation ? reducer(next, { type: 'closeEstimation' }) : next;
+      return { ...closed, openTender: null, deskView: null, deskTab: 'queue' };
+    }
+
+    /* Assigning is not an edit of the deal's numbers, so `up` stays put, as for the automatic stage
+       moves. The demo is never saved, so nobody would ever be told: it takes no one. */
+    case 'setAssignees': {
+      const by = state.auth?.user ?? '';
+      const at = action.at ?? new Date().toISOString();
+      if (action.ticket === 'deal') {
+        const deal = state.estimations.find((one) => one.id === action.id);
+        if (!deal || isDemoEstimation(deal) || sameAssignees(deal.assigned, action.users)) return state;
+        const assigned = nextAssignments(deal.assigned, action.users, by, at);
+        return {
+          ...state,
+          estimations: state.estimations.map((one) => {
+            if (one.id !== action.id) return one;
+            const next: Estimation = { ...one, assigned };
+            /* no entry rather than an empty one, which is how a deal nobody is on reads back */
+            if (assigned.length === 0) delete next.assigned;
+            return next;
+          })
+        };
+      }
+      const request = state.requests.find((one) => one.id === action.id);
+      if (!request || isDemoRequest(request) || sameAssignees(request.assigned, action.users)) return state;
+      const assigned = nextAssignments(request.assigned, action.users, by, at);
+      return {
+        ...state,
+        requests: state.requests.map((one) => {
+          if (one.id !== action.id) return one;
+          const next: EstimateRequest = { ...one, assigned };
+          if (assigned.length === 0) delete next.assigned;
+          return next;
+        })
+      };
+    }
 
     case 'choosePlatform':
       return {
@@ -738,8 +855,9 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'addRequest': {
       const open = state.estimations.find((estimation) => estimation.id === state.openEstimation);
+      const { assign, ...input } = action.input;
       const request: EstimateRequest = {
-        ...action.input,
+        ...input,
         id: nextRequestId(state),
         plat: platOf(state),
         estId: state.openEstimation ?? '',
@@ -747,6 +865,11 @@ export function reducer(state: AppState, action: Action): AppState {
         client: open?.client ?? '',
         at: today()
       };
+      const by = state.auth?.user ?? '';
+      if (by) request.by = by;
+      /* the demo's requests are never saved, so nobody on one would ever be told */
+      const assigned = isDemoRequest(request) ? [] : nextAssignments(undefined, assign ?? [], by, new Date().toISOString());
+      if (assigned.length > 0) request.assigned = assigned;
       return moveDeal({ ...state, requests: [...state.requests, request] }, request.estId, stageOnFiling);
     }
 
@@ -788,7 +911,8 @@ export function reducer(state: AppState, action: Action): AppState {
       if (!target || Number(target.est) > 0 || (target.stage ?? 'backlog') === action.stage) return state;
       const requests = state.requests.map((request) => {
         if (request.id !== action.id) return request;
-        const next: EstimateRequest = { ...request, stage: action.stage };
+        /* who moved it and when, which is what a "needs info" notification says */
+        const next: EstimateRequest = { ...request, stage: action.stage, staged: { by: state.auth?.user ?? '', at: new Date().toISOString() } };
         /* no entry rather than a Backlog one, which is how a request nobody has picked up reads back */
         if (action.stage === 'backlog') delete next.stage;
         return next;
@@ -818,7 +942,9 @@ export function reducer(state: AppState, action: Action): AppState {
         catAccount: submission.account,
         catNotes: submission.notes,
         estBy: submission.by,
-        estAt: stamp
+        estAt: stamp,
+        /* who returned the hours and when, to the second: what an "estimated" notification says */
+        priced: { by: state.auth?.user ?? '', at: new Date().toISOString() }
       };
       /* no entry rather than an empty one, which is how a request with no notes reads back */
       if (!updated.catNotes) delete updated.catNotes;
@@ -964,16 +1090,19 @@ export function reducer(state: AppState, action: Action): AppState {
      * A URL, turned into state. The only place navigation flows this way — everywhere else the
      * address bar follows state. See `state/useRouting.ts` for the bridge.
      *
-     * A link is an instruction, so it may switch role: `/p/openedx/desk` opens the desk even if
-     * you were last in sales, and an estimation link puts you back in sales. Role is a one-click
-     * toggle in the chrome anyway, so honouring the link is less surprising than ignoring it.
+     * For the built-in admin a link is an instruction, so it may switch role: `/p/openedx/desk` opens
+     * the desk even if the admin was last in sales, and an estimation link puts them back in sales.
+     * Everyone else's role locks their workspace (the user's choice, 2026-09-30), so a link into the
+     * other one lands on the same deal in their own: a sales person sent a desk link sees the deal
+     * in the builder, an estimator sent a deal link sees it on the desk. `inWorkspace` does that.
      */
     case 'applyRoute': {
-      const { route } = action;
       const auth = state.auth;
       if (!auth) return state;
+      if (action.route.screen === 'admin') return { ...state, estimations: commitDraft(state), adminPanel: true };
+      const route = isAdmin(auth) ? action.route : inWorkspace(action.route, auth.role);
 
-      let next = state;
+      let next: AppState = state.adminPanel ? { ...state, adminPanel: false } : state;
 
       /* platform first: choosing one clears the open estimation, which we may be about to set */
       const ref = route.platform ? findPlatform(route.platform) : null;
@@ -1618,6 +1747,24 @@ export function effectiveDisplay(state: AppState): DisplayPrefs {
 }
 
 /**
+ * A route as seen from a workspace its role is locked to: the same deal, on its own side. A sales
+ * person's desk link opens the deal in the builder, or the hub; an estimator's deal or tender link
+ * opens the deal on the desk, or the queue. Links that are the role's own pass unchanged.
+ */
+export function inWorkspace(route: Route, role: Role): Route {
+  if (route.screen === 'root' || route.screen === 'practices' || route.screen === 'admin') return route;
+  const platform = route.platform ? { platform: route.platform } : {};
+  if (role === 'estimator') {
+    if (route.screen === 'desk') return route;
+    return route.screen === 'builder' && route.estimation
+      ? { screen: 'desk', ...platform, estimation: route.estimation, tab: 'estimations' }
+      : { screen: 'desk', ...platform, tab: 'queue' };
+  }
+  if (route.screen !== 'desk') return route;
+  return route.estimation ? { screen: 'builder', ...platform, estimation: route.estimation } : { screen: 'hub', ...platform };
+}
+
+/**
  * Whether the edly.io header, hero and footer show. They are for the client, so they appear only
  * while sales presents a deal in the builder, and every working screen carries Quotient's own
  * header and footer instead. The hub lists every client's deals and the tender screen is
@@ -1632,15 +1779,21 @@ export function showsSiteChrome(state: AppState): boolean {
 
 /** The slice that belongs in the spreadsheet, and in browser storage: everything but the demo. */
 export function toPersisted(state: AppState): PersistedState {
-  return withoutDemo({
+  const persisted = withoutDemo({
     estimations: commitDraft(state),
     requests: state.requests,
     solutions: state.solutions,
     bundles: state.bundles,
     tenders: state.tenders,
     salesLegal: state.salesLegal,
-    settings: {}
+    settings: {},
+    /* says this build reads assignments, so a save without one is kept from wiping them */
+    knowsPeople: true
   });
+  /* a save that holds nothing is refused unless it names what a person deleted; any other save
+     goes exactly as it always has */
+  if (state.deleted.length === 0 || storedRows(persisted).length > 0) return persisted;
+  return { ...persisted, deleted: state.deleted };
 }
 
 /**

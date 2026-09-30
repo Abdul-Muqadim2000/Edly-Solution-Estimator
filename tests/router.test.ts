@@ -1,21 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ALL_BUNDLES,
-  basePath,
-  deepLinkReady,
-  exactly,
-  formatRoute,
-  homeOf,
-  LANDING,
-  platformTrail,
-  parseRoute,
-  readAddress,
-  routeHref,
-  sameRoute,
-  usesHash,
-  withoutSearch,
-  type Route
-} from '../src/lib/router';
+import { ALL_BUNDLES, basePath, deepLinkReady, exactly, formatRoute, homeOf, LANDING, noticeRoute, parseRoute, platformTrail, readAddress, routeHref, sameRoute, type Route, usesHash, withoutSearch } from '../src/lib/router';
 import { slugify, uniqueSlug, withSlugs } from '../src/lib/format';
 import { INITIAL_STATE, reducer, type Action, type AppState } from '../src/state/reducer';
 import { routeOfState } from '../src/state/useRouting';
@@ -566,5 +550,70 @@ describe('tender links', () => {
     const route = routeOfState(state);
     expect(route).toEqual({ screen: 'tender', platform: 'openedx', tender: 'acme-lms-tender' });
     expect(routeOfState(reducer(state, { type: 'applyRoute', route }))).toEqual(route);
+  });
+});
+
+/* ------------------------------------------------------------ the admin panel */
+
+describe('the admin panel link', () => {
+  it('reads /admin as the admin panel, which belongs to no platform', () => {
+    expect(parseRoute('/admin')).toEqual({ screen: 'admin' });
+    expect(parseRoute('/admin/')).toEqual({ screen: 'admin' });
+  });
+
+  it('writes the admin panel as /admin, and the two agree', () => {
+    expect(formatRoute({ screen: 'admin' })).toBe('/admin');
+    expect(parseRoute(formatRoute({ screen: 'admin' }))).toEqual({ screen: 'admin' });
+    /* a platform or a deal carried over from the page it was clicked on stays off the link */
+    expect(formatRoute({ screen: 'admin', platform: 'openedx', estimation: 'acme-academy', q: 'sso', plan: true })).toBe('/admin');
+  });
+
+  it('is what the address bar shows while the panel is open, whatever sits behind it', () => {
+    expect(routeOfState(workspace({ adminPanel: true }))).toEqual({ screen: 'admin' });
+    const building = apply(workspace(), '/p/openedx/e/acme-academy');
+    expect(routeOfState({ ...building, adminPanel: true })).toEqual({ screen: 'admin' });
+    expect(routeOfState(workspace({ adminPanel: true, platform: '', practice: '' }))).toEqual({ screen: 'admin' });
+  });
+
+  it('is the root, not the panel, for someone signed out', () => {
+    expect(routeOfState(workspace({ auth: null, adminPanel: true }))).toEqual({ screen: 'root' });
+  });
+
+  it('round-trips: following /admin shows the panel, and the state describes /admin again', () => {
+    const panel = apply(workspace(), '/admin');
+    expect(panel.adminPanel).toBe(true);
+    const route = routeOfState(panel);
+    expect(formatRoute(route)).toBe('/admin');
+    expect(routeOfState(reducer(panel, { type: 'applyRoute', route }))).toEqual(route);
+  });
+
+  it('goes back to the deal that was open when the panel is left by Back', () => {
+    /* the panel sits over the builder rather than closing it, so Back lands where the admin was */
+    const building = apply(workspace(), '/p/openedx/e/acme-academy');
+    const panel = apply(building, '/admin');
+    expect(panel.openEstimation).toBe('EST-1');
+    const back = apply(panel, '/p/openedx/e/acme-academy');
+    expect(back.adminPanel).toBe(false);
+    expect(formatRoute(routeOfState(back))).toBe('/p/openedx/e/acme-academy');
+  });
+});
+
+describe('where a notification takes you', () => {
+  it('opens the deal in the builder for sales and on the desk for an estimator', () => {
+    expect(noticeRoute('openedx', 'nordic-university-lms', 'sales')).toEqual({ screen: 'builder', platform: 'openedx', estimation: 'nordic-university-lms' });
+    expect(noticeRoute('openedx', 'nordic-university-lms', 'estimator')).toEqual({ screen: 'desk', platform: 'openedx', estimation: 'nordic-university-lms', tab: 'estimations' });
+  });
+
+  /* the deal may have been deleted since; a dead link would land on a blank screen */
+  it("lands on the role's home when the deal is gone", () => {
+    expect(noticeRoute('moodle', null, 'sales')).toEqual({ screen: 'hub', platform: 'moodle' });
+    expect(noticeRoute('moodle', null, 'estimator')).toEqual({ screen: 'desk', platform: 'moodle' });
+  });
+
+  it('makes a link that reads back as the same place', () => {
+    for (const role of ['sales', 'estimator'] as const) {
+      const route = noticeRoute('openedx', 'nordic-university-lms', role);
+      expect(parseRoute(formatRoute(route))).toEqual(route);
+    }
   });
 });

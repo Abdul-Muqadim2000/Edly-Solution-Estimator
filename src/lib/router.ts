@@ -15,8 +15,8 @@ import { findPlatform } from '@/data/practices';
  * `state/useRouting.ts`.
  */
 
-/** Which screen a URL asks for. `root` is "/" — the bridge decides where that lands. */
-export type Screen = 'root' | 'practices' | 'hub' | 'builder' | 'desk' | 'tender';
+/** Which screen a URL asks for. `root` is "/", and the bridge decides where that lands. `admin` is the admin panel. */
+export type Screen = 'root' | 'practices' | 'hub' | 'builder' | 'desk' | 'tender' | 'admin';
 
 /** "All solutions" in the bundle rail, spelled for a URL. */
 export const ALL_BUNDLES = 'all';
@@ -73,6 +73,9 @@ export function parseRoute(url: string): Route {
   if (first === 'practices') {
     return second ? { screen: 'practices', practice: second } : { screen: 'practices' };
   }
+
+  /* the admin panel belongs to no platform, so it names none */
+  if (first === 'admin') return { screen: 'admin' };
 
   if (first === 'p' && second) {
     const platform = second;
@@ -132,6 +135,10 @@ export function formatRoute(route: Route): string {
 
     case 'tender':
       if (route.platform && route.tender) seg.push('p', route.platform, 't', route.tender);
+      break;
+
+    case 'admin':
+      seg.push('admin');
       break;
 
     case 'root':
@@ -264,6 +271,18 @@ export const LANDING: Route = { screen: 'practices' };
  */
 export function homeOf(role: Role, platformId: string): Route {
   return { screen: role === 'estimator' ? 'desk' : 'hub', platform: platformId };
+}
+
+/**
+ * Where a notification takes someone: the deal it is about, in their own workspace. Sales opens it
+ * in the builder, whose summary lists its desk requests; the desk opens its page, which has a form
+ * for each. A notice whose deal is gone lands on the role's home rather than a dead link.
+ */
+export function noticeRoute(platformId: string, deal: string | null, role: Role): Route {
+  if (!deal) return homeOf(role, platformId);
+  return role === 'estimator'
+    ? { screen: 'desk', platform: platformId, estimation: deal, tab: 'estimations' }
+    : { screen: 'builder', platform: platformId, estimation: deal };
 }
 
 /** One step of a breadcrumb trail. No route means the page you are on, shown as text. */

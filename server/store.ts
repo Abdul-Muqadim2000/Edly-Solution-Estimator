@@ -1,6 +1,7 @@
 import type { PersistedState } from '../src/types.js';
-import { readWorkbook, writeWorkbook } from '../src/lib/xlsx.js';
+import { readWorkbook, writeWorkbook, type Workbook } from '../src/lib/xlsx.js';
 import { EMPTY_STATE, sheetsToState, stateToSheets } from './schema.js';
+import { rowsToUsers, USERS_SHEET, usersToRows, type UserRecord } from './users.js';
 import type { DiscoveredTarget, Provider } from './providers/types.js';
 import { blobProvider, localProvider } from './providers/builtin.js';
 
@@ -76,19 +77,32 @@ const populated = (state: PersistedState): boolean =>
   state.salesLegal.length > 0 ||
   Object.keys(state.settings).length > 0;
 
+async function loadTables(): Promise<Workbook | null> {
+  const store = await provider();
+  if (store.kind === 'sheets') return store.loadSheets();
+  const bytes = await store.load();
+  return bytes ? readWorkbook(bytes) : null;
+}
+
+/**
+ * The stored state and the accounts, from one read. The accounts do not count towards `populated`:
+ * a store holding nothing but accounts holds no work, and calling it populated would hydrate a
+ * browser with nothing and discard what it was holding.
+ */
+export async function loadStore(): Promise<{ state: PersistedState | null; users: UserRecord[] }> {
+  const tables = await loadTables();
+  if (!tables) return { state: null, users: [] };
+  const state = sheetsToState(tables);
+  return { state: populated(state) ? state : null, users: rowsToUsers(tables[USERS_SHEET]) };
+}
+
 /** The stored state, or null when nothing has been written yet. */
 export async function loadState(): Promise<PersistedState | null> {
-  const store = await provider();
-  if (store.kind === 'sheets') {
-    const tables = await store.loadSheets();
-    if (!tables) return null;
-    const state = sheetsToState(tables);
-    return populated(state) ? state : null;
-  }
-  const bytes = await store.load();
-  if (!bytes) return null;
-  const state = sheetsToState(await readWorkbook(bytes));
-  return populated(state) ? state : null;
+  return (await loadStore()).state;
+}
+
+export async function loadUsers(): Promise<UserRecord[]> {
+  return (await loadStore()).users;
 }
 
 export interface SaveOutcome {
@@ -98,19 +112,46 @@ export interface SaveOutcome {
   bytes: number | null;
 }
 
+/**
+ * Saves the work. The accounts are never part of it, and never lost by it: a browser does not hold
+ * them, so a save that wrote the Users tab from what a browser sent would delete every account.
+ */
 export async function saveState(state: PersistedState): Promise<SaveOutcome> {
   const store = await provider();
   const tables = stateToSheets(state);
   if (store.kind === 'sheets') {
+    /* a Sheets save writes only the tabs it is given, and the Users tab is not one of them */
     const result = await store.saveSheets(tables);
     return { ...result, bytes: null, store: store.label() };
   }
+  /* A file is written whole, so the accounts in it are carried over exactly as they are. A read
+     that fails fails the save, rather than writing the file without them. */
+  const held = await store.load();
+  const users = held ? (await readWorkbook(held))[USERS_SHEET] : undefined;
+  if (users && users.length > 0) tables[USERS_SHEET] = users;
   const bytes = writeWorkbook(tables);
   const result = await store.save(bytes);
   return { ...result, bytes: bytes.length, store: store.label() };
 }
 
-/** Raw .xlsx for download, whatever the provider stores natively. */
+/**
+ * Saves the accounts, and nothing else. On Google Sheets that is the Users tab alone. A file is
+ * written whole, so the work in it is read and written back with them, the way the app saves it.
+ */
+export async function saveUsers(users: readonly UserRecord[]): Promise<void> {
+  const store = await provider();
+  const rows = usersToRows(users);
+  if (store.kind === 'sheets') {
+    await store.saveSheets({ [USERS_SHEET]: rows });
+    return;
+  }
+  const held = await store.load();
+  const tables = stateToSheets(held ? sheetsToState(await readWorkbook(held)) : EMPTY_STATE);
+  tables[USERS_SHEET] = rows;
+  await store.save(writeWorkbook(tables));
+}
+
+/** Raw .xlsx for download, whatever the provider stores natively. The accounts are left out: the file is for reading the work. */
 export async function exportBytes(): Promise<Uint8Array> {
   const state = (await loadState()) ?? EMPTY_STATE;
   return writeWorkbook(stateToSheets(state));

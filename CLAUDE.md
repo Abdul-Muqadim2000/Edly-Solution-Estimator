@@ -15,6 +15,10 @@ and sends it back. Sales can also start from a tender: an AI reads the RFP, sugg
 platform, extracts the requirements and matches them to the catalog, and a person approves every
 step before anything reaches an estimation or the desk.
 
+People sign in with their own accounts, which the built-in admin creates in the admin panel. Anyone
+can be @assigned to a deal or a desk request, and a bell tells them when they are assigned, when a
+request they are on gets its hours, and when the desk asks for more detail.
+
 **React 18, TypeScript (strict), Vite, Bun, Vercel. Three runtime dependencies: React, React DOM
 and `@anthropic-ai/sdk`.** The SDK is imported only under `server/ai/` and never reaches the
 browser bundle. The `.xlsx` reader and writer, the zip writer and the Google JWT signing are all
@@ -43,7 +47,9 @@ bun run state:dump     # print what is stored
 > `export PATH="$HOME/.bun/bin:$PATH"`. There is no `node` or `npm` on this machine, so do not
 > reach for them, and do not assume a tool that needs Node will work.
 
-Sign in with `admin` / `admin`, pick a role, then a practice and platform.
+Sign in with `admin` / `admin`, the built-in admin, pick a role, then a practice and platform. The
+admin adds everyone else from the Users pill (`/admin`); each of them signs in with their own
+username and password and lands in their role's workspace.
 
 ---
 
@@ -145,7 +151,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 1,078 tests across twenty-five files.
+`bun run test` runs 1,300 tests across twenty-eight files.
 
 | File | Covers |
 |---|---|
@@ -172,19 +178,22 @@ reference.
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
 | `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
 | `tests/stages.test.ts` | where a deal and a desk request stand: the stages in order, reading them back from the sheet, the moves filing and pricing make by themselves, what sales sees of the desk, and the boards' columns, order and totals |
+| `tests/people.test.ts` | usernames, passwords and roles as typed, names and initials, the @ search, assignments kept across a change, and who is on a ticket as the sheet holds it |
+| `tests/notifications.test.ts` | who is told what: assigned, hours back, needs info; never the person who did it; nothing from tickets older than the feature; read marks |
+| `tests/usersApi.test.ts` | `/api/users` end to end: sign-in, the admin's changes and every refusal, no hash ever sent, and a deal save that never loses an account |
 | `tests/demo.test.ts` | the demo estimation against the master sheet we ship: priced, planned inside the team cap, staffed and laid out as the client's Excel sheet; which records are the demo's, and keeping it out of storage |
 | `tests/deploy.test.ts` | `vercel.json`: runtimes Vercel can parse, time limits for every endpoint, and API imports Node can load; the favicon, manifest and logo files the page names are all shipped |
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-09-30, with stages):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-09-30, with users and notifications):
 
 | | |
 |---|---|
-| Statements | 97.8% |
+| Statements | 97.9% |
 | Lines | 98.8% |
 | Functions | 99.2% |
-| Branches | 88.7% |
+| Branches | 89.3% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -293,10 +302,10 @@ Set these in Vercel under Settings, Environment Variables, redeploy, then confir
 `bun run store:probe` or `GET /api/state?probe=1`. Never commit a key. `.env` is gitignored and
 `.env.example` is the template, so add a block there for anything new.
 
-### The seven sheets
+### The eight sheets
 
 `Estimations`, `Requests`, `EstimatedSolutions`, `CustomBundles`, `Settings`, `Tenders`,
-`SalesAccountLegal`. Scalar columns stay readable so a human can scan the sheet in Excel, and
+`SalesAccountLegal`, `Users`. Scalar columns stay readable so a human can scan the sheet in Excel, and
 nested state sits in one JSON column per row so the app round-trips losslessly. A tender's
 requirements run past one cell, so its `detailJson` splits across rows keyed `id##2/3`,
 pipe-wrapped like the long settings. An estimate imported from a workbook is an
@@ -320,6 +329,16 @@ readers and never read back. Each row carries what the match step showed, so an 
 the tender: the matcher's `reason`, the tender `section` it sits under, the `source` and `quote`,
 and a key term's `topic`.
 
+`Users` holds the accounts: username, name, role, created, updated and a salted PBKDF2 hash
+(`server/users.ts`). It is not part of `PersistedState` and no browser ever holds it: `/api/state`
+answers with `people` (username, name and role) beside the state, and `/api/users` does sign-in and
+the admin's changes. A state save never writes this tab: on Google Sheets it is not among the tabs a
+save names, and on the file stores `saveState` reads the stored tab and writes it back as it was.
+A store holding only accounts still reads as empty, because accounts are not work. People on a deal
+or a request sit in an `assignedTo` column ("@muqadim, @sara"), read back from whatever a person
+typed there, with who assigned each and when in `assignedJson` (Estimations) or `extraJson`
+(Requests), beside who filed a request and who last moved or priced it.
+
 ### Six data-safety rules that are not negotiable
 
 Each of these exists because it failed once. Do not weaken one to make a feature easier.
@@ -333,7 +352,12 @@ Each of these exists because it failed once. Do not weaken one to make a feature
    A desk request filed during the 45-second poll was lost that way in the 2026-09-29 walkthrough.
    `tests/storage.test.ts` covers it.
 3. **A zero-row `PUT` is refused while the store holds rows** (`api/state.ts`, 409). `?force=1`
-   clears deliberately. `tests/api.test.ts` covers this. Keep it green.
+   clears deliberately. So does a save that names every stored row as one a person deleted
+   (`deleted`, from the reducer's delete actions only; `namesEveryRow` in `server/schema.ts`):
+   the demo is not stored, so deleting the last real deal is an empty save, and until 2026-09-30
+   the guard refused it and the next read brought the deal back. A browser that lost its data
+   names nothing, and a row another tab added is not named, so both are still refused. A read that
+   comes back short is never taken for a delete. `tests/api.test.ts` covers this. Keep it green.
 4. **A workbook that merely exists is not data.** `state:seed` writes an empty workbook, so
    `loadState` reports a zero-row store as empty on every provider. Otherwise the app hydrates the
    browser with nothing and discards what it was holding. All five providers must answer this
@@ -629,15 +653,50 @@ The spreadsheets hold real deal names, client names and pricing.
   by id from the master sheet, and every bar of its plan is pinned to one lane per person; if the
   sheet's hours change, `tests/demo.test.ts` says whether the plan still fits the team cap and the
   total is still a whole number of hours.
+- **The accounts never pass through a browser.** `server/users.ts` and `api/users.ts` are the only
+  code that handles a password or a hash. `/api/state` answers with `publicPeople`, and the admin
+  list names each field it sends (`listed`), so a field added to `UserRecord` later stays on the
+  server until someone decides otherwise. `saveState` in `server/store.ts` keeps the Users tab on
+  every provider: on the file stores it reads the stored tab and writes it back untouched, and a
+  read that fails fails the save. Lose that and the next deal save deletes every account;
+  `tests/usersApi.test.ts`, `tests/storage.test.ts` and `tests/providers.test.ts` hold it.
+- **A role locks the workspace, except the admin's** (the user's choice, 2026-09-30). `inWorkspace`
+  in the reducer turns a link into the other workspace into the same deal on the person's own side,
+  and the switch pill and the Users pill show only for the admin (`isAdmin`). A role the admin
+  changes applies on the person's next read (`setPeople`), and a removed person is signed out then,
+  but only while the list names anyone: an empty list says nothing about who was removed.
+- **Notifications are worked out, never stored** (`noticesFor` in `src/domain/notifications.ts`).
+  They follow from what a ticket records (`assigned`, `priced`, `staged`), so nothing extra is
+  saved when something happens, and a ticket from before them raises nothing. Read marks are per
+  person, per browser (`seenStorageKey`), never synced: a synced mark would save the whole workbook
+  on a click, and last-write-wins could then undo someone else's edit. The demo takes nobody, since
+  it is never saved and nobody would be told; its controls say so.
+- **A panel over the page takes focus only once it is placed** (`Floating`). While it is hidden to
+  be measured it cannot take focus, and an `autoFocus` inside it did nothing: typing and Escape went
+  to the page. Found driving it in headless Chrome; no test renders it.
 
 ---
 
 ## Known limits, which you should state rather than paper over
 
-- **Sign-in is a client-side demo gate** (`admin` / `admin`), and **`/api/state` is
-  unauthenticated**, so anyone with the URL can read or overwrite the spreadsheet. Put Vercel
-  Authentication or an SSO proxy in front before this holds live client numbers. Deep links make
-  this more urgent, not less.
+- **Passwords keep people out of the app, not out of the API.** Sign-in is checked on the server
+  (`/api/users`), but nothing checks a session afterwards: the browser keeps who signed in, and
+  **`/api/state` is unauthenticated**, so anyone with the URL can read or overwrite the
+  spreadsheet, assignments included. Put Vercel Authentication or an SSO proxy in front before this
+  holds live client numbers. Deep links make this more urgent, not less. The admin password is
+  `EDLY_ADMIN_PASSWORD`, and `admin` while that is unset, which the sign-in screen says aloud.
+- **Sign-in has no rate limit**, so a password can be guessed at the speed of the endpoint
+  (DEFERRED.md 3). Keep the admin password long once `EDLY_ADMIN_PASSWORD` is set. The usernames
+  are no secret either: `/api/state` hands every caller `people`, which the @ picker needs, so a
+  guesser knows half of every login.
+- **On the file stores an account change and a deal save can cross.** Both read the whole file and
+  write it back, so an account made between a deal save's read and its write is lost, or the deal
+  change is. Google Sheets writes the Users tab on its own and is not affected.
+- **A notification arrives on the next read of the store**: the 45-second poll, a tab coming back
+  into view, or opening the bell. What has been read is kept per person in each browser, so a
+  notification read on one laptop is unread on another (DEFERRED.md 12). Two people cannot be
+  signed in in one browser at once, since the session lives in its storage: use a second browser
+  or a private window.
 - **`/api/tender` is unauthenticated too, and it spends money.** Anyone with the URL can send
   files to Anthropic under Edly's key. Deployment protection must be on before
   `ANTHROPIC_API_KEY` is set on a public deployment (DEFERRED.md 4).
@@ -648,7 +707,9 @@ The spreadsheets hold real deal names, client names and pricing.
 - **The per-tender AI limit is a check in the browser, not a cap.** A caller going straight to
   `/api/tender` skips it (DEFERRED.md 11). The cap that holds is a monthly spend limit on the
   Anthropic Console workspace that owns the key.
-- **Concurrency is last-write-wins** across the whole workbook.
+- **Concurrency is last-write-wins** across the whole workbook. With several people signed in
+  this is likelier to bite: two saves within one poll of each other can undo the other person's
+  change, an assignment included.
 - **Only Open edX has a client-proven catalog.** The other 19 platforms ship benchmark hours and
   are labelled *Sample* in the UI. Do not present them as delivery records.
 - **The demo estimation is on Open edX only**, and it is priced against the catalog in play: a
@@ -685,8 +746,11 @@ everything else waiting on a server, are in DEFERRED.md.
 
 1. **Real authentication** in front of the app and `/api/state`. Everything else on this list
    matters less than this one, because the tool holds client pricing. A gate (Vercel
-   Authentication or an SSO proxy) needs no server. Per-user accounts and server-enforced roles do,
-   and are deferred.
+   Authentication or an SSO proxy) needs no server. Accounts exist since 2026-09-30, but nothing
+   checks a session after sign-in: `/api/users` could hand out a signed session token (an HMAC over
+   username, role and expiry, keyed by a new secret) and `/api/state` refuse a write without one.
+   That needs no database, only the secret and care with the unload beacon and tabs signed in
+   before it shipped. What still needs a server is in DEFERRED.md 4.
 2. **CI running `bun run check` and `bun run test:coverage`** on every push, so the gate is not a
    matter of memory. A branch protection rule on `main` would enforce the no-direct-push rule that
    is currently only written down here.
@@ -786,6 +850,13 @@ everything else waiting on a server, are in DEFERRED.md.
     Word document (about $0.10 while its cache is warm) measures what a terms read really costs and
     whether it reads the tender from the cache. Both spend real money, so they need a yes first; the
     tender's files are at Anthropic until 2026-10-01.
+21. **Notifications outside the app**, by email or Slack, for people who are not looking at the
+    bell. `noticesFor` in `src/domain/notifications.ts` already says who is told what; sending it
+    needs a mail or Slack service, which is a new external service and a privacy question (deal and
+    client names would leave the machine), so ask first.
+22. **Comments on a ticket, with @mentions in them.** Assignment is the only @ today. A comment
+    thread per deal and per request, where an @ tells that person, would fit the same derived
+    notifications; it is a new collection (every touch-point in the feature checklist).
 
 ---
 

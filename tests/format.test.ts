@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { andList, CURRENCIES, dollars, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
+import { ago, andList, CURRENCIES, dollars, FX, hours, hours1, joinNotes, longDate, money, plural, rateLabel, today } from '../src/lib/format';
 import { quoteText, type QuoteInput } from '../src/lib/quoteExport';
 import { calcEstimate, DEFAULT_ROLES } from '../src/domain/estimate';
 import { schedule } from '../src/domain/planner';
@@ -327,5 +327,34 @@ describe('the quote a client receives', () => {
     for (const display of [DEFAULT_DISPLAY, { ...DEFAULT_DISPLAY, money: false, savings: false, notes: false }]) {
       expect(quote(display)).toContain('Engineering hours only');
     }
+  });
+});
+
+describe('ago, the time on a notification', () => {
+  const now = Date.parse('2026-09-30T12:00:00Z');
+  const before = (ms: number): string => new Date(now - ms).toISOString();
+
+  it('counts minutes, then hours, then days', () => {
+    expect(ago(before(20_000), now)).toBe('just now');
+    expect(ago(before(12 * 60_000), now)).toBe('12 min ago');
+    expect(ago(before(3 * 3_600_000 + 5 * 60_000), now)).toBe('3 h ago');
+    expect(ago(before(30 * 3_600_000), now)).toBe('yesterday');
+    expect(ago(before(4 * 86_400_000), now)).toBe('4 days ago');
+  });
+
+  it('gives the date after a week, with the year only when it is not this one', () => {
+    expect(ago('2026-09-01T09:00:00Z', now)).toBe('Sep 1');
+    expect(ago('2025-12-24T09:00:00Z', now)).toBe('Dec 24, 2025');
+  });
+
+  /* a name typed into the sheet has no time, and the bell must not print "NaN min ago" for it */
+  it('says nothing for a time nobody recorded or one that is not a time', () => {
+    expect(ago('', now)).toBe('');
+    expect(ago('yesterday-ish', now)).toBe('');
+  });
+
+  /* two machines' clocks disagree by a few seconds; a notice from "the future" is just new */
+  it('reads a time slightly ahead of this clock as just now', () => {
+    expect(ago(new Date(now + 5_000).toISOString(), now)).toBe('just now');
   });
 });
