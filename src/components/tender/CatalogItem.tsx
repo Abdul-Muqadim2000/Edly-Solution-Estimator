@@ -9,6 +9,7 @@ import { useHover } from '@/lib/useHover';
 import { color, font, radius } from '@/theme';
 import { Button, Link, Modal, Mono, Row, SearchInput, Spacer } from '@/components/ui';
 import { TextButton, useDialogKeys } from '@/components/tender/parts';
+import { CatalogInternal } from '@/components/CatalogInternal';
 
 /**
  * A catalog solution, opened from the tender's match step without leaving it. Everything the builder's
@@ -59,8 +60,8 @@ const IN_FIGURES = new Set(['Std deployment', 'Original build', 'Repeat redeploy
 
 /** A solution's whole entry. Reuse and build hours, and internal references, follow the Display settings, as in the builder. */
 export function SolutionDetail({ item, bundle }: { item: Solution; bundle: Bundle | null }): JSX.Element {
-  const { state } = useApp();
-  const prefs = state.display;
+  /* the display in effect, so nothing internal shows if a deal is being presented */
+  const { display: prefs } = useApp();
   const link = referenceUrl(item, prefs);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
@@ -90,6 +91,7 @@ export function SolutionDetail({ item, bundle }: { item: Solution; bundle: Bundl
           </Link>
         </Pair>
       ) : null}
+      <CatalogInternal item={item} />
     </div>
   );
 }

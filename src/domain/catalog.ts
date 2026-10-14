@@ -6,7 +6,9 @@ import { hours } from '@/lib/format';
  *
  * The catalog a platform shows is its base (the master sheet for Open edX, a benchmark set
  * otherwise) plus anything the estimation desk added for that platform. Desk additions are
- * tagged `Estimation`: scoped and priced, not yet engineered, so nobody sells them as shipped.
+ * tagged `Estimation`: scoped and priced, not yet engineered, so nobody sells them as shipped. The
+ * exception is a feature the desk enters by hand as built before (or being built): it carries that
+ * status and sits among the bundle features, like a row of the master sheet.
  */
 
 /** Where an estimate goes when nobody has said which bundle it belongs to. The desk files it. */
@@ -88,16 +90,19 @@ export function toSolution(added: AddedSolution): Solution {
     name: added.name,
     desc: added.desc ?? '',
     form: added.form || 'Custom development',
-    status: 'Estimation',
+    status: added.status ?? 'Estimation',
     deploy: added.deploy || null,
     first: added.first,
     repeat: added.repeat ?? added.first,
-    build: null,
-    saving: null,
+    build: typeof added.build === 'number' ? added.build : null,
+    saving: typeof added.saving === 'number' ? added.saving : null,
     account: added.account || null,
     integrations: added.integrations || null,
     notes: notes || null,
-    ref: added.from
+    /* what the desk typed wins; otherwise where the estimate came from */
+    ref: added.ref?.trim()
+      ? added.ref.trim()
+      : added.from
       ? `Estimated at the desk — request ${added.from}` +
         (added.estName ? ` (${added.estName})` : '') +
         (added.estAt ? `, ${added.estAt}` : '')

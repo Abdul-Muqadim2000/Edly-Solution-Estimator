@@ -8,6 +8,9 @@ import { planBundleImport } from '@/domain/bundleImport';
 import { EMPTY_REVIEW, type ImportReview } from '@/domain/importReview';
 import { ImportReviewPanel } from '@/components/ImportReview';
 import { downloadTemplate, ESTIMATE_COLUMNS, hasErrors, readImport, type ImportIssue, type ImportKind, type ImportRead } from '@/lib/catalogImport';
+import { readWorkbook } from '@/lib/xlsx';
+import { readTracker, type TrackerPlan } from '@/domain/trackerImport';
+import type { CatalogDetail } from '@/types';
 import { plural, today } from '@/lib/format';
 import { useHover } from '@/lib/useHover';
 import { color, font, radius } from '@/theme';
@@ -15,7 +18,8 @@ import { Banner, Button, Modal, Row, useRowHover } from '@/components/ui';
 
 /**
  * Importing a workbook into the catalog, in steps a person can see: pick which kind it is, pick
- * the file, review every group it brings, then import.
+ * the file, review every group it brings, then import. The third kind, the reusable features
+ * tracker, adds no solutions: it brings internal details of the ones the catalog has.
  *
  * Nothing is applied on reading. A file with an error cannot be applied at all, and nothing can be
  * imported while a group is still pending. The review is worked out by the same functions that
@@ -23,22 +27,49 @@ import { Banner, Button, Modal, Row, useRowHover } from '@/components/ui';
  * numbers that land.
  */
 
-const KINDS: { kind: ImportKind; title: string; body: string; tone: string; wash: string }[] = [
+/** The two catalog kinds, and the tracker, which brings internal details rather than solutions. */
+type Kind = ImportKind | 'details';
+
+const KINDS: { kind: Kind; title: string; body: string; tone: string; wash: string; noun: string }[] = [
   {
     kind: 'bundles',
     title: 'Bundles',
     body: 'Features Edly built for a client before, delivered again for less. The master sheet’s format: Bundle Catalog, All Components, and a B01 sheet per bundle if you like.',
     tone: color.brandDeep,
-    wash: color.brandWash
+    wash: color.brandWash,
+    noun: 'a bundles workbook'
   },
   {
     kind: 'estimates',
     title: 'Estimates',
     body: 'Work priced for an earlier client and never built. One row each on a sheet named Estimates, with Feature and First-delivery hrs filled in.',
     tone: color.violet,
-    wash: color.violetWash
+    wash: color.violetWash,
+    noun: 'an estimates workbook'
+  },
+  {
+    kind: 'details',
+    title: 'Features tracker (internal)',
+    body: 'Who built each feature, for which client, who to ask and where its code is. Matched to the catalog by Solution ID or name, and never shown to a client.',
+    tone: color.blueInk,
+    wash: color.blueWash,
+    noun: 'the features tracker'
   }
 ];
+
+/** The tracker's fields as a person reads them, for the line saying what a file brings. */
+const DETAIL_LABELS: Partial<Record<keyof CatalogDetail, string>> = {
+  builtFor: 'who it was built for',
+  contact: 'contact',
+  team: 'team',
+  source: 'source code',
+  plugin: 'whether it is a plugin',
+  mixed: 'whether it is mixed with other features',
+  reuseCount: 'reuse count',
+  dependencies: 'dependencies',
+  implementation: 'implementation notes',
+  keywords: 'tender keywords'
+};
 
 /** Issues listed before "Show all" is needed. */
 const SHOWN = 6;
@@ -48,13 +79,14 @@ export function ImportModal({
   onClose,
   onShowEstimates
 }: {
-  initialKind?: ImportKind;
+  initialKind?: Kind;
   onClose: () => void;
   /** Offered after estimates land, where there is a catalog to show them in. */
   onShowEstimates?: () => void;
 }): JSX.Element {
   const { state, dispatch, catalog, baseCatalog } = useApp();
-  const [kind, setKind] = useState<ImportKind>(initialKind);
+  const [kind, setKind] = useState<Kind>(initialKind);
+  const [tracker, setTracker] = useState<TrackerPlan | { error: string } | null>(null);
   const [file, setFile] = useState('');
   const [busy, setBusy] = useState(false);
   const [read, setRead] = useState<ImportRead | null>(null);
@@ -65,10 +97,11 @@ export function ImportModal({
   const input = useRef<HTMLInputElement | null>(null);
   const platform = currentPlatform(state);
 
-  const choose = (next: ImportKind): void => {
+  const choose = (next: Kind): void => {
     if (next === kind) return;
     setKind(next);
     setRead(null);
+    setTracker(null);
     setFile('');
     setDone('');
     setReview(EMPTY_REVIEW);
@@ -80,10 +113,24 @@ export function ImportModal({
     setFile(picked.name);
     setReview(EMPTY_REVIEW);
     try {
-      setRead(await readImport(await picked.arrayBuffer(), kind));
+      if (kind === 'details') {
+        /* matched against the bundles catalog, not the desk's estimates, whose names can repeat a feature's */
+        try {
+          setTracker(readTracker(await readWorkbook(await picked.arrayBuffer()), baseCatalog, platform, picked.name, today()));
+        } catch {
+          setTracker({ error: `${picked.name} could not be read as an Excel workbook.` });
+        }
+      } else setRead(await readImport(await picked.arrayBuffer(), kind));
     } finally {
       setBusy(false);
     }
+  };
+
+  const applyDetails = (): void => {
+    if (!tracker || 'error' in tracker || tracker.details.length === 0) return;
+    dispatch({ type: 'importCatalogDetails', details: tracker.details, columns: tracker.columns });
+    setDone(`Saved the internal details of ${plural(tracker.details.length, 'solution')} from ${file}. They show in the catalog and the tender popup, and nowhere a client sees.`);
+    setTracker(null);
   };
 
   const bundlesPlan = useMemo(() => {
@@ -148,8 +195,8 @@ export function ImportModal({
         <>
           <div style={{ fontFamily: font.display, fontSize: 19, fontWeight: 700 }}>Import from Excel</div>
           <div style={{ fontSize: 12.5, color: color.muted, lineHeight: 1.55, marginTop: 3, maxWidth: 600 }}>
-            Two kinds of workbook come in here, and the catalog keeps them apart. Nothing changes until you have read what the file
-            would do and chosen to apply it.
+            Bundles and estimates come in here, and the catalog keeps them apart; the features tracker adds internal details to
+            solutions the catalog already has. Nothing changes until you have read what the file would do and chosen to apply it.
           </div>
         </>
       }
@@ -161,9 +208,16 @@ export function ImportModal({
       </div>
 
       <Row gap={8} style={{ marginTop: 10 }}>
-        <Button size="sm" onClick={() => downloadTemplate(kind)} hover={{ borderColor: active.tone, color: active.tone }}>
-          Download the {kind} template
-        </Button>
+        {kind !== 'details' ? (
+          <Button size="sm" onClick={() => downloadTemplate(kind)} hover={{ borderColor: active.tone, color: active.tone }}>
+            Download the {kind} template
+          </Button>
+        ) : (
+          <span style={{ fontSize: 12, color: color.muted, lineHeight: 1.5 }}>
+            Your team&apos;s tracker as it is: the sheet with Feature / Module Name and Originally Built For is read, and Summary or Instructions
+            sheets are passed over. Add a Solution ID column to match a feature whose name differs from the catalog&apos;s.
+          </span>
+        )}
         {kind === 'estimates' ? (
           <Button size="sm" tone="ghost" onClick={() => setShowFormat((value) => !value)}>
             {showFormat ? 'Hide the columns' : 'Which columns it takes'}
@@ -174,7 +228,7 @@ export function ImportModal({
       {showFormat && kind === 'estimates' ? <EstimateFormat /> : null}
 
       <DropZone
-        label={busy ? 'Reading the workbook…' : file && read ? `Choose another ${kind} workbook` : `Choose a ${kind} workbook (.xlsx)`}
+        label={busy ? 'Reading the workbook…' : file && (read || tracker) ? 'Choose another workbook' : `Choose ${active.noun} (.xlsx)`}
         sub={file ? file : 'Or drop it here.'}
         tone={active.tone}
         onClick={() => input.current?.click()}
@@ -205,6 +259,8 @@ export function ImportModal({
           </Banner>
         </div>
       ) : null}
+
+      {tracker ? <DetailsPreview plan={tracker} onApply={applyDetails} onCancel={() => setTracker(null)} /> : null}
 
       {read ? (
         <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
@@ -247,6 +303,9 @@ export function ImportModal({
                     estimatesPlan.review.pending === 0 && estimatesPlan.unassigned > 0
                       ? `${plural(estimatesPlan.unassigned, 'estimate')} ${estimatesPlan.unassigned === 1 ? 'goes' : 'go'} to Unassigned, for the estimation desk to file.`
                       : '',
+                    estimatesPlan.review.pending === 0 && estimatesPlan.details.length > 0
+                      ? `${plural(estimatesPlan.details.length, 'estimate')} ${estimatesPlan.details.length === 1 ? 'brings' : 'bring'} internal details (source code, contact, keywords), kept off the client's Excel sheet and quote.`
+                      : '',
                     estimatesPlan.review.leftOut > 0 ? `${plural(estimatesPlan.review.leftOut, 'estimate')} left out.` : ''
                   ]}
                 />
@@ -270,6 +329,57 @@ export function ImportModal({
         </div>
       ) : null}
     </Modal>
+  );
+}
+
+function DetailsPreview({ plan, onApply, onCancel }: { plan: TrackerPlan | { error: string }; onApply: () => void; onCancel: () => void }): JSX.Element {
+  if ('error' in plan) {
+    return (
+      <div style={{ marginTop: 14 }}>
+        <Banner tone="bad">{plan.error}</Banner>
+      </div>
+    );
+  }
+  const brings = plan.columns.flatMap((column) => (DETAIL_LABELS[column] ? [DETAIL_LABELS[column]!] : []));
+  return (
+    <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
+      {plan.warnings.length > 0 ? (
+        <IssueList
+          tone="warn"
+          heading={`${plan.warnings.length === 1 ? 'One feature' : `${plan.warnings.length} features`} whose hours in the tracker do not add up. Nothing here changes the catalog's hours; check them in the sheets.`}
+          issues={plan.warnings.map((text) => ({ level: 'warning' as const, text }))}
+        />
+      ) : null}
+      {plan.unmatched.length > 0 ? (
+        <IssueList
+          tone="warn"
+          heading={`${plural(plan.unmatched.length, 'row')} could not be matched to a catalog solution, and will be left out.`}
+          issues={plan.unmatched.map((row) => ({ level: 'warning' as const, text: `Row ${row.row}, ${row.name}: ${row.why}` }))}
+        />
+      ) : null}
+      <Preview>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: color.ink }}>
+          {plan.details.length > 0
+            ? `${plural(plan.details.length, 'feature')} on the ${plan.sheet} sheet matched to catalog solutions.`
+            : `Nothing on the ${plan.sheet} sheet matched a catalog solution.`}
+        </div>
+        <PreviewLines
+          lines={[
+            brings.length > 0 ? `Brings ${brings.join(', ')}.` : '',
+            'Kept in your store and shown only inside Quotient: never on the Excel sheet, the printed quote, or the screen while presenting. The AI that matches tenders reads the dependencies, implementation notes and keywords, with client names and links taken out.',
+            'A second import updates these in place, and a column the file does not have keeps what is stored.'
+          ]}
+        />
+        <Row gap={8} style={{ marginTop: 12 }}>
+          <Button tone="primary" disabled={plan.details.length === 0} onClick={onApply} style={{ background: color.blueInk }} hover={{ background: color.ink }}>
+            Save internal details of {plural(plan.details.length, 'solution')}
+          </Button>
+          <Button tone="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        </Row>
+      </Preview>
+    </div>
   );
 }
 

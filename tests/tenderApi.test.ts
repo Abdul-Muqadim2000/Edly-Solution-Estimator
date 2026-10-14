@@ -131,9 +131,22 @@ const platforms = [
   { id: 'moodle', name: 'Moodle', practice: 'EdTech / LMS', note: '', bundles: [] }
 ];
 const catalog = [
-  { id: 'SSO-1', bundle: 'B13', bundleName: 'Identity & SSO', name: 'Azure AD sign-on', category: 'Identity', status: 'Production', desc: 'SAML and OIDC sign-on' },
-  { id: 'AS-1', bundle: 'B04', bundleName: 'Assessment', name: 'Proctored exams', category: 'Assessment', status: 'Estimation', desc: 'Proctoring | recording' }
+  {
+    id: 'SSO-1',
+    bundle: 'B13',
+    bundleName: 'Identity & SSO',
+    name: 'Azure AD sign-on',
+    category: 'Identity',
+    status: 'Production',
+    desc: 'SAML and OIDC sign-on',
+    form: 'Integration',
+    works: 'Azure AD',
+    notes: 'One tenant per site.',
+    more: 'Also called: single sign-on, identity provider.'
+  },
+  { id: 'AS-1', bundle: 'B04', bundleName: 'Assessment', name: 'Proctored exams', category: 'Assessment', status: 'Estimation', desc: 'Proctoring | recording', form: '', works: '', notes: '', more: '' }
 ];
+const bundles = [{ id: 'B13', name: 'Identity & SSO', pitch: 'One sign-in for every learner.', offerWhen: 'SSO / identity provider / Azure AD' }];
 
 /** The Messages request the SDK sent, as JSON. */
 const sentMessage = (): Record<string, unknown> => {
@@ -551,6 +564,7 @@ describe('the match step', () => {
     ];
     const response = await post('match', {
       catalog,
+      bundles,
       reqs: [
         { id: 'R-01', text: 'Single sign-on', section: 'Identity', priority: 'must' },
         { id: 'R-02', text: 'Blockchain certificates', section: '', priority: 'should' }
@@ -563,8 +577,13 @@ describe('the match step', () => {
 
     const content = (sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
     expect(content[0]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
-    /* a pipe inside a description must not add a column the model then misreads */
-    expect(String(content[0]?.text)).toContain('AS-1 | B04 | Assessment | Proctored exams | Assessment | Estimation | Proctoring / recording');
+    /* each bundle opens with what it delivers and the client questions it answers, in tender words */
+    expect(String(content[0]?.text)).toContain('## B13 | Identity & SSO | One sign-in for every learner. | SSO / identity provider / Azure AD');
+    expect(String(content[0]?.text)).toContain(
+      'SSO-1 | Azure AD sign-on | Identity | Production | Integration | SAML and OIDC sign-on | Azure AD | One tenant per site. | Also called: single sign-on, identity provider.'
+    );
+    /* a pipe inside a description must not add a column the model then misreads; a bundle the browser sent nothing about still heads its lines */
+    expect(String(content[0]?.text)).toContain('## B04 | Assessment |  | \nAS-1 | Proctored exams | Assessment | Estimation |  | Proctoring / recording |  |  | ');
     expect(String(content[1]?.text)).toContain('R-02 [should] Blockchain certificates');
     /* no hours reach the model, so it cannot quote one */
     expect(String(content[0]?.text)).not.toMatch(/\bh\b|hours/);

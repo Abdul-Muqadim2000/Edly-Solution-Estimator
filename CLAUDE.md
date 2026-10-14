@@ -151,7 +151,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 1,342 tests across twenty-eight files.
+`bun run test` runs 1,403 tests across twenty-nine files.
 
 | File | Covers |
 |---|---|
@@ -167,6 +167,7 @@ reference.
 | `tests/xlsx.test.ts` | the hand-written `.xlsx` reader and writer |
 | `tests/catalogSheet.test.ts` | the master catalog workbook and hand-edited sheets |
 | `tests/catalogImport.test.ts` | importing a bundles or estimates workbook: which kind a file is, every refusal and warning, the templates, the preview, and the import history that deletes one |
+| `tests/catalogDetails.test.ts` | the features tracker read and matched to the catalog, a second import over the first, the desk's forms for an entry and for internal details, and what the matching AI may read of the details |
 | `tests/importReview.test.ts` | the review before an import saves: groups, approval, renames, redirects, moved and dropped rows, for both kinds |
 | `tests/quoteExport.test.ts` | the branded task-breakdown workbook a client receives |
 | `tests/taskBreakdown.test.ts` | the Excel sheet's deliverables, lines and totals, checked against `calcEstimate` |
@@ -174,7 +175,7 @@ reference.
 | `tests/mail.test.ts` | the desk emails and the clipboard fallback |
 | `tests/format.test.ts` | money, hours, dates, the plain-text quote |
 | `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, topics and repeats, desk drafts, what calls cost and the spending limit |
-| `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
+| `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API, and the three strict tools the real API will compile |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV, web page and text tenders into uploads, spreadsheets as numbered rows, a web page in the encoding it declares |
 | `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
 | `tests/stages.test.ts` | where a deal and a desk request stand: the stages in order, reading them back from the sheet, the moves filing and pricing make by themselves, what sales sees of the desk, and the boards' columns, order and totals |
@@ -186,14 +187,14 @@ reference.
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-10-14, with web page tenders):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-10-14, with the desk's catalog fields):
 
 | | |
 |---|---|
-| Statements | 98.0% |
+| Statements | 98.1% |
 | Lines | 98.9% |
 | Functions | 99.3% |
-| Branches | 89.7% |
+| Branches | 90.2% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -216,8 +217,8 @@ Two things to know before you touch the coverage config:
 
 What the number does not cover, and you should say so rather than implying otherwise: the React
 components, the sync loop's timing behaviour, the cloud providers against their real services, and
-the AI against the real Anthropic API. That last one has been run by hand once, on one Word tender
-(VERIFY.md, "The tender AI, run for real"); PDF and spreadsheet tenders have not.
+the AI against the real Anthropic API. That last one has been run by hand twice, on a Word tender
+and on a PDF tender (VERIFY.md, "The tender AI, run for real"); spreadsheet tenders have not.
 
 ---
 
@@ -302,10 +303,10 @@ Set these in Vercel under Settings, Environment Variables, redeploy, then confir
 `bun run store:probe` or `GET /api/state?probe=1`. Never commit a key. `.env` is gitignored and
 `.env.example` is the template, so add a block there for anything new.
 
-### The eight sheets
+### The nine sheets
 
 `Estimations`, `Requests`, `EstimatedSolutions`, `CustomBundles`, `Settings`, `Tenders`,
-`SalesAccountLegal`, `Users`. Scalar columns stay readable so a human can scan the sheet in Excel, and
+`SalesAccountLegal`, `CatalogDetails`, `Users`. Scalar columns stay readable so a human can scan the sheet in Excel, and
 nested state sits in one JSON column per row so the app round-trips losslessly. A tender's
 requirements run past one cell, so its `detailJson` splits across rows keyed `id##2/3`,
 pipe-wrapped like the long settings. An estimate imported from a workbook is an
@@ -328,6 +329,22 @@ date as the sheet displays it); `readCategory`, `readStatus` and `readDay` in
 readers and never read back. Each row carries what the match step showed, so an item reads without
 the tender: the matcher's `reason`, the tender `section` it sits under, the `source` and `quote`,
 and a key term's `topic`.
+
+`CatalogDetails` holds what the reusable features tracker says about each catalog solution: who it
+was built for, the contact, team, source code, whether it is a plugin, reuse count, dependencies,
+implementation notes and tender keywords. One row per solution per platform, scalar columns only,
+read back by name and from whatever a person typed ("y" for yes); the id is the platform and the
+solution, worked out again on read. It is not the catalog and does not change it: the served
+catalog sheet is in a public repository, so nothing about clients or people may go there. Details
+also come from the desk's Add to catalog form, from an edit on any solution, and from five optional
+columns of the estimates template (Source code, Contact, Dependencies, Implementation notes,
+Tender keywords); `importedFrom` then names the file, or "Typed in Quotient by" the person.
+
+A desk entry can carry every field a catalog solution has. `EstimatedSolutions` has `status`,
+`originalBuildHours`, `reuseSaving` and `reference` columns, blank for an estimate; a status read
+as "built" or "production" makes the entry a bundle feature, and a saving typed as 85 or 85% reads
+as 0.85. A save from a build that knows them says `knowsCatalogFields`; without it, `api/state.ts`
+keeps the stored four, so an older tab cannot strip them.
 
 `Users` holds the accounts: username, name, role, created, updated and a salted PBKDF2 hash
 (`server/users.ts`). It is not part of `PersistedState` and no browser ever holds it: `/api/state`
@@ -364,10 +381,11 @@ Each of these exists because it failed once. Do not weaken one to make a feature
    identically: see `populated()` in `server/store.ts`.
 5. **A missing collection means "keep what is stored", not "delete it".** A tab still running a
    build from before a collection existed sends no key for it; `api/state.ts` keeps the stored
-   tenders and the stored sales and legal list in that case, after the empty-payload guard has
-   run. Do the same for any collection added later. The same holds for fields: a tab from before
-   the sales and legal list reads tenders but not their key terms, so from such a tab (it sends no
-   `salesLegal`) each tender keeps its stored `readTerms`, `terms` and `termReads`.
+   tenders, the stored sales and legal list and the stored catalog details in that case, after the
+   empty-payload guard has run. Do the same for any collection added later. The same holds for
+   fields: a tab from before the sales and legal list reads tenders but not their key terms, so
+   from such a tab (it sends no `salesLegal`) each tender keeps its stored `readTerms`, `terms` and
+   `termReads`.
    `tests/api.test.ts` covers both.
 6. **A save never passes through an empty sheet, and one "empty" read is never acted on.** The
    Google Sheets provider used to clear every tab and then write it, two requests apart; a read in
@@ -615,6 +633,26 @@ The spreadsheets hold real deal names, client names and pricing.
   marked `repeatOf` and comes back with Restore. Every field lives on the requirement inside the
   tender's JSON column, so an older tab keeps it on a save. A spreadsheet range is 40 rows since
   this change (`SHEET_SPAN`), because each answer is about 60% longer.
+- **Catalog details are internal, live in the store, and never reach a client** (asked for on
+  2026-10-14: "the platform is used internally, so GitHub links are fine, but not in the Excel
+  sheet or the printed quote"). They come from the team's reusable features tracker through the
+  third import kind (`readTracker` in `src/domain/trackerImport.ts`), matched by Solution ID or by
+  name, and sit in their own collection, never on a `Solution`: the served catalog sheet is
+  committed to a public repository. They show only through `CatalogInternal`, behind the
+  internal-notes display setting that presenting turns off. `SheetInput` and `QuoteInput` have no
+  field for them, and `tests/quoteExport.test.ts` and `tests/format.test.ts` build both files from a
+  workspace holding them and search the text. The matcher reads keywords, dependencies and
+  implementation notes only, with client names and links taken out (`forMatcher`,
+  `clientNames`); never the client, the contact, the team or the source. The names taken out are
+  every client the app knows (the tracker's "built for", each deal's client, each imported
+  estimate's), and a solution's own name, description and notes are scrubbed the same way, since
+  a desk entry can name its client there. `clientNames` never takes a common first word ("The",
+  "Global", "University") for a client, or every "the" the AI read would become "a client". A
+  second import updates in place and keeps a field the file has no column for, so keywords typed
+  in the sheet survive. The desk enters internal details with a new entry (`readEntryForm` in
+  `src/domain/deskEntry.ts`), and anyone edits them in place on any solution (`editCatalogDetail`);
+  a detail whose every field is emptied is removed, the demo's estimates take none, and removing
+  a solution or an import takes its details with it.
 - **Skipping is safe only because it errs towards reading.** `readFit` skips a section only on an
   explicit `true`; `readRuns` reads a page any unskipped section claims, a page no section claims,
   and a page of margin either side of a skipped stretch (not in spreadsheets, whose sheets start
@@ -732,11 +770,13 @@ The spreadsheets hold real deal names, client names and pricing.
 - **`/api/tender` is unauthenticated too, and it spends money.** Anyone with the URL can send
   files to Anthropic under Edly's key. Deployment protection must be on before
   `ANTHROPIC_API_KEY` is set on a public deployment (DEFERRED.md 4).
-- **The tender AI has been run against the real API once, on one Word tender** (2026-09-29,
-  VERIFY.md). PDF and spreadsheet tenders have only met the stand-in (Worth adding next 17), and
-  PDFs are limited to 4 MB until uploads are staged (DEFERRED.md 9). The sort and the key-terms
-  calls have only met a stand-in too (Worth adding next 20), and so have the extraction prompt
-  that writes titles and context and the grouping call (Worth adding next 23).
+- **The tender AI has been run against the real API twice**: a Word tender on 2026-09-29 and a
+  PDF tender on 2026-10-14 (VERIFY.md), which also ran the self-contained extraction, the grouping
+  call and the sort for the first time. Spreadsheet tenders and the key-terms call have only met
+  the stand-in (Worth adding next 17 and 20), and PDFs are limited to 4 MB until uploads are staged
+  (DEFERRED.md 9). A stand-in does not enforce the API's own limits: the 2026-10-14 run found every
+  call refused for having too many strict tools, a fault the 2026-10-07 change brought in and the
+  stand-in drives never saw.
 - **The per-tender AI limit is a check in the browser, not a cap.** A caller going straight to
   `/api/tender` skips it (DEFERRED.md 11). The cap that holds is a monthly spend limit on the
   Anthropic Console workspace that owns the key.
@@ -853,11 +893,10 @@ everything else waiting on a server, are in DEFERRED.md.
     own pages at full price, and lift the 600-page limit on one request. Needs a PDF library (a
     new dependency, so ask) or a hand-written page splitter, which real-world PDFs make hard.
     Measure first: with caching working, it may not be cheaper.
-17. **Run a PDF tender and a spreadsheet tender through the real API**, and build the small eval.
-    The 2026-09-29 run (VERIFY.md) used one Word tender, so these are still unmeasured: what a PDF
-    page really costs (the stand-in assumes 3,000 tokens), whether a spreadsheet call reads only the
-    converted text from cache and writes nothing, how long a 20-page PDF range and a 60-row sheet
-    range take, and the same tender at `EDLY_AI_EFFORT=low` against `medium` (requirements found,
+17. **Run a spreadsheet tender through the real API**, and build the small eval. A PDF tender ran
+    on 2026-10-14 (about 2,450 tokens a page, 12 pages read in 123 s), so these are still
+    unmeasured: whether a spreadsheet call reads only the
+    converted text from cache and writes nothing, how long a 60-row sheet range takes, and the same tender at `EDLY_AI_EFFORT=low` against `medium` (requirements found,
     output tokens). Then three or four invented tenders with known requirements, so a prompt change
     is measured rather than eyeballed. Each run spends real money, about $1 to $3 a tender on Opus
     5.5, so it needs a yes first. Also compare the tender's "AI cost" line with the Anthropic
@@ -876,8 +915,8 @@ everything else waiting on a server, are in DEFERRED.md.
     through. On the real run 103 of 241 requirements still carried a reference, but a bid team
     finds a clause by its number. Needs the numbering definitions read, levels and restarts
     included, and a heading style's numbering from `word/styles.xml`.
-20. **Run the sort and the key-terms calls for real, on `TND-multa391`.** Built on 2026-09-29 and
-    driven end to end against a stand-in only. One `op=sort` call over its 50 out-of-scope items
+20. **Run the key-terms call for real, and the sort over a larger list.** The sort ran for real on
+    2026-10-14, over five items ($0.02). One `op=sort` call over `TND-multa391`'s 50 out-of-scope items
     (about $0.05) checks the teams against the table in `docs/plans/sales-account-legal.md` (sales
     about 13, account about 10, legal 18, people 6, certification 3), and one `op=terms` call on its
     Word document (about $0.10 while its cache is warm) measures what a terms read really costs and
@@ -890,16 +929,34 @@ everything else waiting on a server, are in DEFERRED.md.
 22. **Comments on a ticket, with @mentions in them.** Assignment is the only @ today. A comment
     thread per deal and per request, where an @ tells that person, would fit the same derived
     notifications; it is a new collection (every touch-point in the feature checklist).
-23. **Run the self-contained extraction and the grouping call for real.** Built on 2026-10-07 and
-    driven end to end against a stand-in only. Upload the UT System RFP again (its files at
-    Anthropic expired on 2026-10-01) and compare with the 2026-09-29 run in VERIFY.md: how many of
-    the 241 requirements now read on their own, whether any description adds something the tender
-    does not say, how many sets of repeats come back and whether they are real, and what extraction
-    costs now (estimated at about $0.35 more than the $1.05 it was, for longer answers; grouping
-    about $0.20). It spends real money, about $3.50 to $4 for the tender, so it needs a yes first.
+23. **Compare the self-contained extraction with the first run's, on the UT System RFP.** Both ran
+    for real on 2026-10-14 on a PDF tender (VERIFY.md): every requirement titled and readable alone,
+    5 sets of repeats, all real. What is still open is the like-for-like comparison with the
+    2026-09-29 run: upload the UT System RFP again and count how many of the 241 now read on their
+    own, whether any description adds something the tender does not say, and what extraction costs
+    now. About $3.50 to $4 for the tender, so it needs a yes first.
 24. **Open a catalog solution in its own tab.** The match step's popup shows a solution in place.
     A link that opens it in a new tab (a middle click on the chip) needs a route for it, for example
     `?item=EDU-076` on the tender's URL kept in `parseRoute` and `formatRoute`, or a page of its own.
+25. **Draft tender keywords for every catalog solution with the AI.** The `CatalogDetails` sheet has
+    a tender-keywords column the matcher reads, empty until someone fills it. One call over the
+    catalog (about $1) could propose keywords and a fuller capability line per solution, for a
+    person to approve each before it is saved. Reading the public GitHub READMEs of the 26 linked
+    features would make them better, but that is a new outside service, so it needs a yes. The
+    tracker's own description column is the catalog's, word for word, so it adds nothing here.
+    On the 2026-10-14 run the details without keywords made no measurable difference to matching
+    (VERIFY.md), so the keywords are what would.
+26. **List what Open edX ships with, so the matcher stops sending it to the desk.** On the 2026-10-14
+    run eight requirements went to custom with the note that stock Open edX probably covers them:
+    the Studio course builder, transcripts, the video player's speed and resume, streaks, notes,
+    bookmarks, course certificates, the problem engine. The catalog lists what Edly built, so the
+    desk would be asked to price them. A short platform-baseline list per platform, read by the
+    matcher as covered at configuration hours (or as a kind of its own), would answer them. Needs a
+    decision on how they are priced and shown, and someone who knows each platform to write it.
+27. **Three priority levels, as tenders use them.** The 2026-10-14 tender had MUST, IMPORTANT and
+    DESIRABLE and asked for pricing and timeline per level; the app keeps must and should, so the
+    last two arrive the same. A third value on `priority` (the extraction enum, the review filters,
+    the desk drafts and the estimation) would keep them apart. Old tenders read as they are.
 
 ---
 

@@ -323,6 +323,31 @@ describe('the quote a client receives', () => {
     expectTypeOf<QuoteInput['estimation']>().not.toHaveProperty('salesLegal');
   });
 
+  it('carries nothing from the internal details of catalog solutions, with every display setting on', () => {
+    /* the quote goes to the client; who built a feature, for whom, and where its code is stay with Edly */
+    const secrets = ['Nordic Academy', 'Sam Rivers', 'https://github.com/example/private-repo'];
+    const workspace: AppState = reducer({ ...INITIAL_STATE, ready: true, estimations: [estimation] }, {
+      type: 'importCatalogDetails',
+      details: Object.keys(estimation.snap.sel).map((solutionId) => ({ plat: 'openedx', solutionId, name: 'Feature', builtFor: secrets[0], contact: secrets[1], source: secrets[2] })),
+      columns: ['name', 'builtFor', 'contact', 'source']
+    });
+    expect(workspace.catalogDetails.length).toBeGreaterThan(0);
+    const deal = workspace.estimations[0]!;
+    const estimate = calcEstimate(catalog, deal.snap, []);
+    const text = quoteText({
+      estimation: deal,
+      estimate,
+      requests: [],
+      plan: schedule(estimate, [], deal.snap, { blendBuffer: false }),
+      display: { ...DEFAULT_DISPLAY, money: true, notes: true, savings: true },
+      currency: 'USD',
+      platformName: 'Open edX'
+    });
+    expect(text).toContain('Acme Academy');
+    for (const words of secrets) expect(text).not.toContain(words);
+    expectTypeOf<QuoteInput>().not.toHaveProperty('catalogDetails');
+  });
+
   it('always carries the scope caveat, whatever is hidden', () => {
     for (const display of [DEFAULT_DISPLAY, { ...DEFAULT_DISPLAY, money: false, savings: false, notes: false }]) {
       expect(quote(display)).toContain('Engineering hours only');

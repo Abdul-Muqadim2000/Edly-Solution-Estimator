@@ -8,6 +8,7 @@ import {
   readMatches,
   readRequirements,
   TEXT_LIMIT,
+  type BundleLine,
   type CatalogLine,
   type DocRef,
   type ExtractedRequirement,
@@ -99,10 +100,25 @@ export function readCatalog(value: unknown): CatalogLine[] {
         name: str(raw.name, 200),
         category: str(raw.category, 120),
         status: str(raw.status, 40),
-        desc: str(raw.desc, 400)
+        desc: str(raw.desc, 600),
+        form: str(raw.form, 120),
+        works: str(raw.works, 320),
+        notes: str(raw.notes, 300),
+        more: str(raw.more, 700)
       };
     })
     .filter((line) => line.id);
+}
+
+/** Each bundle's pitch and when to offer it, for the match step. A body from an older browser sends none. */
+export function readBundleLines(value: unknown): BundleLine[] {
+  return (Array.isArray(value) ? value : [])
+    .slice(0, 100)
+    .map((entry) => {
+      const raw = record(entry);
+      return { id: str(raw.id, 60), name: str(raw.name, 160), pitch: str(raw.pitch, 600), offerWhen: str(raw.offerWhen, 400) };
+    })
+    .filter((bundle) => bundle.id);
 }
 
 export function readMatchInputs(value: unknown): MatchInput[] {
@@ -326,13 +342,14 @@ export async function extractRange(
 
 export async function matchRequirements(
   catalog: readonly CatalogLine[],
-  reqs: readonly MatchInput[]
+  reqs: readonly MatchInput[],
+  bundles: readonly BundleLine[] = []
 ): Promise<{ matches: Record<string, RequirementMatch>; tokens: TenderTokens }> {
   if (catalog.length === 0) throw new AiError('bad_request', 'This platform has no catalog to match against yet.', 400);
   if (reqs.length === 0) return { matches: {}, tokens: tokensOf(null, aiModel()) };
   const { input, tokens } = await callTool('report_matches', [
     /* the catalog is the same for every batch, so it is cached; the requirements come after it */
-    { type: 'text', text: catalogText(catalog), cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: catalogText(catalog, bundles), cache_control: { type: 'ephemeral' } },
     { type: 'text', text: matchInstruction(reqs) }
   ]);
   return {

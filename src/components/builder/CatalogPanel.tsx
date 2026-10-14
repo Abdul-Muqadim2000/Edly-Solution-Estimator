@@ -77,7 +77,8 @@ export function CatalogPanel({ onClose, onImport, onHistory }: { onClose: () => 
       >
         <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: color.brandDeep }}>Import from Excel</span>
         <span style={{ display: 'block', fontSize: 11, color: color.muted, lineHeight: 1.5, marginTop: 3 }}>
-          A bundles workbook of built features, or an estimates sheet of priced work. You see what it would change first.
+          A bundles workbook of built features, an estimates sheet of priced work, or the features tracker&apos;s internal details. You see what
+          it would change first.
         </span>
       </button>
 

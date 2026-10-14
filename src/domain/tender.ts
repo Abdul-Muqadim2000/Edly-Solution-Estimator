@@ -1,5 +1,6 @@
 import type {
   Catalog,
+  CatalogDetail,
   Confidence,
   DeskDraftEdit,
   EstimateRequest,
@@ -20,6 +21,7 @@ import type {
 } from '@/types';
 /* relative, not '@/': the server imports this module, and the function bundler does not read tsconfig paths */
 import { dollars, plural, uniqueSlug } from '../lib/format.js';
+import { clientNames, detailFor, forMatcher, scrub } from './catalogDetails.js';
 import { list, record, text as str, whole as int } from '../lib/narrow.js';
 
 /**
@@ -63,6 +65,22 @@ export interface CatalogLine {
   category: string;
   status: string;
   desc: string;
+  /** How it is delivered ("Django App · Custom Plugin"). */
+  form: string;
+  /** What it works with: its integrations, and an account the client has to hold. */
+  works: string;
+  /** Notes and limits, the client-facing entry. */
+  notes: string;
+  /** From the internal details: other names, what it needs, how it is built, with client names and links taken out. */
+  more: string;
+}
+
+/** A bundle as the match step introduces it: what it delivers, and the client questions it answers. */
+export interface BundleLine {
+  id: string;
+  name: string;
+  pitch: string;
+  offerWhen: string;
 }
 
 export interface FitHeader {
@@ -967,8 +985,20 @@ export function matchBatches<T>(items: readonly T[], size = 40): T[][] {
   return batches;
 }
 
-/** The catalog as the match step describes it. One line per solution, first bundle wins. */
-export function catalogLines(catalog: Catalog): CatalogLine[] {
+const oneLine = (value: string | null | undefined, max: number): string => (value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+/**
+ * The catalog as the match step describes it. One line per solution, first bundle wins, with
+ * everything the catalog says that helps a match: how it is delivered, what it works with, its notes
+ * and limits, and from the internal details of `plat` the words a tender would use, what it needs
+ * and how it is built. Never who built it, for whom, who to ask or where the code is
+ * (`forMatcher`), and never hours.
+ */
+export function catalogLines(catalog: Catalog, details: readonly CatalogDetail[] = [], plat = '', clients: readonly string[] = []): CatalogLine[] {
+  const mine = details.filter((detail) => detail.plat === plat);
+  /* every client the app knows is taken out, not only the tracker's: a note typed at the desk or
+     imported with an estimate can name any of them */
+  const names = clientNames(mine, clients);
   const seen = new Set<string>();
   const lines: CatalogLine[] = [];
   for (const bundle of catalog.bundles) {
@@ -979,14 +1009,26 @@ export function catalogLines(catalog: Catalog): CatalogLine[] {
         id: item.id,
         bundle: bundle.id,
         bundleName: bundle.name,
-        name: item.name,
+        /* the free text too: an entry typed at the desk or imported can name its client or link its code */
+        name: scrub(item.name, names),
         category: item.category ?? '',
         status: item.status,
-        desc: (item.desc ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)
+        desc: oneLine(scrub(item.desc, names), 600),
+        form: oneLine(item.form, 120),
+        works: [oneLine(item.integrations, 240), item.account ? `the client holds a ${oneLine(item.account, 60)} account` : ''].filter(Boolean).join('; '),
+        notes: oneLine(item.notes ? scrub(item.notes, names) : '', 300),
+        more: forMatcher(detailFor(mine, plat, item.id), names)
       });
     }
   }
   return lines;
+}
+
+/** Each bundle's pitch and the client questions it answers, written in the words a tender uses. */
+export function bundleLines(catalog: Catalog): BundleLine[] {
+  return catalog.bundles
+    .filter((bundle) => bundle.items.length > 0)
+    .map((bundle) => ({ id: bundle.id, name: bundle.name, pitch: oneLine(bundle.pitch, 600), offerWhen: oneLine(bundle.offerWhen, 400) }));
 }
 
 /** Every platform the fit step can recommend, with enough of its catalog to tell them apart. */

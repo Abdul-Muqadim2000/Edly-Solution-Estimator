@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readWorkbook, writeWorkbook } from '../src/lib/xlsx';
 import { coerceState, COLUMNS, countRows, namesEveryRow, sheetsToState, stateToSheets, storedForm, syncKey, SHEETS } from '../server/schema';
-import type { Catalog, PersistedState, SalesLegalItem, Tender, TenderRequirement } from '../src/types';
+import type { Catalog, CatalogDetail, PersistedState, SalesLegalItem, Tender, TenderRequirement } from '../src/types';
 import { DEFAULT_SHEET, readSheetPrefs } from '../src/domain/taskBreakdown';
+import { blank } from '../src/domain/catalogDetails';
 import { ESTIMATION_STAGES } from '../src/domain/stages';
 
 /**
@@ -251,8 +252,51 @@ function sample(): PersistedState {
       'edly-loaded-catalogs-v2': { openedx: catalog, moodle: catalog }
     },
     tenders: [tender()],
-    salesLegal: salesLegal()
+    salesLegal: salesLegal(),
+    catalogDetails: catalogDetails()
   };
+}
+
+/* internal details of two catalog solutions: one as full as the tracker gets, one nearly empty */
+function catalogDetails(): CatalogDetail[] {
+  return [
+    {
+      id: 'openedx/EDU-013',
+      plat: 'openedx',
+      solutionId: 'EDU-013',
+      name: 'Badges',
+      builtFor: 'Acme Academy',
+      contact: 'Team Orange',
+      team: 'Platform',
+      source: 'https://github.com/example/edly-badges',
+      plugin: false,
+      mixed: true,
+      reuseCount: 2,
+      dependencies: 'Needs changes in the LMS and the learner MFE',
+      implementation: 'A Django app plus a plugin slot in the learner dashboard.',
+      keywords: 'digital badges, Open Badges 2.0, micro-credentials',
+      importedFrom: 'Reusable features tracker.xlsx',
+      up: '2026-10-14'
+    },
+    {
+      id: 'openedx/EDU-049',
+      plat: 'openedx',
+      solutionId: 'EDU-049',
+      name: 'Word Cloud XBlock',
+      builtFor: 'Edly Cloud',
+      contact: '',
+      team: '',
+      source: '',
+      plugin: null,
+      mixed: null,
+      reuseCount: null,
+      dependencies: '',
+      implementation: '',
+      keywords: '',
+      importedFrom: 'Reusable features tracker.xlsx',
+      up: '2026-10-14'
+    }
+  ];
 }
 
 /** One of each: a tender's out-of-scope requirement, a key term, and an item typed in by hand on another deal. */
@@ -477,6 +521,38 @@ describe('spreadsheet round-trip', () => {
 
     expect(back.solutions[0]).toMatchObject({ id: 'CS-01', name: 'Proctored exam integration', first: 48, account: 'Proctorio', from: 'RQ-01', integrations: '', notes: '' });
     expect(back.solutions[0]?.estName).toBeUndefined();
+  });
+
+  it("keeps a desk entry's status, build hours, saving and reference, and adds none to an estimate", async () => {
+    const original = sample();
+    const built = { ...original.solutions[0]!, status: 'Production' as const, build: 120, saving: 0.75, ref: 'https://example.com/acme/proctoring' };
+    const back = await roundTrip({ ...original, solutions: [built, original.solutions[1]!] });
+    expect(back.solutions[0]).toEqual(built);
+    /* an estimate reads back with no status key at all, exactly as the app wrote it */
+    expect(back.solutions[1]).toEqual(original.solutions[1]);
+  });
+
+  it('reads a status, saving and build hours a person typed over the solutions sheet', async () => {
+    const columns = ['id', 'plat', 'name', 'firstHours', 'status', 'originalBuildHours', 'reuseSaving', 'reference'];
+    const back = sheetsToState(
+      await readWorkbook(
+        writeWorkbook({
+          [SHEETS.solutions]: [
+            columns,
+            ['CS-01', 'openedx', 'Badges', 40, 'built before', '160', '85%', 'https://example.com/acme/badges'],
+            ['CS-02', 'openedx', 'Proctoring', 30, 'In dev', 0, '0.5', ''],
+            ['CS-03', 'openedx', 'Webhooks', 20, 'maybe', '', '', '']
+          ]
+        })
+      )
+    );
+    expect(back.solutions[0]).toMatchObject({ status: 'Production', build: 160, saving: 0.85, ref: 'https://example.com/acme/badges' });
+    /* zero build hours is not a number anyone measured, so it reads as none */
+    expect(back.solutions[1]).toMatchObject({ status: 'In Development', saving: 0.5 });
+    expect(back.solutions[1]).not.toHaveProperty('build');
+    /* a word it cannot read leaves the entry an estimate rather than calling it built */
+    expect(back.solutions[2]).not.toHaveProperty('status');
+    expect(back.solutions[2]).not.toHaveProperty('ref');
   });
 
   it('keeps one Notes / Assumptions on a desk solution and its request, line breaks and all', async () => {
@@ -795,18 +871,58 @@ describe('the sync key', () => {
 
 describe('coerceState', () => {
   it('narrows anything to the persisted shape', () => {
-    expect(coerceState(null)).toEqual({ estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [], salesLegal: [] });
+    expect(coerceState(null)).toEqual({ estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [], salesLegal: [], catalogDetails: [] });
     expect(coerceState({ estimations: 'nope', settings: 7 }).estimations).toEqual([]);
     expect(coerceState({ settings: { a: 1 } }).settings).toEqual({ a: 1 });
     expect(coerceState({ tenders: 'nope' }).tenders).toEqual([]);
     expect(coerceState({ salesLegal: 'nope' }).salesLegal).toEqual([]);
   });
 
-  it('counts rows for the empty-payload guard, tenders and the sales and legal list included', () => {
+  it('counts rows for the empty-payload guard, tenders, the sales and legal list and catalog details included', () => {
     expect(countRows(null)).toBe(0);
-    expect(countRows(sample())).toBe(2 + 3 + 2 + 1 + 1 + 3);
+    expect(countRows(sample())).toBe(2 + 3 + 2 + 1 + 1 + 3 + 2);
     /* a store holding only these is holding someone's work, so the guard must see it */
-    expect(countRows({ ...sample(), estimations: [], requests: [], solutions: [], bundles: [], tenders: [] })).toBe(3);
+    expect(countRows({ ...sample(), estimations: [], requests: [], solutions: [], bundles: [], tenders: [], catalogDetails: [] })).toBe(3);
+    /* an imported tracker is work too: blanking it from a browser that lost its data must be refused */
+    expect(countRows({ ...sample(), estimations: [], requests: [], solutions: [], bundles: [], tenders: [], salesLegal: [] })).toBe(2);
+    /* a body from a build before catalog details has no such list, and still counts */
+    expect(countRows({ ...sample(), catalogDetails: undefined } as unknown as PersistedState)).toBe(2 + 3 + 2 + 1 + 1 + 3);
+  });
+});
+
+describe('catalog details', () => {
+  it('keeps every detail through the sheet, a nearly empty one as it was', async () => {
+    /* a lost "built for" or contact is the trail back to who can reuse the feature */
+    const back = await roundTrip(sample());
+    expect(back.catalogDetails).toEqual(catalogDetails());
+  });
+
+  it('writes words a person can filter on, and no JSON', () => {
+    const rows = stateToSheets(sample())[SHEETS.catalogDetails] ?? [];
+    const header = rows[0] as string[];
+    const first = Object.fromEntries(header.map((name, index) => [name, rows[1]?.[index]]));
+    expect(first).toMatchObject({ solutionId: 'EDU-013', builtFor: 'Acme Academy', alreadyPlugin: 'No', mixedWithOthers: 'Yes', reuseCount: 2, tenderKeywords: 'digital badges, Open Badges 2.0, micro-credentials' });
+    /* an unknown answer stays blank rather than turning into a no */
+    expect(Object.fromEntries(header.map((name, index) => [name, rows[2]?.[index]]))).toMatchObject({ alreadyPlugin: '', mixedWithOthers: '', reuseCount: '' });
+    expect(header).not.toContain('id');
+  });
+
+  it('reads a sheet the team edited by hand, and leaves out a row with no solution', () => {
+    const state = sheetsToState({
+      [SHEETS.catalogDetails]: [
+        ['solutionId', 'feature', 'builtFor', 'alreadyPlugin', 'mixedWithOthers', 'reuseCount', 'tenderKeywords'],
+        [' EDU-013 ', 'Badges', 'Acme Academy', 'y', 'NO', ' 3 ', 'open badges'],
+        ['', 'A note someone typed under the table', '', '', '', '', '']
+      ]
+    });
+    /* no platform column reads as Open edX, the way every other sheet does */
+    expect(state.catalogDetails).toEqual([
+      { ...blank('openedx', 'EDU-013'), name: 'Badges', builtFor: 'Acme Academy', plugin: true, mixed: false, reuseCount: 3, keywords: 'open badges' }
+    ]);
+  });
+
+  it('reads a store written before the sheet existed as holding no details', () => {
+    expect(sheetsToState({}).catalogDetails).toEqual([]);
   });
 });
 
@@ -1199,7 +1315,7 @@ describe('where deals and requests stand', () => {
 describe('an empty save that names what a person deleted', () => {
   it('covers the store only when every stored row, of every sheet, is named', () => {
     const stored = sample();
-    const all = [...stored.estimations, ...stored.requests, ...stored.solutions, ...stored.bundles, ...stored.tenders, ...stored.salesLegal].map((row) => row.id);
+    const all = [...stored.estimations, ...stored.requests, ...stored.solutions, ...stored.bundles, ...stored.tenders, ...stored.salesLegal, ...stored.catalogDetails].map((row) => row.id);
     expect(namesEveryRow(stored, all)).toBe(true);
     /* one row left out, of any kind, is one a person never deleted */
     for (const id of all) expect(namesEveryRow(stored, all.filter((one) => one !== id))).toBe(false);

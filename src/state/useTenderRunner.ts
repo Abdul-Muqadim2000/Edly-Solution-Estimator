@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Catalog, SalesLegalItem, Tender, TenderRange, TenderTokens } from '@/types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Catalog, CatalogDetail, SalesLegalItem, Tender, TenderRange, TenderTokens } from '@/types';
 import type { Action } from '@/state/reducer';
 import { TenderApiError, tenderExtract, tenderGroup, tenderMatch, tenderSort, tenderTerms } from '@/api/client';
 import {
@@ -7,6 +7,7 @@ import {
   aiSpent,
   callSlots,
   canSpend,
+  bundleLines,
   catalogLines,
   documentsIn,
   extracting,
@@ -120,9 +121,21 @@ export interface TenderRunner {
 
 /**
  * `items`: the sales and legal items already copied from this tender to its estimation, so the sort
- * leaves alone any a person has put in a team there.
+ * leaves alone any a person has put in a team there. `details`: the catalog's internal details, of
+ * which the matcher reads only the scrubbed part (`catalogLines`). `clients`: every client the app
+ * knows, taken out of what the matcher reads.
  */
-export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatch: (action: Action) => void, items: readonly SalesLegalItem[] = []): TenderRunner {
+export function useTenderRunner(
+  tender: Tender | null,
+  catalog: Catalog,
+  dispatch: (action: Action) => void,
+  items: readonly SalesLegalItem[] = [],
+  details: readonly CatalogDetail[] = [],
+  clients: readonly string[] = []
+): TenderRunner {
+  /* read when matching starts, never a reason to rebuild it: the list changes with every deal edited */
+  const clientsNow = useRef(clients);
+  clientsNow.current = clients;
   const [tick, setTick] = useState(0);
   const [matchError, setMatchError] = useState('');
   /* matching was asked for and the limit stopped it; `resume` runs it once the person has said go on */
@@ -354,7 +367,8 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
 
     const wanted = needsMatching(tender);
     if (wanted.length === 0) return;
-    const lines = catalogLines(catalog);
+    const lines = catalogLines(catalog, details, tender.plat, clientsNow.current);
+    const bundles = bundleLines(catalog);
     if (lines.length === 0) {
       setMatchError('This platform has no catalog to match against yet. Load its sheet, or mark the requirements custom by hand.');
       return;
@@ -388,7 +402,7 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
         const texts = Object.fromEntries(batch.map((req) => [req.id, req.text]));
         const started = Date.now();
         try {
-          const { matches, tokens } = await tenderMatch(lines, batch);
+          const { matches, tokens } = await tenderMatch(lines, batch, bundles);
           noteRead(catalogReadAt, tender.plat, started, tokens);
           spent += Number(tokens.usd) || 0;
           dispatch({ type: 'setMatches', id: tender.id, matches, texts, tokens });
@@ -413,7 +427,7 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
       setSortAfterMatch(tender.id);
       changed();
     });
-  }, [tender, catalog, dispatch]);
+  }, [tender, catalog, details, dispatch]);
 
   const retry = useCallback((key: string) => dispatch({ type: 'retryRange', id: tenderId, key, claim: claimNow() }), [dispatch, tenderId]);
   const retryTerms = useCallback((key: string) => dispatch({ type: 'retryTerms', id: tenderId, key, claim: claimNow() }), [dispatch, tenderId]);

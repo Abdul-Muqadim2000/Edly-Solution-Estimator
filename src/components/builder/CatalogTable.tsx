@@ -7,6 +7,7 @@ import { referenceUrl, solutionFacts, solutionKind } from '@/domain/catalog';
 import { color, font, radius } from '@/theme';
 import { hours } from '@/lib/format';
 import { Link, useRowHover } from '@/components/ui';
+import { CatalogInternal } from '@/components/CatalogInternal';
 
 /**
  * The catalog, as a table.
@@ -182,6 +183,10 @@ function Row({
                 </Link>
               </div>
             ) : null}
+            {/* hidden while presenting, like the reference above: it follows the internal notes setting */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <CatalogInternal item={item} />
+            </div>
           </div>
         </div>
       ) : null}

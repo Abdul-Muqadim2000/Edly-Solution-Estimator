@@ -281,6 +281,7 @@ const real = (): PersistedState => ({
   bundles: [],
   tenders: [],
   salesLegal: [{ ...demoRecords(TODAY).salesLegal[0]!, id: 'SL-01', estId: 'EST-real1' }],
+  catalogDetails: [],
   settings: {}
 });
 

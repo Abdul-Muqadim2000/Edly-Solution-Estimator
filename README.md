@@ -134,7 +134,7 @@ The catalog holds two kinds of thing, and the catalog page filters and colours t
 
 Both come in through **📚 Catalog → Import from Excel** in the builder (estimates also from the
 desk's *Add to catalog* tab). Pick the kind, pick the file, read what it would do, then apply it.
-Each kind has a template to download from the same dialog, with example rows in grey. Their IDs
+Bundles and estimates each have a template to download from the same dialog, with example rows in grey. Their IDs
 start `EXAMPLE`, and the import always leaves them out, so they can stay or go.
 
 **A bundles workbook** is the master sheet's format: a *Bundle Catalog* sheet (Bundle ID, Bundle,
@@ -150,11 +150,29 @@ in place over the sheet served beside the app, across reloads.
 *Feature* and *First-delivery hrs* are required. *What it does* and *Estimated for* (the client) are
 recommended. The optional columns are *Estimate ID*, *Repeat hrs*, *Bundle ID*, *Area*,
 *Category*, *Sub category*, *Delivery form*, *Std deployment time*, *Integrations*,
-*3rd-party account*, *Notes/Assumptions*, *Estimated by* and *Estimated on*. A row goes
+*3rd-party account*, *Notes/Assumptions*, *Estimated by* and *Estimated on*, and five internal
+ones that never reach a client: *Source code* (a GitHub link, say), *Contact*, *Dependencies*,
+*Implementation notes* and *Tender keywords*. A row goes
 under its Bundle ID, else under the bundle its Area names (a new bundle if none matches), else to
 *Unassigned estimates*, where the desk files it. Importing the same file again updates rows by
 Estimate ID, or by Feature and Estimated for, instead of adding them twice, and the desk can remove
 a whole import.
+
+**The features tracker** is the third kind, and adds no solutions: it brings Edly's internal
+details of the ones the catalog has, from the team's reusable features tracker as it is kept
+(who each feature was built for, who to ask, where its code is, whether it is a plugin yet, its
+dependencies and implementation notes). Rows match by a *Solution ID* column, or by feature name.
+The details show in the catalog and the tender's catalog popup, and never on the Excel sheet, the
+printed quote or the screen while presenting. They are kept in the store's *CatalogDetails* sheet,
+where the team can add *tender keywords* for the AI to match on. They can also be typed in the app:
+the internal block has an Edit button on any solution, and an "Add internal details" button where
+there are none yet.
+
+**Adding a solution by hand.** The estimation desk's Add to catalog form takes every field a
+catalog solution has: hours, status (an estimate, built before, or in development), original build
+hours, reuse saving, reference, delivery form, deployment time, category, integrations, the
+client-held account and Notes/Assumptions, and below them the internal fields. A feature marked
+built before joins the bundles rather than the violet estimates.
 
 **Nothing is saved until you review it.** After the checks, the file's rows are shown as groups:
 rows going into an existing bundle, a new bundle per Area (or per new Bundle ID), a Bundle ID the
@@ -247,8 +265,8 @@ work; the code needs 20 or later for `DecompressionStream` and `crypto.subtle`).
 
 ## Starting from a tender
 
-"Start from a tender" on the practice picker or the estimations hub takes an RFP (PDF, Word, Excel
-or text) and walks it through three steps: the AI reads it and recommends a platform, extracts the
+"Start from a tender" on the practice picker or the estimations hub takes an RFP (PDF, Word, Excel,
+a web page or text) and walks it through three steps: the AI reads it and recommends a platform, extracts the
 requirements with the tender's own wording beside each, and matches them against the catalog. A
 person approves each step. The last step creates the estimation with the accepted catalog solutions
 picked, then sends whatever is custom to the estimation desk.

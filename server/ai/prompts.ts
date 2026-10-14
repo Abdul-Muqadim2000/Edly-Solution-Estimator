@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { isSpreadsheet, type CatalogLine, type DocRef, type GroupInput, type MatchInput, type PlatformDigest } from '../../src/domain/tender.js';
+import { isSpreadsheet, type BundleLine, type CatalogLine, type DocRef, type GroupInput, type MatchInput, type PlatformDigest } from '../../src/domain/tender.js';
 import { SALES_LEGAL_CATEGORIES, TERM_TOPICS, type SortInput } from '../../src/domain/salesLegal.js';
 
 /**
@@ -309,12 +309,26 @@ export function extractInstruction(doc: DocRef, from: number, to: number): strin
   ].join('\n');
 }
 
-export function catalogText(lines: readonly CatalogLine[]): string {
-  return [
-    "Edly's solution catalog for this platform. Each line is: id | bundle id | bundle | solution | category | status | what it does.",
-    '',
-    ...lines.map((line) => [line.id, line.bundle, line.bundleName, line.name, line.category, line.status, line.desc].map(cell).join(' | '))
-  ].join('\n');
+/**
+ * The catalog for the match step, by bundle: each bundle's line says what it delivers and the client
+ * questions it answers, in the words a tender uses, and each solution's line under it says what it
+ * is, how it is delivered, what it works with and what it needs. No hours, ever.
+ */
+export function catalogText(lines: readonly CatalogLine[], bundles: readonly BundleLine[] = []): string {
+  const about = new Map(bundles.map((bundle) => [bundle.id, bundle] as const));
+  const groups = new Map<string, CatalogLine[]>();
+  for (const line of lines) groups.set(line.bundle, [...(groups.get(line.bundle) ?? []), line]);
+  const out = [
+    "Edly's solution catalog for this platform, by bundle. Each bundle starts with a line: ## bundle id | bundle | what it delivers | offer it when the client asks about.",
+    'Each solution under it is one line: id | solution | category | status | delivery form | what it does | works with | notes and limits | more (other names, what it needs, how it is built).',
+    ''
+  ];
+  for (const [id, members] of groups) {
+    const bundle = about.get(id);
+    out.push(`## ${[id, members[0]?.bundleName ?? '', bundle?.pitch ?? '', bundle?.offerWhen ?? ''].map(cell).join(' | ')}`);
+    for (const line of members) out.push([line.id, line.name, line.category, line.status, line.form, line.desc, line.works, line.notes, line.more].map(cell).join(' | '));
+  }
+  return out.join('\n');
 }
 
 export function matchInstruction(reqs: readonly MatchInput[]): string {

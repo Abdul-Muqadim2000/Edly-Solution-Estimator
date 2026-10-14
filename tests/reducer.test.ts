@@ -44,7 +44,8 @@ import { DEMO_ID, DEMO_SLUG, demoRecords, isDemoId, isDemoRequest, isDemoSolutio
 import { today } from '../src/lib/format';
 import { TO_UNASSIGNED, toBundle, toNew, type EstimateRow } from '../src/domain/estimateImport';
 import { EMPTY_REVIEW, setGroup, setRow } from '../src/domain/importReview';
-import type { Catalog, EstimateRequest, Estimation, Person, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
+import type { Catalog, CatalogDetail, EstimateRequest, Estimation, Person, RequirementMatch, Solution, Tender, TenderDocument } from '../src/types';
+import { blank } from '../src/domain/catalogDetails';
 import { NO_TOKENS, type DeskDraft, type ExtractedRequirement, type NewTenderInput } from '../src/domain/tender';
 import { deleteTender } from '../src/state/deleteTender';
 
@@ -1774,6 +1775,11 @@ const row = (n: number, over: Partial<EstimateRow> = {}): EstimateRow => ({
   notes: '',
   estBy: '',
   estAt: '',
+  contact: '',
+  source: '',
+  dependencies: '',
+  implementation: '',
+  keywords: '',
   ...over
 });
 
@@ -1781,6 +1787,117 @@ const onScreen = [
   { id: 'B01', name: 'Commerce & Monetization' },
   { id: 'B15', name: 'Platform Engineering & Integrations' }
 ];
+
+describe('internal details of catalog solutions', () => {
+  const imported = (builtFor: string, extra: Partial<CatalogDetail> = {}): Partial<CatalogDetail> => ({
+    plat: 'openedx',
+    solutionId: 'EDU-013',
+    name: 'Badges',
+    builtFor,
+    importedFrom: 'tracker.xlsx',
+    up: '2026-10-14',
+    ...extra
+  });
+
+  it('stores what the tracker brings and saves it with everything else', () => {
+    const state = run(workspace(), { type: 'importCatalogDetails', details: [imported('Acme Academy', { contact: 'Team Orange' })], columns: ['name', 'builtFor', 'contact'] });
+    expect(state.catalogDetails).toEqual([{ ...blank('openedx', 'EDU-013'), name: 'Badges', builtFor: 'Acme Academy', contact: 'Team Orange', importedFrom: 'tracker.xlsx', up: '2026-10-14' }]);
+    /* in the store beside the deals, never in the served catalog sheet, which sits in a public repository */
+    expect(toPersisted(state).catalogDetails).toEqual(state.catalogDetails);
+  });
+
+  it('updates a second import in place, keeping what the second file has no column for', () => {
+    const first = run(workspace(), { type: 'importCatalogDetails', details: [imported('Acme Academy', { keywords: 'open badges' })], columns: ['name', 'builtFor', 'keywords'] });
+    const second = run(first, { type: 'importCatalogDetails', details: [imported('Nordic University')], columns: ['name', 'builtFor'] });
+    expect(second.catalogDetails).toHaveLength(1);
+    expect(second.catalogDetails[0]).toMatchObject({ builtFor: 'Nordic University', keywords: 'open badges' });
+    /* nothing to import is no change, and no save */
+    expect(run(second, { type: 'importCatalogDetails', details: [], columns: ['name'] })).toBe(second);
+  });
+
+  const entry = { ...submission, name: 'Proctoring', desc: '', first: 30, repeat: 10 };
+
+  it('saves the internal details typed with a desk entry under the id the entry was given', () => {
+    const next = reducer(workspace(), {
+      type: 'addSolution',
+      input: { ...entry, internal: { builtFor: 'Acme Academy', source: 'https://example.com/acme/proctoring', plugin: true, reuseCount: 2, contact: '' } }
+    });
+    expect(next.solutions[0]?.id).toBe('CS-01');
+    expect(next.catalogDetails).toEqual([
+      {
+        ...blank('openedx', 'CS-01'),
+        name: 'Proctoring',
+        builtFor: 'Acme Academy',
+        source: 'https://example.com/acme/proctoring',
+        plugin: true,
+        reuseCount: 2,
+        importedFrom: 'Typed in Quotient by admin',
+        up: today()
+      }
+    ]);
+    /* the details live beside the solution, never on it: the Excel sheet and the quote read solutions */
+    expect(next.solutions[0]).not.toHaveProperty('internal');
+    expect(next.solutions[0]).not.toHaveProperty('builtFor');
+  });
+
+  it('saves no internal details when the form left every one of them empty', () => {
+    const next = reducer(workspace(), { type: 'addSolution', input: { ...entry, internal: { builtFor: '', plugin: null, reuseCount: null } } });
+    expect(next.solutions).toHaveLength(1);
+    /* an empty record would show an empty internal block and count as a stored row */
+    expect(next.catalogDetails).toEqual([]);
+  });
+
+  it('keeps a desk entry\'s status, original build hours, reuse saving and reference', () => {
+    const next = reducer(workspace(), {
+      type: 'addSolution',
+      input: { ...entry, status: 'Production', build: 120, saving: 0.75, ref: 'https://example.com/acme/proctoring' }
+    });
+    expect(next.solutions[0]).toMatchObject({ status: 'Production', build: 120, saving: 0.75, ref: 'https://example.com/acme/proctoring', direct: true });
+  });
+
+  it('adds internal details to any catalog solution, and an edit replaces only what the form holds', () => {
+    const added = reducer(workspace(), { type: 'editCatalogDetail', solutionId: 'EDU-013', name: 'Badges', patch: { builtFor: 'Nordic University', contact: 'Team Orange' } });
+    expect(added.catalogDetails).toEqual([
+      { ...blank('openedx', 'EDU-013'), name: 'Badges', builtFor: 'Nordic University', contact: 'Team Orange', importedFrom: 'Typed in Quotient by admin', up: today() }
+    ]);
+
+    /* clearing a field is a change a person made, so it is taken as typed rather than kept */
+    const edited = reducer(added, { type: 'editCatalogDetail', solutionId: 'EDU-013', name: 'Badges', patch: { contact: '', keywords: 'open badges, credentials' } });
+    expect(edited.catalogDetails).toHaveLength(1);
+    expect(edited.catalogDetails[0]).toMatchObject({ builtFor: 'Nordic University', contact: '', keywords: 'open badges, credentials' });
+  });
+
+  it('names who typed the details, so a tracker row and a hand edit can be told apart', () => {
+    const signedIn = workspace({ auth: { user: 'sara', name: 'Sara Khan', role: 'estimator', at: 0 } });
+    const next = reducer(signedIn, { type: 'editCatalogDetail', solutionId: 'EDU-013', name: 'Badges', patch: { team: 'Team Orange' } });
+    expect(next.catalogDetails[0]?.importedFrom).toBe('Typed in Quotient by Sara Khan');
+  });
+
+  it('changes nothing when an edit names no solution or no field, or names one of the demo\'s estimates', () => {
+    const state = workspace();
+    expect(reducer(state, { type: 'editCatalogDetail', solutionId: '', name: 'Badges', patch: { team: 'Team Orange' } })).toBe(state);
+    expect(reducer(state, { type: 'editCatalogDetail', solutionId: 'EDU-013', name: 'Badges', patch: {} })).toBe(state);
+    /* the demo is never stored, so its details would be a stored row about nothing */
+    expect(reducer(state, { type: 'editCatalogDetail', solutionId: 'CS-DEMO-1', name: 'Demo', patch: { team: 'Team Orange' } })).toBe(state);
+  });
+
+  it('takes the record away when an edit empties every field, rather than storing a row that says nothing', () => {
+    const added = reducer(workspace(), { type: 'editCatalogDetail', solutionId: 'EDU-013', name: 'Badges', patch: { builtFor: 'Nordic University' } });
+    const emptied = reducer(added, { type: 'editCatalogDetail', solutionId: 'EDU-013', name: 'Badges', patch: { builtFor: '', plugin: null, reuseCount: null } });
+    expect(emptied.catalogDetails).toEqual([]);
+  });
+
+  it('takes the internal details away with a desk entry that is removed', () => {
+    const state = run(
+      workspace(),
+      { type: 'addSolution', input: { ...entry, internal: { builtFor: 'Acme Academy' } } },
+      { type: 'editCatalogDetail', solutionId: 'EDU-013', name: 'Badges', patch: { team: 'Team Orange' } }
+    );
+    const next = reducer(state, { type: 'removeSolution', id: 'CS-01' });
+    /* a later entry takes CS-02, never CS-01, but a detail with no solution is still a stored row nobody can see */
+    expect(next.catalogDetails.map((one) => one.solutionId)).toEqual(['EDU-013']);
+  });
+});
 
 describe('importing estimates from a workbook', () => {
   const imported = (state: AppState, rows: EstimateRow[], file = 'nordic.xlsx'): AppState =>
@@ -1796,6 +1913,24 @@ describe('importing estimates from a workbook', () => {
   it('prices a blank repeat at the first-delivery hours, as the desk does', () => {
     const next = imported(workspace(), [row(3), row(4, { repeat: 12 })]);
     expect(next.solutions.map((one) => one.repeat)).toEqual([30, 12]);
+  });
+
+  it('keeps the internal columns beside the estimates they came with, under the ids they were given', () => {
+    const next = imported(workspace(), [row(1), row(2, { source: 'https://example.com/nordic/sso', keywords: 'single sign-on' })]);
+    expect(next.catalogDetails).toEqual([
+      { ...blank('openedx', 'CS-02'), name: 'Estimate 2', source: 'https://example.com/nordic/sso', keywords: 'single sign-on', importedFrom: 'nordic.xlsx', up: today() }
+    ]);
+    /* never on the estimate itself, which is what the client's Excel sheet and quote read */
+    expect(next.solutions[1]).not.toHaveProperty('source');
+    expect(next.solutions[1]).not.toHaveProperty('keywords');
+  });
+
+  it('keeps a detail on a second import whose cell is blank, as it keeps a note, and takes a filled one', () => {
+    const once = imported(workspace(), [row(1, { sourceId: 'NU-1', contact: 'Team Orange', keywords: 'badges' })]);
+    const typed = reducer(once, { type: 'editCatalogDetail', solutionId: 'CS-01', name: 'Estimate 1', patch: { implementation: 'Built on the badges plugin.' } });
+    const twice = imported(typed, [row(1, { sourceId: 'NU-1', keywords: 'open badges' })]);
+    expect(twice.catalogDetails).toHaveLength(1);
+    expect(twice.catalogDetails[0]).toMatchObject({ contact: 'Team Orange', keywords: 'open badges', implementation: 'Built on the badges plugin.' });
   });
 
   it('updates an earlier import instead of adding the same estimate twice', () => {
@@ -1898,6 +2033,16 @@ describe('undoing an import', () => {
   it('takes its estimates out of the open selection, like removing one does', () => {
     const next = reducer(state, { type: 'removeImport', file: 'nordic.xlsx' });
     expect(next.draft.sel).toEqual({ 'CS-03': true });
+  });
+
+  it("takes the internal details of that workbook's estimates with them, and leaves the others", () => {
+    const detailed = run(
+      state,
+      { type: 'editCatalogDetail', solutionId: 'CS-01', name: 'Estimate 1', patch: { builtFor: 'Nordic University' } },
+      { type: 'editCatalogDetail', solutionId: 'CS-03', name: 'Estimate 3', patch: { builtFor: 'Acme Academy' } }
+    );
+    const next = reducer(detailed, { type: 'removeImport', file: 'nordic.xlsx' });
+    expect(next.catalogDetails.map((one) => one.solutionId)).toEqual(['CS-03']);
   });
 
   it('keeps a bundle the import made once the desk has filed other work in it', () => {
@@ -2869,7 +3014,7 @@ describe('what of the people is saved', () => {
     const saved = toPersisted(state);
     expect(saved).not.toHaveProperty('people');
     expect(saved).not.toHaveProperty('adminPanel');
-    expect(Object.keys(saved).sort()).toEqual(['bundles', 'estimations', 'knowsPeople', 'requests', 'salesLegal', 'settings', 'solutions', 'tenders']);
+    expect(Object.keys(saved).sort()).toEqual(['bundles', 'catalogDetails', 'estimations', 'knowsCatalogFields', 'knowsPeople', 'requests', 'salesLegal', 'settings', 'solutions', 'tenders']);
   });
 
   /* without it the server takes the save for one from a tab on an older build and keeps the stored
@@ -2877,5 +3022,11 @@ describe('what of the people is saved', () => {
   it('marks every save as coming from a build that knows who is on a ticket', () => {
     expect(toPersisted(workspace({ estimations: [estimation('EST-1')] })).knowsPeople).toBe(true);
     expect(toPersisted(workspace({})).knowsPeople).toBe(true);
+  });
+
+  /* without it the server takes the save for an older build's and keeps the stored status, build
+     hours, saving and reference of every desk entry, so clearing a reference would never save */
+  it("marks every save as coming from a build that knows a desk entry's catalog fields", () => {
+    expect(toPersisted(workspace({})).knowsCatalogFields).toBe(true);
   });
 });

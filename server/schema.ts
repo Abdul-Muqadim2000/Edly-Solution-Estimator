@@ -2,6 +2,7 @@ import type {
   AddedBundle,
   Assignment,
   AddedSolution,
+  CatalogDetail,
   EstimateRequest,
   Estimation,
   EstimationSnapshot,
@@ -17,6 +18,7 @@ import { usdOf } from '../src/domain/aiPrice.js';
 import { aiSpent, aiStep, DEFAULT_AI_LIMIT } from '../src/domain/tender.js';
 import { categoryLabel, readCategory, readDay, readStatus, readTopic, statusLabel, topicLabel } from '../src/domain/salesLegal.js';
 import { withoutDemo } from '../src/domain/demo.js';
+import { catalogDetailId, readYesNo, yesNoLabel } from '../src/domain/catalogDetails.js';
 import { assignedDetail, assignedLabel, normalUsername, readAssigned, readEvent } from '../src/domain/people.js';
 import { defaultStage, readRequestStage, readStage, stageLabel, stageOf, ticketLabel, ticketStage } from '../src/domain/stages.js';
 
@@ -35,7 +37,8 @@ export const SHEETS = {
   bundles: 'CustomBundles',
   settings: 'Settings',
   tenders: 'Tenders',
-  salesLegal: 'SalesAccountLegal'
+  salesLegal: 'SalesAccountLegal',
+  catalogDetails: 'CatalogDetails'
 } as const;
 
 export const COLUMNS = {
@@ -70,7 +73,9 @@ export const COLUMNS = {
   solutions: [
     'id', 'plat', 'bundleId', 'name', 'description', 'firstHours', 'repeatHours', 'form', 'deploy',
     'integrations', 'category', 'subCategory', 'account', 'note', 'fromRequest', 'estimationName',
-    'addedOn', 'direct', 'importedFrom', 'sourceId', 'client', 'estimatedBy', 'importedOn'
+    'addedOn', 'direct', 'importedFrom', 'sourceId', 'client', 'estimatedBy', 'importedOn',
+    /* the fields a bundle row has and a desk entry can now carry too; blank on everything else */
+    'status', 'originalBuildHours', 'reuseSaving', 'reference'
   ],
   bundles: ['id', 'plat', 'name', 'pitch', 'offerWhen', 'pairsWith', 'addedOn', 'importedFrom'],
   settings: ['key', 'valueJson'],
@@ -88,6 +93,13 @@ export const COLUMNS = {
   salesLegal: [
     'id', 'plat', 'estimationId', 'estimationName', 'client', 'category', 'item', 'status', 'owner', 'due', 'note',
     'reason', 'kind', 'topic', 'priority', 'source', 'section', 'quote', 'tenderId', 'tenderItem', 'created', 'updated'
+  ],
+  /* Scalar columns only, the way the sales and legal list is kept: the team filters this sheet and
+     types keywords and contacts into it. The id is not a column; it is the platform and the
+     solution together, worked out again on the way back. */
+  catalogDetails: [
+    'solutionId', 'plat', 'feature', 'builtFor', 'contact', 'team', 'sourceCode', 'tenderKeywords', 'alreadyPlugin', 'mixedWithOthers',
+    'reuseCount', 'dependencies', 'implementation', 'importedFrom', 'updated'
   ]
 } as const;
 
@@ -177,7 +189,8 @@ export function stateToSheets(state: PersistedState): WriteSheets {
       s.repeat !== undefined && s.repeat !== null ? Number(s.repeat) : '',
       str(s.form), str(s.deploy), str(s.integrations), str(s.category), str(s.subCategory), str(s.account),
       str(s.notes), str(s.from), str(s.estName), str(s.estAt), s.direct ? 'yes' : '',
-      str(s.imported), str(s.sourceId), str(s.client), str(s.estBy), str(s.importedOn)
+      str(s.imported), str(s.sourceId), str(s.client), str(s.estBy), str(s.importedOn),
+      str(s.status), typeof s.build === 'number' ? s.build : '', typeof s.saving === 'number' ? s.saving : '', str(s.ref)
     ]);
   }
   sheets[SHEETS.solutions] = solutions;
@@ -242,6 +255,16 @@ export function stateToSheets(state: PersistedState): WriteSheets {
     ]);
   }
   sheets[SHEETS.salesLegal] = salesLegal;
+
+  const catalogDetails = header('catalogDetails');
+  for (const detail of state.catalogDetails ?? []) {
+    catalogDetails.push([
+      str(detail.solutionId), str(detail.plat || 'openedx'), str(detail.name), str(detail.builtFor), str(detail.contact), str(detail.team), str(detail.source),
+      str(detail.keywords), yesNoLabel(detail.plugin ?? null), yesNoLabel(detail.mixed ?? null),
+      typeof detail.reuseCount === 'number' ? detail.reuseCount : '', str(detail.dependencies), str(detail.implementation), str(detail.importedFrom), str(detail.up)
+    ]);
+  }
+  sheets[SHEETS.catalogDetails] = catalogDetails;
 
   return sheets;
 }
@@ -373,6 +396,17 @@ export function sheetsToState(workbook: Workbook): PersistedState {
       if (r.client) out.client = r.client;
       if (r.estimatedBy) out.estBy = r.estimatedBy;
       if (r.importedOn) out.importedOn = r.importedOn;
+      /* set only when present, so an estimate reads back as written; a status typed by hand is read
+         by its first word, and anything that is not built or being built stays an estimate */
+      const status = String(r.status ?? '').trim().toLowerCase();
+      if (status.startsWith('prod') || status.startsWith('built')) out.status = 'Production';
+      else if (status.startsWith('in dev') || status.startsWith('dev')) out.status = 'In Development';
+      const build = num(r.originalBuildHours);
+      if (build !== null && build > 0) out.build = build;
+      const saving = num(r.reuseSaving);
+      /* a saving typed as 85 or 85% means 0.85 */
+      if (saving !== null && saving > 0) out.saving = saving > 1 ? Math.min(saving / 100, 1) : saving;
+      if (r.reference) out.ref = r.reference;
       return out;
     })
     .filter((s) => s.id);
@@ -452,7 +486,35 @@ export function sheetsToState(workbook: Workbook): PersistedState {
     })
     .filter((item) => item.id);
 
-  return { estimations, requests, solutions, bundles, settings, tenders: readTenders(workbook[SHEETS.tenders]), salesLegal };
+  /* read by name and forgiving, like the sales and legal list: a yes typed as "y", a count typed
+     with a space. A store written before this sheet existed has none, and reads as holding none. */
+  const catalogDetails: CatalogDetail[] = objects(workbook[SHEETS.catalogDetails])
+    .filter((r) => (r.solutionId ?? '').trim())
+    .map((r): CatalogDetail => {
+      const plat = r.plat || 'openedx';
+      const solutionId = (r.solutionId ?? '').trim();
+      const count = num(r.reuseCount);
+      return {
+        id: catalogDetailId(plat, solutionId),
+        plat,
+        solutionId,
+        name: r.feature ?? '',
+        builtFor: r.builtFor ?? '',
+        contact: r.contact ?? '',
+        team: r.team ?? '',
+        source: r.sourceCode ?? '',
+        plugin: readYesNo(r.alreadyPlugin),
+        mixed: readYesNo(r.mixedWithOthers),
+        reuseCount: count === null ? null : Math.max(0, Math.round(count)),
+        dependencies: r.dependencies ?? '',
+        implementation: r.implementation ?? '',
+        keywords: r.tenderKeywords ?? '',
+        importedFrom: r.importedFrom ?? '',
+        up: r.updated ?? ''
+      };
+    });
+
+  return { estimations, requests, solutions, bundles, settings, tenders: readTenders(workbook[SHEETS.tenders]), salesLegal, catalogDetails };
 }
 
 const STAGES: TenderStage[] = ['requirements', 'match', 'apply', 'done'];
@@ -569,11 +631,13 @@ export function syncKey(state: PersistedState): string {
   return stableJson(storedForm(state));
 }
 
-export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [], salesLegal: [] };
+export const EMPTY_STATE: PersistedState = { estimations: [], requests: [], solutions: [], bundles: [], settings: {}, tenders: [], salesLegal: [], catalogDetails: [] };
 
 export function countRows(state: PersistedState | null): number {
   if (!state) return 0;
-  return state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length + state.salesLegal.length;
+  return (
+    state.estimations.length + state.requests.length + state.solutions.length + state.bundles.length + state.tenders.length + state.salesLegal.length + (state.catalogDetails?.length ?? 0)
+  );
 }
 
 /**
@@ -589,7 +653,7 @@ export function namesEveryRow(stored: PersistedState | null, deleted: unknown): 
   if (!Array.isArray(deleted)) return false;
   const named = new Set(deleted.filter((id): id is string => typeof id === 'string' && id !== ''));
   if (named.size === 0) return false;
-  const rows = [stored?.estimations, stored?.requests, stored?.solutions, stored?.bundles, stored?.tenders, stored?.salesLegal];
+  const rows = [stored?.estimations, stored?.requests, stored?.solutions, stored?.bundles, stored?.tenders, stored?.salesLegal, stored?.catalogDetails];
   return rows.every((list) => (list ?? []).every((row) => named.has(row.id)));
 }
 
@@ -607,6 +671,7 @@ export function coerceState(body: unknown): PersistedState {
     bundles: array<AddedBundle>(raw.bundles),
     tenders: array<Tender>(raw.tenders),
     salesLegal: array<SalesLegalItem>(raw.salesLegal),
+    catalogDetails: array<CatalogDetail>(raw.catalogDetails),
     /* an array is an object, and one here would write numbered junk into the Settings sheet */
     settings:
       raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)

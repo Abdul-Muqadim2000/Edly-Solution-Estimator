@@ -297,7 +297,12 @@ describe('reading an estimates sheet', () => {
           account: 'AWS',
           notes: 'Single region. Assumes AWS.',
           estBy: 'Sam',
-          estAt: '2026-03-01'
+          estAt: '2026-03-01',
+          source: 'https://example.com/nordic/pipeline',
+          contact: 'Platform team',
+          dependencies: 'GitHub Actions runners',
+          implementation: 'Two services behind one load balancer.',
+          keywords: 'zero downtime, canary'
         })
       ]
     });
@@ -321,9 +326,33 @@ describe('reading an estimates sheet', () => {
         account: 'AWS',
         notes: 'Single region. Assumes AWS.',
         estBy: 'Sam',
-        estAt: '2026-03-01'
+        estAt: '2026-03-01',
+        source: 'https://example.com/nordic/pipeline',
+        contact: 'Platform team',
+        dependencies: 'GitHub Actions runners',
+        implementation: 'Two services behind one load balancer.',
+        keywords: 'zero downtime, canary'
       }
     ]);
+  });
+
+  it('reads the internal columns under the names a team is likely to give them', async () => {
+    const read = await asEstimates({
+      Estimates: [
+        ['Feature', 'What it does', 'Estimated for', 'First-delivery hrs', 'GitHub URL', 'Point of contact', 'Depends on', 'Implementation', 'Keywords', 'Notes'],
+        ['SSO', 'Sign in once', 'Acme Academy', '40', 'https://example.com/acme/sso', 'Team Orange', 'An identity provider', 'SAML through the auth service.', 'single sign-on, SAML', 'Assumes one IdP.']
+      ]
+    });
+    expect(read.issues).toEqual([]);
+    expect(read.rows[0]).toMatchObject({
+      source: 'https://example.com/acme/sso',
+      contact: 'Team Orange',
+      dependencies: 'An identity provider',
+      implementation: 'SAML through the auth service.',
+      keywords: 'single sign-on, SAML',
+      /* "Implementation" must not take the Notes column, which is written for the client */
+      notes: 'Assumes one IdP.'
+    });
   });
 
   it('refuses a sheet without the hours column, naming it', async () => {
@@ -616,7 +645,7 @@ describe('the templates', () => {
 
 const row = (n: number, over: Partial<EstimateRow> = {}): EstimateRow => ({
   row: n + 1, sourceId: '', name: `Estimate ${n}`, desc: '', first: 10, repeat: null, client: 'Acme Academy', bundleId: '', area: '',
-  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', notes: '', estBy: '', estAt: '', ...over
+  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', notes: '', estBy: '', estAt: '', contact: '', source: '', dependencies: '', implementation: '', keywords: '', ...over
 });
 
 describe('the estimates preview', () => {

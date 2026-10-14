@@ -52,6 +52,25 @@ function keepPeople(incoming: PersistedState, stored: PersistedState | null): vo
   });
 }
 
+/**
+ * Desk entries from a tab that does not know their newer fields, with the stored ones put back. Such a
+ * tab runs a build from before a desk entry could be built before, have build hours, a reuse saving
+ * or a reference, so each of its saves would drop them. A build that knows them says so
+ * (`knowsCatalogFields`), and then an absent field means none.
+ */
+function keepCatalogFields(incoming: PersistedState, stored: PersistedState | null): void {
+  const was = new Map((stored?.solutions ?? []).map((one) => [one.id, one] as const));
+  incoming.solutions = incoming.solutions.map((solution) => {
+    const before = was.get(solution.id);
+    if (!before) return solution;
+    const kept = { ...solution };
+    for (const key of ['status', 'build', 'saving', 'ref'] as const) {
+      if (kept[key] === undefined && before[key] !== undefined) Object.assign(kept, { [key]: before[key] });
+    }
+    return kept;
+  });
+}
+
 export async function handle(request: Request): Promise<Response> {
   const url = new URL(request.url, 'http://localhost');
 
@@ -121,13 +140,15 @@ export async function handle(request: Request): Promise<Response> {
       /* A missing collection means "I do not know about this", not "delete it all". A tab still
          running a build from before tenders existed sends no `tenders` key, and reading that as an
          empty list would wipe every tender on each of its saves; a tab from before the sales and
-         legal list sends no `salesLegal`, the same way. Checked after the guard above, so such a
-         client's empty payload is still refused rather than let through on stored rows. */
+         legal list sends no `salesLegal`, and one from before the catalog details sends no
+         `catalogDetails`, the same way. Checked after the guard above, so such a client's empty
+         payload is still refused rather than let through on stored rows. */
       const sent = body as Record<string, unknown>;
-      const unknown = { tenders: !Array.isArray(sent.tenders), salesLegal: !Array.isArray(sent.salesLegal) };
-      if (unknown.tenders || unknown.salesLegal) {
+      const unknown = { tenders: !Array.isArray(sent.tenders), salesLegal: !Array.isArray(sent.salesLegal), catalogDetails: !Array.isArray(sent.catalogDetails) };
+      if (unknown.tenders || unknown.salesLegal || unknown.catalogDetails) {
         const stored = await loadState();
         if (unknown.tenders) incoming.tenders = stored?.tenders ?? [];
+        if (unknown.catalogDetails) incoming.catalogDetails = stored?.catalogDetails ?? [];
         if (unknown.salesLegal) {
           incoming.salesLegal = stored?.salesLegal ?? [];
           /* The same build reads tenders but not their key terms, which came with the list, so each
@@ -138,6 +159,7 @@ export async function handle(request: Request): Promise<Response> {
       }
 
       if ((body as { knowsPeople?: unknown }).knowsPeople !== true) keepPeople(incoming, await loadState());
+      if ((body as { knowsCatalogFields?: unknown }).knowsCatalogFields !== true) keepCatalogFields(incoming, await loadState());
 
       const result = await saveState(incoming);
       return json({
@@ -154,6 +176,7 @@ export async function handle(request: Request): Promise<Response> {
           bundles: incoming.bundles.length,
           tenders: incoming.tenders.length,
           salesLegal: incoming.salesLegal.length,
+          catalogDetails: incoming.catalogDetails.length,
           settings: Object.keys(incoming.settings).length
         }
       });

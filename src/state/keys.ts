@@ -9,6 +9,8 @@ export const STORAGE_KEYS = {
   tenders: 'edly-tenders-v1',
   /** What each deal commits Edly to that is not software, for the sales, account and legal teams. */
   salesLegal: 'edly-sales-legal-v1',
+  /** Internal details of catalog solutions, from the reusable features tracker. */
+  catalogDetails: 'edly-catalog-details-v1',
   /** Working snapshot of the open estimation, plus display preferences. */
   workspace: 'edly-workspace-v2',
   /** Which estimation is open. */
@@ -39,7 +41,8 @@ export const SYNCED_DATA_KEYS = [
   STORAGE_KEYS.solutions,
   STORAGE_KEYS.bundles,
   STORAGE_KEYS.tenders,
-  STORAGE_KEYS.salesLegal
+  STORAGE_KEYS.salesLegal,
+  STORAGE_KEYS.catalogDetails
 ] as const;
 
 /** Keys stored in the workbook's Settings sheet. */

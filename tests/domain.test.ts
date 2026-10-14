@@ -343,6 +343,22 @@ describe('catalog composition', () => {
     expect(converted.build).toBeNull();
   });
 
+  it('keeps what the desk typed for a feature built before: status, build hours, saving and reference', () => {
+    const base = {
+      id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Thing', desc: '',
+      first: 10, repeat: 3, form: '', deploy: '', integrations: '', category: '', subCategory: '',
+      account: '', notes: '', from: 'RQ-1', estAt: '2026-09-01'
+    };
+    const built = toSolution({ ...base, status: 'Production', build: 120, saving: 0.75, ref: '  https://example.com/acme/thing ' });
+    expect(built).toMatchObject({ status: 'Production', build: 120, saving: 0.75, ref: 'https://example.com/acme/thing' });
+    /* built before, it is a bundle feature, so it leaves the violet estimates */
+    expect(solutionKind(built)).toBe('bundles');
+
+    /* a reference left blank still says where the estimate came from */
+    expect(toSolution({ ...base, ref: ' ' }).ref).toMatch(/^Estimated at the desk/);
+    expect(toSolution({ ...base, status: 'In Development' }).status).toBe('In Development');
+  });
+
   it("carries a desk addition's Notes / Assumptions to the catalog as written, and none as none", () => {
     const base = {
       id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Thing', desc: '',

@@ -10,6 +10,7 @@ import {
   callSlots,
   canSpend,
   catalogHours,
+  bundleLines,
   catalogLines,
   deskDrafts,
   documentLength,
@@ -80,6 +81,7 @@ import {
   type ExtractedRequirement
 } from '../src/domain/tender';
 import { MODEL_PRICES, priceOf, usdOf } from '../src/domain/aiPrice';
+import { blank } from '../src/domain/catalogDetails';
 import { PRACTICES } from '../src/data/practices';
 import type { Catalog, EstimateRequest, RequirementMatch, Solution, Tender, TenderDocument, TenderRange, TenderRequirement, TenderSection } from '../src/types';
 
@@ -732,8 +734,71 @@ describe('reading catalog matches', () => {
   it('describes the catalog to the model once per solution, and without hours', () => {
     const lines = catalogLines(catalog);
     expect(lines.map((line) => line.id)).toEqual(['SSO-1', 'SSO-2', 'AS-1']);
-    expect(lines[0]).toEqual({ id: 'SSO-1', bundle: 'B13', bundleName: 'Identity & SSO', name: 'Azure AD sign-on', category: 'Identity', status: 'Production', desc: 'Azure AD sign-on, described' });
+    expect(lines[0]).toEqual({
+      id: 'SSO-1',
+      bundle: 'B13',
+      bundleName: 'Identity & SSO',
+      name: 'Azure AD sign-on',
+      category: 'Identity',
+      status: 'Production',
+      desc: 'Azure AD sign-on, described',
+      form: 'Integration',
+      works: '',
+      notes: '',
+      more: ''
+    });
     expect(Object.keys(lines[0] ?? {})).not.toContain('first');
+  });
+
+  it('tells the matcher what a solution works with, its limits, and the scrubbed internal details, never who or where', () => {
+    const rich: Catalog = {
+      ...catalog,
+      bundles: catalog.bundles.map((bundle, index) =>
+        index === 0 ? { ...bundle, items: bundle.items.map((item, i) => (i === 0 ? { ...item, integrations: 'Azure AD', account: 'Microsoft Entra', notes: 'One tenant per site.' } : item)) } : bundle
+      )
+    };
+    const details = [
+      {
+        ...blank('openedx', 'SSO-1'),
+        builtFor: 'Nordic University',
+        contact: 'Sam Rivers',
+        source: 'https://github.com/example/sso',
+        keywords: 'single sign-on, SAML 2.0, identity provider',
+        implementation: 'Built for Nordic University on the third-party auth pipeline. https://docs.example.com/sso'
+      },
+      /* another platform's detail never reaches this one's matcher */
+      { ...blank('moodle', 'SSO-2'), keywords: 'moodle only' }
+    ];
+    const [line, other] = catalogLines(rich, details, 'openedx');
+    expect(line).toMatchObject({
+      works: 'Azure AD; the client holds a Microsoft Entra account',
+      notes: 'One tenant per site.',
+      more: 'Also called: single sign-on, SAML 2.0, identity provider. How it is built: Built for a client on the third-party auth pipeline.'
+    });
+    expect(JSON.stringify(line)).not.toMatch(/Nordic|Sam Rivers|github|docs\.example/);
+    expect(other?.more).toBe('');
+  });
+
+  it('takes every client the app knows out of what an entry says, not only the tracker\'s', () => {
+    /* a desk entry or an imported estimate names its client in its own words, with no tracker row */
+    const typed: Catalog = {
+      ...catalog,
+      bundles: catalog.bundles.map((bundle, index) =>
+        index === 0
+          ? { ...bundle, items: bundle.items.map((item, i) => (i === 0 ? { ...item, name: 'Acme Academy SSO', desc: 'Sign-in for Acme Academy staff, see https://example.com/acme.', notes: 'Acme hosts its own IdP.' } : item)) }
+          : bundle
+      )
+    };
+    const [line] = catalogLines(typed, [], 'openedx', ['Acme Academy']);
+    expect(line).toMatchObject({ name: 'a client SSO', desc: 'Sign-in for a client staff, see.', notes: 'a client hosts its own IdP.' });
+  });
+
+  it('introduces each bundle with what it delivers and when to offer it, and leaves out an empty one', () => {
+    const withEmpty: Catalog = { ...catalog, bundles: [...catalog.bundles, { ...catalog.bundles[0]!, id: 'B99', name: 'Nothing yet', items: [] }] };
+    expect(bundleLines(withEmpty).map((bundle) => [bundle.id, bundle.offerWhen])).toEqual([
+      ['B13', 'SSO'],
+      ['B04', '']
+    ]);
   });
 
   it('describes every platform, using a loaded sheet over the shipped one', () => {

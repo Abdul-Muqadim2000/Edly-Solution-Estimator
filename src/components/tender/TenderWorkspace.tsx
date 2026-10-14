@@ -5,6 +5,7 @@ import { openTenderRecord } from '@/state/reducer';
 import { useTenderRunner } from '@/state/useTenderRunner';
 import { deleteTender } from '@/state/deleteTender';
 import { aiAllowance, aiSpent, aiStep, documentLength, heldDocs, limitQuestion, spendSummary, stageOpen, tenderCounts, tokenSummary } from '@/domain/tender';
+import { knownClients } from '@/domain/catalogDetails';
 import { copiedItems, goesWithEstimation, salesLegalDrafts } from '@/domain/salesLegal';
 import { homeOf, platformTrail } from '@/lib/router';
 import { BackTo, Breadcrumbs } from '@/components/Nav';
@@ -38,7 +39,8 @@ export function TenderWorkspace(): JSX.Element {
   const tenderId = tender?.id ?? '';
   /* memoised, so the runner's sort is not rebuilt on every render */
   const copiedHere = useMemo(() => state.salesLegal.filter((item) => item.tender === tenderId), [state.salesLegal, tenderId]);
-  const runner = useTenderRunner(tender, catalog, dispatch, copiedHere);
+  const clients = useMemo(() => knownClients(state.estimations, state.solutions), [state.estimations, state.solutions]);
+  const runner = useTenderRunner(tender, catalog, dispatch, copiedHere, state.catalogDetails, clients);
   /* the Sales, account and legal tab is not a step, so it lives here rather than in the tender's stage */
   const [view, setView] = useState<'steps' | 'legal'>('steps');
   const [editing, setEditing] = useState(false);

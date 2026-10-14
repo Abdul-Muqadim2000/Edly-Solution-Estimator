@@ -14,7 +14,7 @@ import { approveAll, EMPTY_REVIEW, setGroup, setRow, type ImportReview } from '.
 
 const row = (n: number, over: Partial<EstimateRow> = {}): EstimateRow => ({
   row: n + 1, sourceId: `NU-${n}`, name: `Estimate ${n}`, desc: '', first: 10, repeat: null, client: 'Nordic University', bundleId: '', area: '',
-  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', notes: '', estBy: '', estAt: '', ...over
+  category: '', subCategory: '', form: '', deploy: '', integrations: '', account: '', notes: '', estBy: '', estAt: '', contact: '', source: '', dependencies: '', implementation: '', keywords: '', ...over
 });
 
 const catalogBundles = [

@@ -229,6 +229,44 @@ export const ESTIMATE_COLUMNS: readonly TemplateColumn[] = [
     example: '2026-03-01',
     aliases: ['estimated on', 'date'],
     width: 14
+  },
+  /* internal: kept beside the estimate, never on the client's Excel sheet or quote */
+  {
+    field: 'source',
+    label: 'Source code',
+    need: 'optional',
+    help: 'Where the code is, such as a GitHub link, so the team can find it to reuse. Internal only: never on the client’s Excel sheet or quote, and hidden while presenting.',
+    example: 'https://github.com/your-org/deploy-pipeline',
+    aliases: ['source code', 'github', 'gitlab', 'repository', 'repo', 'code link'],
+    width: 30
+  },
+  { field: 'contact', label: 'Contact', need: 'optional', help: 'Who to ask about it. Internal only, like Source code.', example: 'Platform team', aliases: ['contact', 'point of contact'], width: 18 },
+  {
+    field: 'dependencies',
+    label: 'Dependencies',
+    need: 'optional',
+    help: 'Services, plugins or accounts it needs. Internal only; the tender AI reads it when matching, with links taken out.',
+    example: 'GitHub Actions runners, an AWS account with ECS',
+    aliases: ['dependencies', 'depends on'],
+    width: 24
+  },
+  {
+    field: 'implementation',
+    label: 'Implementation notes',
+    need: 'optional',
+    help: 'How it is built and what reusing it involves. Internal only; the tender AI reads it when matching, with client names and links taken out.',
+    example: 'Two services behind one load balancer; the pipeline switches traffic once checks pass.',
+    aliases: ['implementation notes', 'implementation'],
+    width: 36
+  },
+  {
+    field: 'keywords',
+    label: 'Tender keywords',
+    need: 'optional',
+    help: 'Other names a tender might use for it, comma separated. Internal only; the tender AI reads them when matching.',
+    example: 'zero downtime, rolling release, canary deployment',
+    aliases: ['tender keywords', 'keywords'],
+    width: 28
   }
 ];
 
@@ -636,7 +674,12 @@ export function readEstimates(workbook: Workbook): { rows: EstimateRow[]; issues
       account: get('account'),
       notes: joinNotes(get('notes'), text(cell(line, header.map, 'assumptions'))),
       estBy: get('estBy'),
-      estAt: estAt ?? ''
+      estAt: estAt ?? '',
+      contact: get('contact'),
+      source: get('source'),
+      dependencies: get('dependencies'),
+      implementation: get('implementation'),
+      keywords: get('keywords')
     };
     const identity = estimateKey(record.sourceId, record.name, record.client);
     const earlier = seen.get(identity);
@@ -705,7 +748,12 @@ const ESTIMATE_EXAMPLES: readonly Partial<Record<EstimateField, string | number>
     account: 'AWS',
     notes: 'Single region only. Assumes the client already runs on AWS. Bundle ID B15 files a row like this under Platform Engineering & Integrations in the Open edX catalog.',
     estBy: 'Estimation desk',
-    estAt: '2026-03-01'
+    estAt: '2026-03-01',
+    source: 'https://github.com/your-org/deploy-pipeline',
+    contact: 'Platform team',
+    dependencies: 'GitHub Actions runners, an AWS account with ECS',
+    implementation: 'Two services behind one load balancer; the pipeline switches traffic once checks pass.',
+    keywords: 'zero downtime, rolling release, canary deployment'
   },
   {
     sourceId: 'EXAMPLE-2',
