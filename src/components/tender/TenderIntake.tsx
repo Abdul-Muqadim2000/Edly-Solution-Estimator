@@ -21,7 +21,7 @@ import {
   type FitResult
 } from '@/domain/tender';
 import { andList } from '@/lib/format';
-import { checkTenderFiles, MAX_FILES, prepareTenderFile, TENDER_FILE_TYPES } from '@/lib/tenderFiles';
+import { checkTenderFiles, prepareTenderFile, TENDER_FILE_TYPES } from '@/lib/tenderFiles';
 import { color, font, radius } from '@/theme';
 import { useHover } from '@/lib/useHover';
 import { Banner, Button, Field, Modal, Mono, Row, Select, Spacer } from '@/components/ui';
@@ -455,7 +455,7 @@ export function TenderIntake({ onClose }: { onClose: () => void }): JSX.Element 
                 Choose files
               </Button>
               <div style={{ fontSize: 12.5, color: color.muted, marginTop: 10 }}>
-                or drop them here. PDF, Word (.docx), Excel (.xlsx), web page (.html) or text, up to {MAX_FILES} files. PDFs up to 4 MB each for
+                or drop them here. PDF, Word (.docx), Excel (.xlsx), web page (.html) or text, as many files as the tender has. PDFs up to 4 MB each for
                 now.
               </div>
             </div>

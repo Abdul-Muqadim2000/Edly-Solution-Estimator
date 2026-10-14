@@ -55,7 +55,10 @@ const list = (value: unknown, max: number, what: string): unknown[] => {
 };
 
 export function readDocRefs(value: unknown): DocRef[] {
-  const docs = list(value, 5, 'documents').map((entry) => {
+  /* any number: a reference is a few hundred bytes, the request body is capped, and what the API
+     can read at once is answered by the API itself */
+  if (!Array.isArray(value)) throw new AiError('bad_request', 'documents must be a list.', 400);
+  const docs = value.map((entry) => {
     const raw = record(entry);
     return {
       n: int(raw.n),

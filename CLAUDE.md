@@ -151,7 +151,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 1,403 tests across twenty-nine files.
+`bun run test` runs 1,404 tests across twenty-nine files.
 
 | File | Covers |
 |---|---|
@@ -558,6 +558,10 @@ The spreadsheets hold real deal names, client names and pricing.
   were probed the same day and compile. A new tool is not strict, and its answer goes
   through a `read*` function that takes anything; growing one of the three schemas a lot needs a
   `max_tokens: 0` probe against the real API first.
+  A tender takes any number of files (five until 2026-10-14, for no recorded reason): what one
+  request can hold is the files' total, since the fit call carries them all, and the API's refusal
+  comes back as `too_large` with advice to leave out files or pages with no requirements. Only a
+  size error reads as `too_large`; the grammar refusal says "too large" too and is not one.
   The documents go in `readingOrder`, converted text before PDFs, with a cache marker at each
   document's end, and an extraction call carries only the documents up to the one it reads: keep
   that order identical in every call, or a spreadsheet range pays for the PDF again. The cache is
