@@ -282,8 +282,9 @@ describe('the store layer', () => {
     const bytes = await exportBytes();
     const workbook = await readWorkbook(bytes);
 
-    /* an empty download still has to open in Excel, with its seven sheets and their headers */
-    expect(Object.keys(workbook)).toEqual(['Estimations', 'Requests', 'EstimatedSolutions', 'CustomBundles', 'Settings', 'Tenders', 'SalesAccountLegal']);
+    /* an empty download still has to open in Excel, with its eight sheets and their headers */
+    expect(Object.keys(workbook)).toEqual(['Estimations', 'Requests', 'EstimatedSolutions', 'CustomBundles', 'Settings', 'Tenders', 'SalesAccountLegal', 'CatalogDetails']);
+    expect(workbook.CatalogDetails?.[0]).toEqual(expect.arrayContaining(['solutionId', 'builtFor', 'contact', 'sourceCode', 'tenderKeywords']));
     expect(workbook.SalesAccountLegal?.[0]).toContain('owner');
     expect(workbook.Estimations?.[0]).toContain('id');
   });
@@ -527,6 +528,31 @@ describe('the store layer over a sheets provider', () => {
 
     const state = await load();
     expect(state?.salesLegal[0]).toMatchObject({ id: 'SL-01', category: 'certification', status: 'handled', owner: 'Legal', due: '2026-10-20' });
+  });
+
+  it('reads a sheet holding only catalog details as data, the way the file stores do', async () => {
+    /* an imported tracker and nothing else is still someone's work: read as empty, the next empty
+       browser would be hydrated over it and its save would blank the tab */
+    const { loadState: load } = await import('../server/store');
+    replies = [
+      auth,
+      { json: { sheets: [{ properties: { title: 'CatalogDetails' } }] } },
+      {
+        json: {
+          valueRanges: [
+            {
+              values: [
+                ['solutionId', 'plat', 'feature', 'builtFor', 'contact', 'sourceCode', 'alreadyPlugin'],
+                ['EDU-013', 'openedx', 'Badges', 'Acme Academy', 'Team Orange', 'https://github.com/example/badges', 'Yes']
+              ]
+            }
+          ]
+        }
+      }
+    ];
+
+    const state = await load();
+    expect(state?.catalogDetails[0]).toMatchObject({ id: 'openedx/EDU-013', builtFor: 'Acme Academy', contact: 'Team Orange', plugin: true });
   });
 
   it('writes rows rather than a file, and reports no byte count', async () => {

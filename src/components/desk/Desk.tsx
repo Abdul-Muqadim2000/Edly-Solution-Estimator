@@ -5,7 +5,10 @@ import type { AppState } from '@/state/reducer';
 import { deskQueue, platformEstimations, requestsFor } from '@/state/reducer';
 import { isDemoEstimation, isDemoRequest, isDemoSolution } from '@/domain/demo';
 import { calcEstimate } from '@/domain/estimate';
-import { categories, CX_BUNDLE_ID, guessBundle, subCategories } from '@/domain/catalog';
+import { categories, CX_BUNDLE_ID, guessBundle, solutionKind, subCategories, toSolution } from '@/domain/catalog';
+import { internalForm, type InternalForm } from '@/domain/catalogDetails';
+import { EMPTY_ENTRY, ENTRY_STATUSES, nextEntryForm, readEntryForm, type EntryForm } from '@/domain/deskEntry';
+import { CatalogInternal, InternalFields } from '@/components/CatalogInternal';
 import { importedFiles } from '@/domain/estimateImport';
 import { downloadTemplate } from '@/lib/catalogImport';
 import { ImportModal } from '@/components/ImportModal';
@@ -892,20 +895,8 @@ function EstimateNotes({ id, notes }: { id: string; notes: string }): JSX.Elemen
 
 function AddToCatalog(): JSX.Element {
   const { state, dispatch, catalog } = useApp();
-  const [solution, setSolution] = useState({
-    name: '',
-    desc: '',
-    first: '',
-    repeat: '',
-    bundleId: '',
-    form: 'Custom development',
-    deploy: '',
-    integrations: '',
-    category: '',
-    subCategory: '',
-    account: '',
-    notes: ''
-  });
+  const [solution, setSolution] = useState<EntryForm>(EMPTY_ENTRY);
+  const [internal, setInternal] = useState<InternalForm>(() => internalForm());
   const [bundle, setBundle] = useState({ name: '', pitch: '', offerWhen: '' });
   const [solutionError, setSolutionError] = useState('');
   const [bundleError, setBundleError] = useState('');
@@ -933,34 +924,15 @@ function AddToCatalog(): JSX.Element {
   const listed = [...unassigned, ...added.filter((entry) => filed.has(entry.bundleId))];
 
   const addSolution = (): void => {
-    const first = Number(solution.first);
-    if (!solution.name.trim()) {
-      setSolutionError('Give the solution a name.');
-      return;
-    }
-    if (!(first > 0)) {
-      setSolutionError('Enter the first-delivery hours.');
+    const read = readEntryForm(solution, internal, solution.bundleId || guessBundle(catalog, solution.category) || 'CX');
+    if ('error' in read) {
+      setSolutionError(read.error);
       return;
     }
     setSolutionError('');
-    dispatch({
-      type: 'addSolution',
-      input: {
-        name: solution.name.trim(),
-        desc: solution.desc.trim(),
-        first,
-        repeat: Number(solution.repeat) > 0 ? Number(solution.repeat) : first,
-        bundleId: solution.bundleId || guessBundle(catalog, solution.category) || 'CX',
-        form: solution.form,
-        deploy: solution.deploy.trim(),
-        integrations: solution.integrations.trim(),
-        category: solution.category.trim() || 'Custom',
-        subCategory: solution.subCategory.trim(),
-        account: solution.account.trim(),
-        notes: solution.notes.trim()
-      }
-    });
-    setSolution({ ...solution, name: '', desc: '', first: '', repeat: '', deploy: '', notes: '' });
+    dispatch({ type: 'addSolution', input: read.input });
+    setSolution(nextEntryForm(solution));
+    setInternal(internalForm());
     setSolutionAdded(true);
     window.setTimeout(() => setSolutionAdded(false), 2200);
   };
@@ -987,7 +959,9 @@ function AddToCatalog(): JSX.Element {
     window.setTimeout(() => setBundleAdded(false), 2200);
   };
 
-  const set = (key: keyof typeof solution) => (value: string) => setSolution((prev) => ({ ...prev, [key]: value }));
+  const set = (key: Exclude<keyof EntryForm, 'status'>) => (value: string) => setSolution((prev) => ({ ...prev, [key]: value }));
+  /* built before or being built, it joins the bundles; an estimate stays violet */
+  const built = solution.status !== '';
 
   return (
     <div style={{ display: 'grid', gap: 16, marginTop: 18 }}>
@@ -1057,15 +1031,18 @@ function AddToCatalog(): JSX.Element {
       {importOpen ? <ImportModal initialKind="estimates" onClose={() => setImportOpen(false)} /> : null}
 
       <section style={{ background: color.surface, border: `1px solid ${color.hairline}`, borderRadius: radius.lg, padding: '18px 22px' }}>
-        <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>New feature estimation</div>
-        <div style={{ fontSize: 12.5, color: color.muted, lineHeight: 1.6, marginTop: 3, maxWidth: 620 }}>
-          Price something the team knows how to build without waiting for sales to request it. It joins the catalog under{' '}
-          <span style={{ fontWeight: 700, color: color.violet }}>Estimates</span> and is selectable in every future estimation.
+        <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>Add a solution to the catalog</div>
+        <div style={{ fontSize: 12.5, color: color.muted, lineHeight: 1.6, marginTop: 3, maxWidth: 640 }}>
+          Price something the team knows how to build without waiting for sales to request it, or enter a feature already built for a
+          client that the catalog does not list yet. An estimate joins the catalog under{' '}
+          <span style={{ fontWeight: 700, color: color.violet }}>Estimates</span>; one built before joins the bundles. Either is
+          selectable in every future estimation.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginTop: 14 }}>
-          <Field label="Custom feature name" value={solution.name} onChange={set('name')} placeholder="e.g. Blue-green deployment pipeline" />
+          <Field label="Feature name" value={solution.name} onChange={set('name')} placeholder="e.g. Blue-green deployment pipeline" />
           <Field label="First delivery h" type="number" min={0} mono value={solution.first} onChange={set('first')} placeholder="0" />
           <Field label="Repeat h" type="number" min={0} mono value={solution.repeat} onChange={set('repeat')} placeholder="same" />
+          <Select label="Status" value={solution.status} options={ENTRY_STATUSES} onChange={(value) => setSolution((prev) => ({ ...prev, status: value }))} />
         </div>
         <div style={{ marginTop: 10 }}>
           <Field label="What it does" value={solution.desc} onChange={set('desc')} placeholder="One line a salesperson can read to a client" />
@@ -1083,18 +1060,55 @@ function AddToCatalog(): JSX.Element {
             options={['Custom development', 'Plugin / extension', 'Theme / branding', 'MFE customization', 'Service integration', 'Configuration'].map((value) => ({ value, label: value }))}
             onChange={(value) => setSolution((prev) => ({ ...prev, form: value }))}
           />
-          <Field label="Std deploy" value={solution.deploy} onChange={set('deploy')} placeholder="e.g. 2–3 days" />
+          <Field label="Std deploy" value={solution.deploy} onChange={set('deploy')} placeholder="e.g. 2 to 3 days" />
           <Field label="Category" value={solution.category} onChange={set('category')} list="edly-categories" placeholder="e.g. Core Platform" />
           <Field label="Sub-category" value={solution.subCategory} onChange={set('subCategory')} list="edly-subcategories" placeholder="e.g. Custom" />
           <Field label="Integrations / vendors" value={solution.integrations} onChange={set('integrations')} placeholder="e.g. MS Graph API, Zoom" />
-          <Field label="3rd-party account (client-held)" value={solution.account} onChange={set('account')} placeholder="e.g. Stripe, Zoom — or leave blank" />
+          <Field label="3rd-party account (client-held)" value={solution.account} onChange={set('account')} placeholder="e.g. Stripe, Zoom, or leave blank" />
+          <Field
+            label="Original build h"
+            hint="Hours it took to build the first time. Shown with the reuse figures, which presenting hides."
+            type="number"
+            min={0}
+            mono
+            value={solution.build}
+            onChange={set('build')}
+            placeholder={built ? 'Not measured' : 'Not built yet'}
+          />
+          <Field
+            label="Reuse saving %"
+            hint="How much reuse saves against building it again, as the catalog shows it. Hidden while presenting."
+            mono
+            value={solution.saving}
+            onChange={set('saving')}
+            placeholder="e.g. 75"
+          />
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <Field
+            label="Reference"
+            hint="A link or a line saying where this comes from. Shown in the catalog with the internal notes, never on the client's Excel sheet or quote."
+            value={solution.ref}
+            onChange={set('ref')}
+            placeholder="e.g. a repository, a ticket or a delivered project"
+          />
         </div>
         <div style={{ marginTop: 10 }}>
           <TextArea label="Notes / Assumptions (optional)" hint={NOTES_HINT} value={solution.notes} onChange={set('notes')} placeholder={NOTES_PLACEHOLDER} />
         </div>
+        <div style={{ marginTop: 14, borderRadius: radius.md, background: color.blueWash, borderLeft: `3px solid ${color.blueEdge}`, padding: '12px 14px', display: 'grid', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: color.blueInk }}>Internal, never shown to clients</div>
+            <div style={{ fontSize: 12, color: color.muted, lineHeight: 1.5, marginTop: 3 }}>
+              Optional. Who it was built for, where the code is and who to ask, so the team can trace it back and reuse it. Kept off the
+              Excel sheet and the quote, and hidden while presenting.
+            </div>
+          </div>
+          <InternalFields value={internal} onChange={setInternal} />
+        </div>
         <Row gap={10} style={{ marginTop: 14 }}>
           <Button tone="primary" onClick={addSolution} style={{ borderRadius: 9, padding: '11px 18px', fontSize: 12 }}>
-            {solutionAdded ? '✓ Added to catalog' : 'Add estimated solution'}
+            {solutionAdded ? '✓ Added to catalog' : built ? 'Add to the catalog' : 'Add estimated solution'}
           </Button>
           {solutionError ? <span style={{ fontSize: 12, fontWeight: 600, color: color.redInk }}>{solutionError}</span> : null}
         </Row>
@@ -1152,7 +1166,7 @@ function AddToCatalog(): JSX.Element {
       </section>
 
       <section style={{ background: color.surface, border: `1px solid ${color.hairline}`, borderRadius: radius.lg, padding: '18px 22px' }}>
-        <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>Estimates in the catalog</div>
+        <div style={{ fontFamily: font.display, fontSize: 16, fontWeight: 600 }}>Added to the catalog here</div>
         {unassigned.length > 0 ? (
           <div style={{ marginTop: 10 }}>
             <Banner tone="warn">
@@ -1166,41 +1180,53 @@ function AddToCatalog(): JSX.Element {
             Nothing yet. Anything you estimate here, in the request queue or through an import shows up in this list.
           </div>
         ) : (
-          listed.map((entry) => (
-            <div key={entry.id} style={{ borderTop: `1px solid ${color.hairlineSoft}`, padding: '10px 0 8px', marginTop: 4, display: 'grid', gap: 7 }}>
-              <Row gap={10}>
-                <Chip bg={color.violetWash} co={color.violet}>
-                  {entry.id}
-                </Chip>
-                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{entry.name}</span>
-                <span style={{ fontSize: 11, color: color.faint }}>
-                  {entry.imported
-                    ? `Imported from ${entry.imported}${entry.client ? `, for ${entry.client}` : ''}`
-                    : entry.direct
-                      ? 'Added here'
-                      : `From request ${entry.from || '—'}`}
-                </span>
-              </Row>
-              <Row gap={10}>
-                <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.muted }}>Filed under</span>
-                <Select
-                  value={filed.has(entry.bundleId) ? entry.bundleId : CX_BUNDLE_ID}
-                  options={bundleOptions}
-                  hint="The bundle this estimate is filed under"
-                  onChange={(value) => dispatch({ type: 'moveSolutions', ids: [entry.id], bundleId: value })}
-                  style={{ width: 'auto', maxWidth: 280, padding: '6px 8px', fontSize: 12, borderRadius: 8 }}
-                />
-                <Spacer />
-                <Mono size={11}>
-                  {hours(entry.first)} h first · {hours(entry.repeat)} h repeat
-                </Mono>
-                <Button size="sm" tone="danger" title="Remove from the catalog" onClick={() => dispatch({ type: 'removeSolution', id: entry.id })}>
-                  Remove
-                </Button>
-              </Row>
-              <EstimateNotes id={entry.id} notes={entry.notes} />
-            </div>
-          ))
+          listed.map((entry) => {
+            const shown = toSolution(entry);
+            /* violet for an estimate, as everywhere; one built before is a bundle feature like the sheet's */
+            const estimate = solutionKind(shown) === 'estimates';
+            return (
+              <div key={entry.id} style={{ borderTop: `1px solid ${color.hairlineSoft}`, padding: '10px 0 8px', marginTop: 4, display: 'grid', gap: 7 }}>
+                <Row gap={10}>
+                  <Chip bg={estimate ? color.violetWash : color.brandWash} co={estimate ? color.violet : color.brandDeep}>
+                    {entry.id}
+                  </Chip>
+                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>{entry.name}</span>
+                  {entry.status ? (
+                    <Chip bg={entry.status === 'In Development' ? color.amberWash : color.brandWash} co={entry.status === 'In Development' ? color.amber : color.brandDeep}>
+                      {entry.status === 'In Development' ? 'In development' : 'Built before'}
+                    </Chip>
+                  ) : null}
+                  <span style={{ fontSize: 11, color: color.faint }}>
+                    {entry.imported
+                      ? `Imported from ${entry.imported}${entry.client ? `, for ${entry.client}` : ''}`
+                      : entry.direct
+                        ? 'Added here'
+                        : `From request ${entry.from || '—'}`}
+                  </span>
+                </Row>
+                <Row gap={10}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: color.muted }}>Filed under</span>
+                  <Select
+                    value={filed.has(entry.bundleId) ? entry.bundleId : CX_BUNDLE_ID}
+                    options={bundleOptions}
+                    hint="The bundle this estimate is filed under"
+                    onChange={(value) => dispatch({ type: 'moveSolutions', ids: [entry.id], bundleId: value })}
+                    style={{ width: 'auto', maxWidth: 280, padding: '6px 8px', fontSize: 12, borderRadius: 8 }}
+                  />
+                  <Spacer />
+                  <Mono size={11}>
+                    {hours(entry.first)} h first · {hours(entry.repeat)} h repeat
+                    {typeof entry.build === 'number' ? ` · ${hours(entry.build)} h to build` : ''}
+                  </Mono>
+                  <Button size="sm" tone="danger" title="Remove from the catalog" onClick={() => dispatch({ type: 'removeSolution', id: entry.id })}>
+                    Remove
+                  </Button>
+                </Row>
+                <EstimateNotes id={entry.id} notes={entry.notes} />
+                <CatalogInternal item={shown} />
+              </div>
+            );
+          })
         )}
       </section>
     </div>

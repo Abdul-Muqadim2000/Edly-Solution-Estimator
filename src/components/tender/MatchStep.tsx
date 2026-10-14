@@ -2,13 +2,14 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { Catalog, MatchKind, RequirementMatch, Solution, Tender, TenderDocument, TenderRequirement } from '@/types';
 import type { Action } from '@/state/reducer';
 import type { TenderRunner } from '@/state/useTenderRunner';
-import { catalogHours, needsMatching, outOfScopeMatches, sourceLabel, tenderCounts, tenderSelection } from '@/domain/tender';
+import { catalogHours, needsMatching, outOfScopeMatches, repeatSets, sourceLabel, tenderCounts, tenderSelection } from '@/domain/tender';
 import { allSolutions } from '@/domain/catalog';
 import { hours, plural } from '@/lib/format';
 import { color, radius } from '@/theme';
 import { Banner, Button, Empty, Mono, Row, Select, Spacer, Stat } from '@/components/ui';
 import { useHover } from '@/lib/useHover';
-import { Check, ConfidenceChip, DeferredField, FilterPill, KIND_LABEL, PriorityToggle, rowEdge, SourceQuote, TextButton } from '@/components/tender/parts';
+import { Check, ConfidenceChip, DeferredField, FilterPill, KIND_LABEL, PriorityToggle, RequirementBody, rowEdge, SourceQuote, TextButton, TopicChip } from '@/components/tender/parts';
+import { CatalogItemModal, CatalogPicker } from '@/components/tender/CatalogItem';
 import { categoryOptions } from '@/components/salesLegal/parts';
 
 /**
@@ -21,6 +22,58 @@ type Filter = 'all' | 'review' | MatchKind;
 
 const KIND_OPTIONS = (Object.keys(KIND_LABEL) as MatchKind[]).map((value) => ({ value, label: KIND_LABEL[value] }));
 
+/**
+ * A matched solution: its name and hours open its whole catalog entry over the page, and the cross
+ * takes it off the match. The name is a real button, so it is reached and pressed from the keyboard.
+ */
+function SolutionChip({ id, item, onView, onRemove }: { id: string; item: Solution | undefined; onView: () => void; onRemove: () => void }): JSX.Element {
+  const hover = useHover();
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        background: hover.on ? color.brandWash : color.brandWashPale,
+        borderStyle: 'solid',
+        borderWidth: 1,
+        borderColor: hover.on ? color.brandEdge : color.brandEdgeFaint,
+        borderRadius: radius.pill,
+        padding: '2px 6px 2px 4px',
+        fontSize: 12,
+        transition: 'background 120ms ease, border-color 120ms ease'
+      }}
+    >
+      <button
+        type="button"
+        onClick={onView}
+        {...hover.bind}
+        title={`See ${item?.name ?? id} in the catalog`}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          border: 'none',
+          background: 'transparent',
+          cursor: 'pointer',
+          padding: '2px 4px 2px 8px',
+          borderRadius: radius.pill,
+          fontFamily: 'inherit',
+          fontSize: 12
+        }}
+      >
+        <span style={{ color: color.ink, fontWeight: 600, textDecoration: hover.on ? 'underline' : 'none' }}>{item?.name ?? id}</span>
+        <Mono size={11} tone={color.brandDeep}>
+          {item ? `${hours(item.first)} h` : 'not in the catalog'}
+        </Mono>
+      </button>
+      <TextButton onClick={onRemove} title={`Take ${item?.name ?? id} off this requirement`}>
+        ×
+      </TextButton>
+    </span>
+  );
+}
+
 /* memo: accepting one match re-renders that row, not the whole list; hence `docs`, not the tender */
 const MatchRow = memo(function MatchRow({
   req,
@@ -31,6 +84,8 @@ const MatchRow = memo(function MatchRow({
   matching,
   picked,
   onPick,
+  onView,
+  onBrowse,
   dispatch
 }: {
   req: TenderRequirement;
@@ -41,6 +96,10 @@ const MatchRow = memo(function MatchRow({
   matching: boolean;
   picked: boolean;
   onPick: (id: string, on: boolean) => void;
+  /** Open a matched solution's catalog entry. */
+  onView: (reqId: string, solutionId: string) => void;
+  /** Open the catalog browser to add a solution to this requirement. */
+  onBrowse: (reqId: string) => void;
   dispatch: (action: Action) => void;
 }): JSX.Element {
   const hover = useHover();
@@ -71,6 +130,7 @@ const MatchRow = memo(function MatchRow({
             {req.id}
           </Mono>
           <PriorityToggle value={req.priority} />
+          {req.topic ? <TopicChip topic={req.topic} /> : null}
           <Spacer />
           {match ? (
             match.approved ? (
@@ -86,7 +146,7 @@ const MatchRow = memo(function MatchRow({
           ) : null}
         </Row>
 
-        <div style={{ fontSize: 13.5, lineHeight: 1.55, color: color.ink, marginTop: 6 }}>{req.text}</div>
+        <RequirementBody req={req} />
 
         {match ? (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -108,32 +168,15 @@ const MatchRow = memo(function MatchRow({
 
             {covered ? (
               <Row gap={6}>
-                {match.solutionIds.map((id) => {
-                  const item = byId.get(id);
-                  return (
-                    <span
-                      key={id}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        background: color.brandWashPale,
-                        border: `1px solid ${color.brandEdgeFaint}`,
-                        borderRadius: radius.pill,
-                        padding: '4px 6px 4px 12px',
-                        fontSize: 12
-                      }}
-                    >
-                      <span style={{ color: color.ink, fontWeight: 600 }}>{item?.name ?? id}</span>
-                      <Mono size={11} tone={color.brandDeep}>
-                        {item ? `${hours(item.first)} h` : 'not in the catalog'}
-                      </Mono>
-                      <TextButton onClick={() => set({ solutionIds: match.solutionIds.filter((one) => one !== id) })} title={`Remove ${item?.name ?? id}`}>
-                        ×
-                      </TextButton>
-                    </span>
-                  );
-                })}
+                {match.solutionIds.map((id) => (
+                  <SolutionChip
+                    key={id}
+                    id={id}
+                    item={byId.get(id)}
+                    onView={() => onView(req.id, id)}
+                    onRemove={() => set({ solutionIds: match.solutionIds.filter((one) => one !== id) })}
+                  />
+                ))}
                 <Select
                   value=""
                   options={solutionOptions}
@@ -141,6 +184,9 @@ const MatchRow = memo(function MatchRow({
                   hint="Add a catalog solution"
                   style={{ padding: '6px 8px', fontSize: 12.5, maxWidth: 320 }}
                 />
+                <TextButton onClick={() => onBrowse(req.id)} title="Search the catalog and read each solution before adding it">
+                  Find in the catalog
+                </TextButton>
                 {match.solutionIds.length === 0 ? <span style={{ fontSize: 12, color: color.redInk }}>Pick a solution, or change this to custom.</span> : null}
               </Row>
             ) : null}
@@ -186,6 +232,11 @@ export function MatchStep({
 }): JSX.Element {
   const [filter, setFilter] = useState<Filter>('all');
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  /* one popup at a time, over the list: a solution's entry, or the catalog to choose from */
+  const [viewing, setViewing] = useState<{ reqId: string; solutionId: string } | null>(null);
+  const [browsing, setBrowsing] = useState('');
+  const onView = useCallback((reqId: string, solutionId: string) => setViewing({ reqId, solutionId }), []);
+  const onBrowse = useCallback((reqId: string) => setBrowsing(reqId), []);
   /* runs once on arrival, then only when asked: an automatic retry would loop on a failure */
   const [runNow, setRunNow] = useState(() => needsMatching(tender).length > 0 || Object.keys(outOfScopeMatches(tender)).length > 0);
 
@@ -217,6 +268,10 @@ export function MatchStep({
   const pickedIds = approved.filter((req) => picked.has(req.id)).map((req) => req.id);
   const allShownPicked = rows.length > 0 && rows.every((req) => picked.has(req.id));
   const sureOnes = approved.filter((req) => req.match && !req.match.approved && req.match.confidence === 'high').map((req) => req.id);
+  /* a set still open in step 1 would have its work matched, and perhaps sent to the desk, twice */
+  const openRepeats = repeatSets(tender).filter((entry) => entry.reqs.filter((req) => req.status === 'approved').length > 1).length;
+  const viewedReq = viewing ? tender.reqs.find((req) => req.id === viewing.reqId) ?? null : null;
+  const browsedReq = browsing ? tender.reqs.find((req) => req.id === browsing) ?? null : null;
 
   const pick = useCallback(
     (id: string, on: boolean): void =>
@@ -253,6 +308,12 @@ export function MatchStep({
         </Banner>
       ) : null}
       {runner.matching ? <Banner tone="good">Matching against the catalog. Results appear on each requirement as they come back.</Banner> : null}
+      {openRepeats > 0 ? (
+        <Banner tone="warn">
+          {plural(openRepeats, 'set')} of approved requirements ask for the same work as each other. Keep one of each in step 1, or the same work is
+          matched, and may go to the desk, more than once.
+        </Banner>
+      ) : null}
 
       <Row gap={8} style={{ paddingBottom: 10, borderBottom: `1px solid ${color.hairline}` }}>
         {(
@@ -336,11 +397,42 @@ export function MatchStep({
               matching={runner.matching}
               picked={picked.has(req.id)}
               onPick={pick}
+              onView={onView}
+              onBrowse={onBrowse}
               dispatch={dispatch}
             />
           ))}
         </div>
       )}
+
+      {viewing ? (
+        <CatalogItemModal
+          catalog={catalog}
+          solutionId={viewing.solutionId}
+          tender={tender}
+          req={viewedReq}
+          onRemove={
+            viewedReq?.match
+              ? () => {
+                  const ids = viewedReq.match?.solutionIds ?? [];
+                  dispatch({ type: 'editMatch', id: tender.id, reqId: viewedReq.id, patch: { solutionIds: ids.filter((one) => one !== viewing.solutionId) } });
+                }
+              : undefined
+          }
+          onClose={() => setViewing(null)}
+        />
+      ) : null}
+      {browsedReq ? (
+        <CatalogPicker
+          catalog={catalog}
+          req={browsedReq}
+          onAdd={(id) => {
+            const ids = browsedReq.match?.solutionIds ?? [];
+            if (!ids.includes(id)) dispatch({ type: 'editMatch', id: tender.id, reqId: browsedReq.id, patch: { solutionIds: [...ids, id] } });
+          }}
+          onClose={() => setBrowsing('')}
+        />
+      ) : null}
 
       {/* right-aligned: the sync pill is fixed to the bottom-left corner and would cover the count */}
       <Row gap={10} style={{ position: 'sticky', bottom: 0, justifyContent: 'flex-end', background: color.page, borderTop: `1px solid ${color.hairline}`, padding: '12px 0', marginTop: 4 }}>

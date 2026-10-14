@@ -94,7 +94,7 @@ export function anthropic(): Anthropic {
 
 /**
  * Dollars the AI may spend on one tender before a person is asked whether to go on, from
- * `EDLY_AI_TENDER_LIMIT_USD`, $4 when it is unset or not a positive number. The browser learns it
+ * `EDLY_AI_TENDER_LIMIT_USD`, $10 when it is unset or not a positive number. The browser learns it
  * from the probe and keeps it on each tender it creates.
  */
 export function tenderLimitUsd(): number {

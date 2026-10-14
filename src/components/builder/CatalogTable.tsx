@@ -3,10 +3,11 @@ import type { Solution } from '@/types';
 import { useApp } from '@/state/AppProvider';
 import { openRequests, type DisplayPrefs } from '@/state/reducer';
 import { ownedCatalogIds } from '@/domain/estimate';
-import { solutionKind } from '@/domain/catalog';
+import { referenceUrl, solutionFacts, solutionKind } from '@/domain/catalog';
 import { color, font, radius } from '@/theme';
 import { hours } from '@/lib/format';
 import { Link, useRowHover } from '@/components/ui';
+import { CatalogInternal } from '@/components/CatalogInternal';
 
 /**
  * The catalog, as a table.
@@ -52,20 +53,8 @@ function Row({
 
   const isEstimate = solutionKind(item) === 'estimates';
   /* A bare URL becomes a link on its own row; anything else stays an ordinary detail pair. */
-  const refUrl = display.notes && item.ref && /^http/.test(item.ref) ? item.ref : null;
-
-  const detail: [string, string][] = [
-    ['Delivery form', item.form ?? '—'],
-    isEstimate ? ['Status', 'Estimate: priced by the estimation desk, not built yet'] : null,
-    item.category ? ['Category', item.category + (item.subCategory ? ` · ${item.subCategory}` : '')] : null,
-    ['Std deployment', item.deploy ?? 'Not recorded'],
-    display.savings && item.build !== null ? ['Original build', `${hours(item.build)} h`] : null,
-    display.savings && item.saving !== null && item.saving !== undefined ? ['Reuse saving (source)', `${Math.round(item.saving * 100)}%`] : null,
-    display.savings && item.repeat !== null ? ['Repeat redeploy', `${hours(item.repeat)} h`] : null,
-    item.account ? ['Client-held account', item.account] : null,
-    item.integrations ? ['Integrations', item.integrations] : null,
-    display.notes && item.ref && !refUrl ? ['Reference', item.ref] : null
-  ].filter((entry): entry is [string, string] => entry !== null);
+  const refUrl = referenceUrl(item, display);
+  const detail = solutionFacts(item, display);
 
   const badge = (text: string, bg: string, co: string, title?: string): JSX.Element => (
     <span key={text} title={title} style={{ fontSize: 10.5, fontWeight: 600, color: co, background: bg, borderRadius: radius.pill, padding: '2px 8px' }}>
@@ -194,6 +183,10 @@ function Row({
                 </Link>
               </div>
             ) : null}
+            {/* hidden while presenting, like the reference above: it follows the internal notes setting */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <CatalogInternal item={item} />
+            </div>
           </div>
         </div>
       ) : null}

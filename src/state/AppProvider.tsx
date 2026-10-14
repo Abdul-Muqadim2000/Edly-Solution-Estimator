@@ -69,6 +69,7 @@ function hydrateFromStorage(): Partial<AppState> {
     bundles: readStorage(STORAGE_KEYS.bundles, []),
     tenders: readStorage(STORAGE_KEYS.tenders, []),
     salesLegal: readStorage(STORAGE_KEYS.salesLegal, []),
+    catalogDetails: readStorage(STORAGE_KEYS.catalogDetails, []),
     loadedCatalogs: readStorage(STORAGE_KEYS.loadedCatalogs, {}),
     catalogSource: readStorage(STORAGE_KEYS.catalogSource, null),
     display: workspace?.display ?? INITIAL_STATE.display,
@@ -99,6 +100,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       [STORAGE_KEYS.bundles]: payload.bundles,
       [STORAGE_KEYS.tenders]: payload.tenders,
       [STORAGE_KEYS.salesLegal]: payload.salesLegal,
+      [STORAGE_KEYS.catalogDetails]: payload.catalogDetails,
       [STORAGE_KEYS.loadedCatalogs]: payload.loadedCatalogs,
       [STORAGE_KEYS.catalogSource]: payload.catalogSource,
       ...(stored.every((one) => one.slug) ? { [STORAGE_KEYS.estimations]: payload.estimations } : {})
@@ -145,6 +147,9 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
         /* the legal team closing an item in one tab shows in the builder open in the other */
         const salesLegal = parse<AppState['salesLegal']>();
         if (Array.isArray(salesLegal)) dispatch({ type: 'hydrate', payload: { salesLegal: adopt(salesLegal) } });
+      } else if (event.key === STORAGE_KEYS.catalogDetails) {
+        const catalogDetails = parse<AppState['catalogDetails']>();
+        if (Array.isArray(catalogDetails)) dispatch({ type: 'hydrate', payload: { catalogDetails: adopt(catalogDetails) } });
       } else if (event.key === STORAGE_KEYS.loadedCatalogs) {
         const loadedCatalogs = parse<AppState['loadedCatalogs']>();
         if (loadedCatalogs) dispatch({ type: 'hydrate', payload: { loadedCatalogs: adopt(loadedCatalogs) } });
@@ -168,6 +173,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       [STORAGE_KEYS.bundles]: data.bundles,
       [STORAGE_KEYS.tenders]: data.tenders,
       [STORAGE_KEYS.salesLegal]: data.salesLegal,
+      [STORAGE_KEYS.catalogDetails]: data.catalogDetails,
       [STORAGE_KEYS.loadedCatalogs]: state.loadedCatalogs,
       [STORAGE_KEYS.catalogSource]: state.catalogSource
     });
@@ -266,6 +272,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       bundles: incoming.bundles,
       tenders: withSlugs(incoming.tenders ?? []),
       salesLegal: incoming.salesLegal ?? [],
+      catalogDetails: incoming.catalogDetails ?? [],
       loadedCatalogs: readStorage<AppState['loadedCatalogs']>(STORAGE_KEYS.loadedCatalogs, {})
     };
     Object.assign(written.current, {
@@ -275,6 +282,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       [STORAGE_KEYS.bundles]: payload.bundles,
       [STORAGE_KEYS.tenders]: payload.tenders,
       [STORAGE_KEYS.salesLegal]: payload.salesLegal,
+      [STORAGE_KEYS.catalogDetails]: payload.catalogDetails,
       [STORAGE_KEYS.loadedCatalogs]: payload.loadedCatalogs
     });
     dispatch({ type: 'hydrate', payload });

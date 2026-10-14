@@ -397,6 +397,18 @@ export interface AddedSolution {
   /** The client it was first estimated for, as the workbook says. */
   client?: string;
   estBy?: string;
+  /**
+   * What the desk entered it as. Absent is an estimate (priced, never built), which is everything
+   * priced from a request or imported from an estimates workbook. The desk's Add to catalog form can
+   * enter a feature built before (Production) or being built, as a bundle's own rows are.
+   */
+  status?: 'Production' | 'In Development';
+  /** Hours spent building it the first time, as a bundle row records. */
+  build?: number;
+  /** Fraction of the build saved by reusing it, 0 to 1, as a bundle row records. */
+  saving?: number;
+  /** A reference the desk typed: a ticket, a document, a link. */
+  ref?: string;
 }
 
 /** A bundle category created in-app. */
@@ -521,13 +533,43 @@ export interface RequirementMatch {
   category?: SalesLegalCategory;
 }
 
+/**
+ * Requirements that ask for the same work, found by the grouping call across the whole tender. Each
+ * member carries the same `set`. A person decides: keep some and remove the rest, or say they differ.
+ */
+export interface RequirementRepeat {
+  /** Shared by every requirement in the set ("S-03"). Only open sets carry one. */
+  set: string;
+  /** What they share, and anything only one of them adds, in one sentence. */
+  note: string;
+  /**
+   * The AI suggests keeping it: it states the need most fully, or it is one of the parts a broad item
+   * in the set lists, each stated on its own.
+   */
+  keep?: boolean;
+}
+
 export interface TenderRequirement {
   id: string;
   doc: number;
   /** Physical page in a PDF, or part in converted text. 0 when unknown. */
   page: number;
   section: string;
+  /**
+   * A short name for it, the way a bid team would head it ("Two-way SIS integration"). Missing on
+   * requirements read before titles existed, and on most added by hand.
+   */
+  title?: string;
+  /**
+   * What must be delivered, written to be understood without the tender beside it: who uses it,
+   * for what, and the specifics the tender gives for it anywhere in its documents.
+   */
   text: string;
+  /**
+   * Where else the tender bears on it: a section that asks for the same thing again or in more
+   * detail, or a definition or scope it depends on. Missing when nothing does.
+   */
+  context?: string;
   /** The tender's own wording, so the desk and the bid team can check the paraphrase. */
   quote: string;
   /**
@@ -542,6 +584,12 @@ export interface TenderRequirement {
   status: RequirementStatus;
   /** Added or reworded by a person. */
   edited?: boolean;
+  /** The capability area it falls under ("Assessment and grading"), from the grouping call. Missing until grouped. */
+  topic?: string;
+  /** Other requirements ask for the same work, and nobody has decided yet which to keep. */
+  repeat?: RequirementRepeat;
+  /** Removed by a person as a repeat of these requirements, which were kept. Cleared when it is restored. */
+  repeatOf?: string[];
   match?: RequirementMatch;
 }
 
@@ -630,6 +678,46 @@ export interface TenderTerm {
   skip?: boolean;
 }
 
+/* ------------------------------------------------------- catalog details */
+
+/**
+ * What Edly knows internally about one catalog solution: which client it was first built for, who to
+ * ask about it, where its code lives, and how ready it is to reuse. Imported from the reusable
+ * features tracker and kept in the store, beside the catalog rather than in it: the served catalog
+ * sheet sits in a public repository, and none of this may reach a client. Shown inside the app only,
+ * never while presenting, and never in the Excel sheet or the printed quote.
+ */
+export interface CatalogDetail {
+  /** `plat` and `solutionId` together, so a row has an id like every other stored record. */
+  id: string;
+  plat: string;
+  /** The catalog solution it describes ("EDU-034"). */
+  solutionId: string;
+  /** The feature's name in the tracker, so a row in the sheet reads without the catalog beside it. */
+  name: string;
+  /** "Originally built for": the client, or Edly Cloud for Edly's own product. */
+  builtFor: string;
+  /** Who to ask when reusing it: a person, a team or a channel. */
+  contact: string;
+  team: string;
+  /** Where the code lives: a repository link, or a note such as "Azure DevOps (Private)". */
+  source: string;
+  /** Already packaged as a plugin. Null when the tracker does not say. */
+  plugin: boolean | null;
+  /** Entangled with other features, so reusing it means extracting it first. */
+  mixed: boolean | null;
+  reuseCount: number | null;
+  /** What it needs around it: core changes, services, other plugins. */
+  dependencies: string;
+  /** How it is installed and wired up, as the tracker's implementation column describes. */
+  implementation: string;
+  /** Words a tender would use for it, for the AI to match on. Filled by a person in the sheet. */
+  keywords: string;
+  /** The workbook it came from, and when. */
+  importedFrom: string;
+  up: string;
+}
+
 /* ------------------------------------------------- sales, account and legal */
 
 /** Which team an item is for. The five groups the first real tender's out-of-scope items fell into. */
@@ -687,6 +775,8 @@ export interface PersistedState {
   bundles: AddedBundle[];
   tenders: Tender[];
   salesLegal: SalesLegalItem[];
+  /** Internal details of catalog solutions, from the reusable features tracker. */
+  catalogDetails: CatalogDetail[];
   /** UI preferences and per-platform loaded catalogs, keyed by storage key. */
   settings: Record<string, unknown>;
   /**
@@ -701,6 +791,12 @@ export interface PersistedState {
    * them, so the server keeps the stored ones (`keepPeople` in api/state.ts).
    */
   knowsPeople?: true;
+  /**
+   * Sent with every save from a build that keeps a desk entry's status, build hours, reuse saving and
+   * reference, never stored. A save without it comes from an older tab, whose solutions lack those
+   * fields because it never read them, so the server keeps the stored ones.
+   */
+  knowsCatalogFields?: true;
 }
 
 /* ------------------------------------------------------- computed estimates */

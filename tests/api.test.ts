@@ -6,7 +6,8 @@ import { handle } from '../api/state';
 import { storeKind } from '../server/store';
 import { coerceState, countRows, EMPTY_STATE } from '../server/schema';
 import { demoRecords } from '../src/domain/demo';
-import type { EstimateRequest, Estimation, PersistedState, SalesLegalItem, Tender } from '../src/types';
+import type { AddedSolution, CatalogDetail, EstimateRequest, Estimation, PersistedState, SalesLegalItem, Tender } from '../src/types';
+import { blank } from '../src/domain/catalogDetails';
 
 /**
  * The endpoint, driven end to end against a real spreadsheet in a temp directory.
@@ -405,6 +406,70 @@ describe('the empty-payload guard', () => {
   });
 });
 
+describe('catalog details', () => {
+  const detail = (solutionId: string, over: Partial<CatalogDetail> = {}): CatalogDetail => ({
+    ...blank('openedx', solutionId),
+    name: `Feature ${solutionId}`,
+    builtFor: 'Acme Academy',
+    contact: 'Team Orange',
+    source: 'https://github.com/example/feature',
+    ...over
+  });
+
+  it('keeps the details when a client built before them saves without them', async () => {
+    /* the same trap as the tenders and the sales and legal list: a tab on an older build would
+       otherwise delete the whole imported tracker every time it saved a deal */
+    await put(state({ estimations: [estimation('EST-1')], catalogDetails: [detail('EDU-013'), detail('EDU-049')] }));
+    const { catalogDetails: _dropped, ...older } = state({ estimations: [estimation('EST-1'), estimation('EST-2')] });
+    expect((await put(older)).status).toBe(200);
+    const body = (await (await get()).json()) as { state: PersistedState };
+    expect(body.state.estimations).toHaveLength(2);
+    expect(body.state.catalogDetails.map((one) => [one.id, one.builtFor])).toEqual([
+      ['openedx/EDU-013', 'Acme Academy'],
+      ['openedx/EDU-049', 'Acme Academy']
+    ]);
+  });
+
+  it('clears them when a current client sends an empty list on purpose', async () => {
+    await put(state({ estimations: [estimation('EST-1')], catalogDetails: [detail('EDU-013')] }));
+    await put(state({ estimations: [estimation('EST-1')], catalogDetails: [] }));
+    expect(((await (await get()).json()) as { state: PersistedState }).state.catalogDetails).toEqual([]);
+  });
+
+  it('guards a store that holds only details, and reports it as holding data', async () => {
+    const response = await put(state({ catalogDetails: [detail('EDU-013')] }));
+    expect(((await response.json()) as { counts: Record<string, number> }).counts).toMatchObject({ catalogDetails: 1 });
+    const body = (await (await get()).json()) as { empty: boolean; state: PersistedState };
+    expect(body.empty).toBe(false);
+    expect(body.state.catalogDetails[0]?.source).toBe('https://github.com/example/feature');
+    /* an empty browser must not be able to blank the imported tracker */
+    expect((await put(EMPTY_STATE)).status).toBe(409);
+  });
+
+  const entry = (over: Partial<AddedSolution> = {}): AddedSolution => ({
+    id: 'CS-01', plat: 'openedx', bundleId: 'B02', name: 'Proctoring', desc: '', first: 30, repeat: 10, form: 'Custom development',
+    deploy: '', integrations: '', category: '', subCategory: '', account: '', notes: '', from: '', estAt: '2026-10-14', direct: true,
+    ...over
+  });
+  const built = { status: 'Production' as const, build: 120, saving: 0.75, ref: 'https://example.com/acme/proctoring' };
+
+  it("keeps a desk entry's status, build hours, saving and reference when an older tab saves it without them", async () => {
+    await put({ ...state({ solutions: [entry(built)] }), knowsCatalogFields: true });
+    /* an older build reads the entry without these fields and writes it back the same way */
+    await put(state({ solutions: [entry({ name: 'Proctoring, renamed' })] }));
+    const back = ((await (await get()).json()) as { state: PersistedState }).state.solutions[0];
+    expect(back).toMatchObject({ name: 'Proctoring, renamed', ...built });
+  });
+
+  it('lets a current tab take them away, since it sends them whenever they are set', async () => {
+    await put({ ...state({ solutions: [entry(built)] }), knowsCatalogFields: true });
+    await put({ ...state({ solutions: [entry()] }), knowsCatalogFields: true });
+    const back = ((await (await get()).json()) as { state: PersistedState }).state.solutions[0];
+    expect(back).not.toHaveProperty('status');
+    expect(back).not.toHaveProperty('ref');
+  });
+});
+
 describe('a tab from before assignments', () => {
   const request = (id: string, over: Partial<EstimateRequest> = {}): EstimateRequest => ({
     id,
@@ -468,7 +533,7 @@ describe('a tab from before assignments', () => {
 });
 
 describe('the demo estimation', () => {
-  const demo = (): Omit<PersistedState, 'bundles' | 'tenders' | 'settings'> => demoRecords('2026-09-30');
+  const demo = (): Omit<PersistedState, 'bundles' | 'tenders' | 'settings' | 'catalogDetails'> => demoRecords('2026-09-30');
 
   it('stores none of it, whatever a client sends', async () => {
     /* the browser never sends the demo; this is what makes sure none of it reaches the sheet anyway */

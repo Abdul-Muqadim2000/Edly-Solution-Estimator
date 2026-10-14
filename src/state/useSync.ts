@@ -156,6 +156,7 @@ export function useSync({ snapshot, onHydrate, onPeople, debounceMs = 1200, poll
         bundles: result.state.bundles ?? [],
         tenders: result.state.tenders ?? [],
         salesLegal: result.state.salesLegal ?? [],
+        catalogDetails: result.state.catalogDetails ?? [],
         settings: result.state.settings ?? {}
       });
 

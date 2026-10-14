@@ -139,7 +139,7 @@ total and its `aiApproved` arrive through `/api/state`, which anyone can overwri
 all tenders, per day or per month, needs a counter every function instance shares.
 
 **Now:** built on 2026-09-29 at the user's request. Each tender may spend `EDLY_AI_TENDER_LIMIT_USD`
-($4 by default) before the screen stops and asks whether to go on; each yes allows another step,
+($10 by default since 2026-10-14, $4 before) before the screen stops and asks whether to go on; each yes allows another step,
 and nothing else changes. The dollars are an estimate from Anthropic's published rates, and the
 calls running when the limit is crossed finish, so a tender goes past it by a few calls ($0.44 on
 the stand-in's test tender, whose extraction calls cost about $0.13 each). The cap that holds today

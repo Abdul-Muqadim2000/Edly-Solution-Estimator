@@ -75,6 +75,7 @@ const populated = (state: PersistedState): boolean =>
   state.bundles.length > 0 ||
   state.tenders.length > 0 ||
   state.salesLegal.length > 0 ||
+  (state.catalogDetails?.length ?? 0) > 0 ||
   Object.keys(state.settings).length > 0;
 
 async function loadTables(): Promise<Workbook | null> {

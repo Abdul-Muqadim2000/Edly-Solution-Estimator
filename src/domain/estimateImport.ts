@@ -1,4 +1,4 @@
-import type { AddedBundle, AddedSolution, Estimation, EstimationSnapshot } from '@/types';
+import type { AddedBundle, AddedSolution, CatalogDetail, Estimation, EstimationSnapshot } from '@/types';
 import { CX_BUNDLE_ID, nameKey, nextBundleId, UNASSIGNED_NAME } from '@/domain/catalog';
 import {
   followGroups,
@@ -59,6 +59,13 @@ export interface EstimateRow {
   estBy: string;
   /** ISO date, blank when the sheet gives none. */
   estAt: string;
+  /* Internal details, kept beside the estimate and never on it, so the client's Excel sheet and
+     quote cannot carry them. Blank when the row has none. */
+  contact: string;
+  source: string;
+  dependencies: string;
+  implementation: string;
+  keywords: string;
 }
 
 export interface EstimateImportInput {
@@ -82,6 +89,12 @@ export interface EstimateImportPlan {
   bundles: AddedBundle[];
   added: AddedSolution[];
   updated: AddedSolution[];
+  /**
+   * The internal details the included rows carry, under the ids they were given, holding only the
+   * cells that are filled: like a note, a blank cell keeps what is stored, and clearing a detail is
+   * done in the app. Merged with every field in `IMPORTED_DETAIL_FIELDS`.
+   */
+  details: Partial<CatalogDetail>[];
   newBundles: { id: string; name: string; count: number }[];
   /** Estimates left in Unassigned for the desk to file. */
   unassigned: number;
@@ -90,6 +103,9 @@ export interface EstimateImportPlan {
 }
 
 const key = nameKey;
+
+/** The internal details an estimates workbook can carry, each a column of the template. */
+export const IMPORTED_DETAIL_FIELDS = ['contact', 'source', 'dependencies', 'implementation', 'keywords'] as const;
 
 /** An estimate's identity across imports. */
 export const estimateKey = (sourceId: string, name: string, client: string): string =>
@@ -225,6 +241,7 @@ export function planEstimateImport(input: EstimateImportInput): EstimateImportPl
   /* ---- the rows that go in, and where ---- */
   const added: AddedSolution[] = [];
   const updated: AddedSolution[] = [];
+  const details: Partial<CatalogDetail>[] = [];
   const replaced = new Map<string, AddedSolution>();
   const createdCount = new Map<string, number>();
   const reviewRows = new Map<string, ReviewRow[]>();
@@ -300,6 +317,8 @@ export function planEstimateImport(input: EstimateImportInput): EstimateImportPl
     } else {
       added.push(record);
     }
+    const typed = Object.fromEntries(IMPORTED_DETAIL_FIELDS.map((field) => [field, row[field].trim()]).filter(([, value]) => value));
+    if (Object.keys(typed).length > 0) details.push({ ...typed, plat: platform, solutionId: record.id, name: record.name, importedFrom: file, up: input.today });
     if (landing.kind === 'create') createdCount.set(bundleId, (createdCount.get(bundleId) ?? 0) + 1);
   }
 
@@ -348,6 +367,7 @@ export function planEstimateImport(input: EstimateImportInput): EstimateImportPl
     bundles: [...input.bundles, ...createdBundles],
     added,
     updated,
+    details,
     newBundles: createdBundles.map((bundle) => ({ id: bundle.id, name: bundle.name, count: createdCount.get(bundle.id) ?? 0 })),
     unassigned: [...added, ...updated].filter((one) => one.bundleId === CX_BUNDLE_ID).length,
     warnings,

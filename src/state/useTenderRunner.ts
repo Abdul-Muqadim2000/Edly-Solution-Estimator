@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Catalog, SalesLegalItem, Tender, TenderRange, TenderTokens } from '@/types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Catalog, CatalogDetail, SalesLegalItem, Tender, TenderRange, TenderTokens } from '@/types';
 import type { Action } from '@/state/reducer';
-import { TenderApiError, tenderExtract, tenderMatch, tenderSort, tenderTerms } from '@/api/client';
+import { TenderApiError, tenderExtract, tenderGroup, tenderMatch, tenderSort, tenderTerms } from '@/api/client';
 import {
   aiAllowance,
   aiSpent,
   callSlots,
   canSpend,
+  bundleLines,
   catalogLines,
   documentsIn,
+  extracting,
+  groupingWanted,
+  groupInputs,
   heldByLimit,
   heldDocs,
   matchBatches,
@@ -18,15 +22,18 @@ import {
   rangesReading,
   rangesToRun,
   termsWaiting,
+  topicsInUse,
   touchedCache,
+  ungrouped,
   type DocRef
 } from '@/domain/tender';
 import { needsSorting } from '@/domain/salesLegal';
 
 /**
- * Runs a tender's AI calls: every pending extraction range, then the key terms when a person asked
- * for them, matching when asked, and sorting the out-of-scope items after a match or when asked. No
- * call starts once the tender has spent what it is allowed; the screen asks a person whether to go on.
+ * Runs a tender's AI calls: every pending extraction range, then the grouping of what was read into
+ * topics and repeats, the key terms when a person asked for them, matching when asked, and sorting the
+ * out-of-scope items after a match or when asked. No call starts once the tender has spent what it is
+ * allowed; the screen asks a person whether to go on.
  *
  * What to run next is decided by the pure functions in `domain/tender.ts`; this is the glue that
  * calls the server and dispatches what comes back. Results land in the reducer, which lives
@@ -49,6 +56,12 @@ const THIS_TAB = Math.random().toString(36).slice(2, 10);
 const claimNow = (): { at: number; by: string } => ({ at: Date.now(), by: THIS_TAB });
 const matchingNow = new Set<string>();
 const sortingNow = new Set<string>();
+const groupingNow = new Set<string>();
+/* Ranges this page load read for each tender, and how many it had read when it last grouped them. The
+   grouping call runs by itself only after this tab read something new, so opening a tender read
+   before grouping existed, or reloading one, spends nothing: its screen has a button for that. */
+const rangesReadHere = new Map<string, number>();
+const groupedAfter = new Map<string, number>();
 const listeners = new Set<() => void>();
 const changed = (): void => listeners.forEach((listener) => listener());
 
@@ -77,6 +90,11 @@ export function docRefs(tender: Pick<Tender, 'docs'>, now = Date.now()): DocRef[
 }
 
 export interface TenderRunner {
+  /** The grouping call is out for this tender. */
+  grouping: boolean;
+  groupError: string;
+  /** Put every requirement with no topic under one, and set side by side the ones that repeat each other. */
+  runGrouping: () => void;
   /** Range keys this tab is reading right now. */
   running: ReadonlySet<string>;
   /** Ranges being read, here or by another tab that holds a live claim. */
@@ -103,9 +121,21 @@ export interface TenderRunner {
 
 /**
  * `items`: the sales and legal items already copied from this tender to its estimation, so the sort
- * leaves alone any a person has put in a team there.
+ * leaves alone any a person has put in a team there. `details`: the catalog's internal details, of
+ * which the matcher reads only the scrubbed part (`catalogLines`). `clients`: every client the app
+ * knows, taken out of what the matcher reads.
  */
-export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatch: (action: Action) => void, items: readonly SalesLegalItem[] = []): TenderRunner {
+export function useTenderRunner(
+  tender: Tender | null,
+  catalog: Catalog,
+  dispatch: (action: Action) => void,
+  items: readonly SalesLegalItem[] = [],
+  details: readonly CatalogDetail[] = [],
+  clients: readonly string[] = []
+): TenderRunner {
+  /* read when matching starts, never a reason to rebuild it: the list changes with every deal edited */
+  const clientsNow = useRef(clients);
+  clientsNow.current = clients;
   const [tick, setTick] = useState(0);
   const [matchError, setMatchError] = useState('');
   /* matching was asked for and the limit stopped it; `resume` runs it once the person has said go on */
@@ -118,6 +148,10 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
   /* the tender whose matching run just finished in this tab, so its out-of-scope items are sorted next.
      An id, not a flag: a run that finishes after the person opened another tender must not sort that one */
   const [sortAfterMatch, setSortAfterMatch] = useState('');
+  const [groupError, setGroupError] = useState('');
+  /* requirements the limit kept from being grouped, and whether to group them once a person says go on */
+  const [groupHeld, setGroupHeld] = useState(0);
+  const [resumeGroup, setResumeGroup] = useState(false);
 
   useEffect(() => {
     const listener = (): void => setTick((count) => count + 1);
@@ -137,6 +171,9 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
     setResumeSort(false);
     setSortAfterMatch('');
     setSortError('');
+    setGroupError('');
+    setGroupHeld(0);
+    setResumeGroup(false);
   }, [tenderId]);
 
   /* `tick` is a dependency on purpose: a call frees its slot after the reply that re-rendered
@@ -170,6 +207,7 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
       tenderExtract(docs, { doc: range.doc, from: range.from, to: range.to })
         .then(({ found, tokens }) => {
           noteRead(docsReadAt, tender.id, now, tokens);
+          rangesReadHere.set(tender.id, (rangesReadHere.get(tender.id) ?? 0) + 1);
           dispatch({ type: 'rangeDone', id: tender.id, key, found, tokens });
         })
         .catch((error: unknown) => {
@@ -285,6 +323,43 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
   }, [tender, items, dispatch]);
   const runSorting = useCallback(() => sortNow(true), [sortNow]);
 
+  /* One call over every requirement still in play, as words: no documents and no catalog. Only the
+     requirements with no topic yet take one, and only a set of repeats holding one of them is offered,
+     so a second call after more pages were read changes nothing a person already looked at. */
+  const groupNow = useCallback(() => {
+    if (!tender || groupingNow.has(tender.id)) return;
+    const fresh = ungrouped(tender);
+    const inputs = groupInputs(tender);
+    if (fresh.length === 0 || inputs.length === 0) return;
+    if (!canSpend(tender)) {
+      setGroupHeld(fresh.length);
+      return;
+    }
+    setGroupError('');
+    setGroupHeld(0);
+    groupingNow.add(tender.id);
+    changed();
+    tenderGroup(inputs, topicsInUse(tender))
+      .then(({ topics, repeats, tokens }) => dispatch({ type: 'setGroups', id: tender.id, result: { topics, repeats }, fresh, tokens }))
+      .catch((error: unknown) => {
+        if (error instanceof TenderApiError && error.tokens) dispatch({ type: 'addTenderTokens', id: tender.id, tokens: error.tokens });
+        setGroupError(`The requirements could not be checked for repeats: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        groupingNow.delete(tender.id);
+        changed();
+      });
+  }, [tender, dispatch]);
+
+  /* by itself, once this tab has read something new and nothing is left to read */
+  useEffect(() => {
+    if (!tender || groupingNow.has(tender.id) || extracting(tender)) return;
+    const read = rangesReadHere.get(tender.id) ?? 0;
+    if (read <= (groupedAfter.get(tender.id) ?? 0)) return;
+    groupedAfter.set(tender.id, read);
+    if (groupingWanted(tender)) groupNow();
+  }, [tender, groupNow, tick]);
+
   const runMatching = useCallback(() => {
     if (!tender || matchingNow.has(tender.id)) return;
     const settled = outOfScopeMatches(tender);
@@ -292,7 +367,8 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
 
     const wanted = needsMatching(tender);
     if (wanted.length === 0) return;
-    const lines = catalogLines(catalog);
+    const lines = catalogLines(catalog, details, tender.plat, clientsNow.current);
+    const bundles = bundleLines(catalog);
     if (lines.length === 0) {
       setMatchError('This platform has no catalog to match against yet. Load its sheet, or mark the requirements custom by hand.');
       return;
@@ -326,7 +402,7 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
         const texts = Object.fromEntries(batch.map((req) => [req.id, req.text]));
         const started = Date.now();
         try {
-          const { matches, tokens } = await tenderMatch(lines, batch);
+          const { matches, tokens } = await tenderMatch(lines, batch, bundles);
           noteRead(catalogReadAt, tender.plat, started, tokens);
           spent += Number(tokens.usd) || 0;
           dispatch({ type: 'setMatches', id: tender.id, matches, texts, tokens });
@@ -351,7 +427,7 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
       setSortAfterMatch(tender.id);
       changed();
     });
-  }, [tender, catalog, dispatch]);
+  }, [tender, catalog, details, dispatch]);
 
   const retry = useCallback((key: string) => dispatch({ type: 'retryRange', id: tenderId, key, claim: claimNow() }), [dispatch, tenderId]);
   const retryTerms = useCallback((key: string) => dispatch({ type: 'retryTerms', id: tenderId, key, claim: claimNow() }), [dispatch, tenderId]);
@@ -367,7 +443,17 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
       setSortHeld((held) => ({ ...held, count: 0 }));
       setResumeSort(true);
     }
-  }, [dispatch, tenderId, matchingHeld, sortHeld]);
+    if (groupHeld > 0) {
+      setGroupHeld(0);
+      setResumeGroup(true);
+    }
+  }, [dispatch, tenderId, matchingHeld, sortHeld, groupHeld]);
+
+  useEffect(() => {
+    if (!resumeGroup || !tender || !canSpend(tender)) return;
+    setResumeGroup(false);
+    groupNow();
+  }, [resumeGroup, tender, groupNow]);
 
   /* after `allowMoreAi` has landed, so matching sees the new allowance rather than the old one */
   useEffect(() => {
@@ -393,7 +479,10 @@ export function useTenderRunner(tender: Tender | null, catalog: Catalog, dispatc
     reading: tender ? rangesReading(tender.ranges, running, Date.now(), THIS_TAB) : [],
     matching: matchingNow.has(tenderId),
     matchError,
-    held: tender ? heldByLimit(tender, running, matchingHeld, sortHeld.count) : '',
+    held: tender ? heldByLimit(tender, running, matchingHeld, sortHeld.count, groupHeld) : '',
+    grouping: groupingNow.has(tenderId),
+    groupError,
+    runGrouping: groupNow,
     runMatching,
     retry,
     sorting: sortingNow.has(tenderId),

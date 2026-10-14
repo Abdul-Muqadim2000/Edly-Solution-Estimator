@@ -668,3 +668,56 @@ describe('the sales, account and legal list', () => {
     expectTypeOf<SheetInput['snap']>().not.toHaveProperty('salesLegal');
   });
 });
+
+describe('the internal details of catalog solutions', () => {
+  /* who built a feature, for which client, who to ask and where its code is: for Edly, never the client.
+     Imported for a solution the deal has selected, the one whose note the file does print. */
+  const secrets = ['Nordic Academy', 'Sam Rivers', 'https://github.com/example/private-repo', 'Azure DevOps (Private)', 'patched the core LMS', 'micro-credential keywords'];
+  const deal: AppState = [
+    { type: 'createEstimation', input: { name: 'Acme Academy', client: 'Acme Inc', tag: 'Active', due: '' } },
+    { type: 'patchDraft', patch: { ...snap, sheet: { contact: 'Jane Rivera', notes: { 'OX-1': 'Runs on the current release.' } } } },
+    {
+      type: 'importCatalogDetails',
+      details: [
+        { plat: 'openedx', solutionId: 'OX-1', name: 'Feature', builtFor: secrets[0], contact: secrets[1], source: secrets[2], team: secrets[3], implementation: `It ${secrets[4]}.`, keywords: secrets[5], importedFrom: 'tracker.xlsx', up: '2026-10-14' }
+      ],
+      columns: ['name', 'builtFor', 'contact', 'source', 'team', 'implementation', 'keywords']
+    }
+  ].reduce<AppState>((state, action) => reducer(state, action as Action), { ...INITIAL_STATE, ready: true, auth: { user: 'admin', role: 'sales', at: 0 }, platform: 'openedx' });
+
+  it('never reaches the client’s workbook, with every column and section on', async () => {
+    expect(deal.catalogDetails).toHaveLength(1);
+    const estimation = openEstimationRecord(deal)!;
+    const requests = [...openRequests(deal), request({ est: 24 })];
+    const estimate = calcEstimate(catalog, deal.draft, requests);
+    const input: SheetInput = {
+      estimation,
+      snap: deal.draft,
+      estimate,
+      requests,
+      plan: schedule(estimate, requests, deal.draft, { blendBuffer: false }),
+      bundles: catalog.bundles,
+      prefs: readSheetPrefs({ columns: Object.fromEntries(SHEET_COLUMNS.map((column) => [column.id, true])), sections: Object.fromEntries(Object.keys(DEFAULT_SHEET.sections).map((key) => [key, true])) }),
+      blendBuffer: false,
+      currency: 'USD',
+      platformName: 'Open edX',
+      sample: false,
+      date: '2026-10-14'
+    };
+    const workbook = await readWorkbook(writeWorkbook(taskBreakdownSheets(input)));
+    const text = Object.values(workbook)
+      .flatMap((rows) => rows.map((row) => row.join(' | ')))
+      .join('\n');
+    /* the file is the real one: it carries the deal and the selected solution's note */
+    expect(text).toContain('Acme Inc | Project Task Breakdown');
+    expect(text).toContain('Runs on the current release.');
+    for (const words of secrets) expect(text).not.toContain(words);
+  });
+
+  it('has no way in: neither the workbook nor a catalog solution has a place for them', () => {
+    /* the details sit beside the catalog in the store, never on a solution, so the bundles the sheet is built from cannot carry them */
+    expectTypeOf<SheetInput>().not.toHaveProperty('catalogDetails');
+    expectTypeOf<Solution>().not.toHaveProperty('builtFor');
+    expectTypeOf<Solution>().not.toHaveProperty('contact');
+  });
+});

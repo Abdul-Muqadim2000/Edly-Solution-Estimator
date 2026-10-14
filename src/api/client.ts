@@ -1,5 +1,5 @@
 import type { PersistedState, Person, RequirementMatch, Role, SalesLegalCategory, TenderTokens } from '@/types';
-import type { AiErrorCode, CatalogLine, DocRef, ExtractedRequirement, FitResult, MatchInput, PlatformDigest } from '@/domain/tender';
+import type { AiErrorCode, BundleLine, CatalogLine, DocRef, ExtractedRequirement, FitResult, GroupInput, GroupResult, MatchInput, PlatformDigest } from '@/domain/tender';
 import type { ExtractedTerm, SortInput } from '@/domain/salesLegal';
 
 /** Typed client for /api/state, /api/users and /api/tender. The only place the app talks to the server. */
@@ -23,7 +23,7 @@ export interface SaveResponse {
   at?: string | null;
   url?: string | null;
   bytes?: number | null;
-  counts?: { estimations: number; requests: number; solutions: number; bundles: number; tenders: number; salesLegal: number; settings: number };
+  counts?: { estimations: number; requests: number; solutions: number; bundles: number; tenders: number; salesLegal: number; catalogDetails?: number; settings: number };
 }
 
 export interface ProbeResponse {
@@ -225,8 +225,13 @@ export function tenderExtract(docs: DocRef[], range: { doc: number; from: number
   return tenderCall('extract', jsonInit({ docs, range }));
 }
 
-export function tenderMatch(catalog: CatalogLine[], reqs: MatchInput[]): Promise<{ matches: Record<string, RequirementMatch>; tokens: TenderTokens }> {
-  return tenderCall('match', jsonInit({ catalog, reqs }));
+export function tenderMatch(catalog: CatalogLine[], reqs: MatchInput[], bundles: BundleLine[] = []): Promise<{ matches: Record<string, RequirementMatch>; tokens: TenderTokens }> {
+  return tenderCall('match', jsonInit({ catalog, reqs, bundles }));
+}
+
+/** Each requirement's topic, and the ones that ask for the same work. Only their words are sent, never the documents. */
+export function tenderGroup(reqs: GroupInput[], topics: string[]): Promise<GroupResult & { tokens: TenderTokens }> {
+  return tenderCall('group', jsonInit({ reqs, topics }));
 }
 
 /** Which team each out-of-scope item is for. Only the items' words are sent, never the documents. */

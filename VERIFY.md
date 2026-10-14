@@ -156,6 +156,67 @@ keep the instruction aimed at alternatives. Found and not fixed, in CLAUDE.md *W
 not counted (18), and Word's automatic clause numbers are lost in conversion (19). Not yet run for
 real: a PDF tender, a spreadsheet tender, a refusal, a rate limit (17).
 
+## The tender AI, run for real on a PDF tender
+
+Run by hand on 2026-10-14 against the real Anthropic API, the same way as above: Opus 5.5 at
+`medium`, the key loaded by the dev server only, a pass-through logging usage, headless Chrome on
+the screens. The tender was a university's AI-translated course marketplace RFP as two PDFs (12 and
+4 pages), matched against the Open edX master sheet with the features tracker's details imported.
+It was the first real run since the sort, key terms, grouping and self-contained extraction were
+added, and the first PDF.
+
+| Step | Calls | Time per call | Cost | Cache |
+|---|---|---|---|---|
+| Fit | 1 | 27 s | $0.27 | wrote both PDFs once (39,231 tokens, about 2,450 a page) |
+| Extraction | 2 | 31 and 123 s | $0.41 | both read the tender; the RFP's call read only up to its own document |
+| Grouping | 1 | 24 s | $0.11 | no documents, as designed |
+| Matching | 3 | 17 to 56 s | $0.39 | the first batch wrote the 14,486-token catalog alone, the other two read it |
+| Sort | 1 | 4 s | $0.02 | no documents |
+
+The tender's "AI cost" line ($1.21 of the $10 limit) is the sum of those eight calls.
+
+Found and fixed first: **every call was refused** with a 400, "The compiled grammar is too large".
+The API compiles all strict tool schemas in a request into one grammar, and the six strict tools of
+the unpushed 2026-10-07 change (titles and context in the extraction schema, and the grouping tool)
+were past its limit, so the fit call failed before reading anything. Probed with `max_tokens: 0`
+requests: six strict refused, five of these refused, the three every tender uses (fit,
+requirements, matches) accepted. The five strict tools `main` deploys, with its smaller extraction
+schema, were accepted, so the live site was not affected. The sort, terms and grouping tools are
+no longer strict; their answers already went through `readCategories`, `readTerms` and
+`readGroups`, which take anything. `tests/tenderApi.test.ts` pins the three.
+
+What held:
+
+- The fit chose Open edX, named the client and wrote a fair summary; it skipped the two cover pages
+  and the contact page, each with Read it too.
+- 90 requirements, every one with a title and the tender's own reference (F-1.1 ... F-6.6, the
+  guide's section numbers), 70 with a context line naming where else the tender bears on them, and
+  each a description an estimator can read alone (the 48-hour credit rule, the 20/50/30 milestone
+  split, the four languages). 56 must, 34 should.
+- Grouping put all 90 under 15 topics and proposed 5 sets of repeats, all real: the credit guide
+  restates four RFP items, and F-3.4 restates F-2.1 and F-2.2.
+- Matching: 3 catalog, 13 partial, 69 custom, 5 out of scope, every reason naming real catalog ids.
+  Most of this tender (a credit system, multi-track audio, QPay, certificate approval, instructor
+  payouts) is not in the catalog, and the matcher said so.
+- The catalog popup on the match step shows the tracker's internal block and why the AI matched it.
+- What the matcher read held no client name, contact, team or link from the 87 tracker rows.
+
+What it showed for later (CLAUDE.md *Worth adding next* 26 and 27):
+
+- Eight requirements went to custom with the note that stock Open edX probably covers them (the
+  Studio course builder, transcripts, the video player's speed and resume, streaks, notes,
+  bookmarks, course certificates, the problem engine). The catalog lists what Edly built, not
+  what the platform ships with, so the desk would be asked to price them.
+- The tender has three priority levels (MUST, IMPORTANT, DESIRABLE) and asks for pricing per level;
+  the app keeps two, so IMPORTANT and DESIRABLE both arrive as should.
+- The tracker's details made no measurable difference here. The same 90 requirements matched twice
+  more by script ($0.70): two runs with the details agreed on 81 of 90, with against without on 83.
+  The tracker's keywords column is empty, and this tender's needs are mostly outside the catalog.
+- "Out of scope" against "custom" for hosting and compliance items (uptime, PCI, data residency)
+  varied between runs: 5 out in the app's run, none in the two scripted ones.
+
+Not yet run for real: a spreadsheet tender, the key-terms call, a refusal, a rate limit.
+
 ## Sales, account and legal, driven end to end
 
 Driven on 2026-09-29 in headless Chrome against a stand-in Anthropic API (every tool answered in

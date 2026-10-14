@@ -21,6 +21,7 @@ import type {
   Role,
   SalesLegalCategory,
   SalesLegalItem,
+  CatalogDetail,
   SheetDetails,
   Tender,
   TenderRange,
@@ -35,7 +36,9 @@ import {
   addTokens,
   approvedToGoOn,
   canSpend,
+  dismissRepeats,
   highestId,
+  keepRepeats,
   newTender,
   planTermReads,
   sectionRanges,
@@ -44,17 +47,21 @@ import {
   sortRequirements,
   splitRange,
   tenderRequests,
+  withGroups,
   type Claim,
   type DeskContact,
   type DeskDraft,
   type ExtractedRequirement,
+  type GroupResult,
   type NewTenderInput
 } from '@/domain/tender';
 import { addTerms, copiedItems, deletable, handItem, patchItem, salesLegalDrafts, salesLegalItems, type ExtractedTerm, type HandItemInput, type SalesLegalPatch } from '@/domain/salesLegal';
 import { DEMO_ID, demoPrefix, isDemoEstimation, isDemoId, isDemoRequest, isDemoSolution, resetDemo, withDemo, withoutDemo } from '@/domain/demo';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
-import { planEstimateImport, removeImported, type EstimateRow } from '@/domain/estimateImport';
+import { IMPORTED_DETAIL_FIELDS, planEstimateImport, removeImported, type EstimateRow } from '@/domain/estimateImport';
 import { nextBundleId } from '@/domain/catalog';
+import { detailFor, INTERNAL_FIELDS, mergeDetails, typedAny, withoutDetails } from '@/domain/catalogDetails';
+import type { NewSolutionInput } from '@/domain/deskEntry';
 import { isAwaiting, stageOf, stageOnFiling, stageOnSettled } from '@/domain/stages';
 import { isAdmin, nextAssignments, sameAssignees } from '@/domain/people';
 import type { ImportReview } from '@/domain/importReview';
@@ -142,6 +149,8 @@ export interface AppState {
   tenders: Tender[];
   /** What each deal commits Edly to that is not software, for the sales, account and legal teams. */
   salesLegal: SalesLegalItem[];
+  /** Internal details of catalog solutions, from the reusable features tracker. Never client-facing. */
+  catalogDetails: CatalogDetail[];
 
   openEstimation: string | null;
   /** The tender open in its review screen. Never at the same time as an estimation. */
@@ -187,6 +196,7 @@ export const INITIAL_STATE: AppState = {
   bundles: [],
   tenders: [],
   salesLegal: [],
+  catalogDetails: [],
   openEstimation: null,
   openTender: null,
   draft: { ...EMPTY_SNAPSHOT },
@@ -239,21 +249,6 @@ export interface EstimateSubmission {
   by: string;
 }
 
-export interface NewSolutionInput {
-  name: string;
-  desc: string;
-  first: number;
-  repeat: number;
-  bundleId: string;
-  form: string;
-  deploy: string;
-  integrations: string;
-  category: string;
-  subCategory: string;
-  account: string;
-  /** Notes / Assumptions, one entry. Blank for none. */
-  notes: string;
-}
 
 /**
  * Every transition, and only transitions.
@@ -329,11 +324,17 @@ export type Action =
   | { type: 'splitRange'; id: string; key: string; claim?: Claim }
   /** `index`: the section's place in the tender's outline, which never changes after creation */
   | { type: 'readSection'; id: string; index: number }
-  | { type: 'addRequirement'; id: string; input: { text: string; section: string; priority: RequirementPriority } }
-  | { type: 'editRequirement'; id: string; reqId: string; patch: Partial<Pick<TenderRequirement, 'text' | 'section' | 'priority' | 'outOfScope'>> }
+  | { type: 'addRequirement'; id: string; input: { title?: string; text: string; section: string; priority: RequirementPriority } }
+  | { type: 'editRequirement'; id: string; reqId: string; patch: Partial<Pick<TenderRequirement, 'title' | 'text' | 'context' | 'section' | 'priority' | 'outOfScope'>> }
   | { type: 'setRequirementStatus'; id: string; reqIds: string[]; status: RequirementStatus }
   | { type: 'combineRequirements'; id: string; reqIds: string[] }
   | { type: 'duplicateRequirement'; id: string; reqId: string }
+  /** `fresh`: the requirements that had no topic when the grouping call was asked; only a set holding one is offered */
+  | { type: 'setGroups'; id: string; result: GroupResult; fresh: string[]; tokens?: Partial<TenderTokens> }
+  /** A person kept some requirements of a set of repeats; the rest are removed as repeats of them. */
+  | { type: 'keepRepeat'; id: string; set: string; keep: string[] }
+  /** A person said a set of repeats are different work after all. */
+  | { type: 'dismissRepeat'; id: string; set: string }
   /** `texts`: each requirement's wording when the match was asked for, so a stale answer is dropped */
   | { type: 'setMatches'; id: string; matches: Record<string, RequirementMatch>; texts?: Record<string, string>; tokens?: Partial<TenderTokens> }
   | { type: 'claimRanges'; id: string; keys: string[]; claim: Claim }
@@ -359,6 +360,10 @@ export type Action =
   | { type: 'termsFailed'; id: string; key: string; error: string; tokens?: Partial<TenderTokens> }
   | { type: 'retryTerms'; id: string; key: string; claim?: Claim }
   | { type: 'splitTerms'; id: string; key: string; claim?: Claim }
+  /** The reusable features tracker, read and matched to the catalog (`readTracker`); `columns` are the fields the file has. */
+  | { type: 'importCatalogDetails'; details: Partial<CatalogDetail>[]; columns: (keyof CatalogDetail)[] }
+  /** A person typed a solution's internal details, on any solution of the platform in play. */
+  | { type: 'editCatalogDetail'; solutionId: string; name: string; patch: Partial<CatalogDetail> }
   | { type: 'addSalesLegal'; estId: string; input: HandItemInput }
   | { type: 'patchSalesLegal'; ids: string[]; patch: SalesLegalPatch }
   | { type: 'deleteSalesLegal'; id: string }
@@ -507,13 +512,17 @@ const DELETES: ReadonlySet<Action['type']> = new Set<Action['type']>([
   'deleteSalesLegal'
 ]);
 
-const storedRows = (state: Pick<AppState, 'estimations' | 'requests' | 'solutions' | 'bundles' | 'tenders' | 'salesLegal'>): { id: string }[] => [
+/** Where a detail typed in the app came from, for the line under it: the person, by name. */
+const editedBy = (state: AppState): string => `Typed in Quotient by ${state.auth?.name || state.auth?.user || 'someone'}`;
+
+const storedRows = (state: Pick<AppState, 'estimations' | 'requests' | 'solutions' | 'bundles' | 'tenders' | 'salesLegal' | 'catalogDetails'>): { id: string }[] => [
   ...state.estimations,
   ...state.requests,
   ...state.solutions,
   ...state.bundles,
   ...state.tenders,
-  ...state.salesLegal
+  ...state.salesLegal,
+  ...state.catalogDetails
 ];
 
 /** Every row a delete took away, what it took with it included: a deal's requests and its items. The demo's are never stored. */
@@ -984,15 +993,25 @@ function transition(state: AppState, action: Action): AppState {
     }
 
     case 'addSolution': {
+      const { internal, ...input } = action.input;
       const solution: AddedSolution = {
-        ...action.input,
+        ...input,
         id: nextId('CS', state.solutions, 'id'),
         plat: platOf(state),
         from: '',
         estAt: today(),
         direct: true
       };
-      return { ...state, solutions: [...state.solutions, solution] };
+      /* the internal details go beside it under the id it was just given, only when any was typed */
+      const catalogDetails =
+        internal && typedAny(internal)
+          ? mergeDetails(
+              state.catalogDetails,
+              [{ ...internal, plat: solution.plat, solutionId: solution.id, name: solution.name, importedFrom: editedBy(state), up: today() }],
+              new Set(['name', ...INTERNAL_FIELDS.filter((key) => key in internal)])
+            )
+          : state.catalogDetails;
+      return { ...state, solutions: [...state.solutions, solution], catalogDetails };
     }
 
     /* The desk rewording an estimate's note later. The request it was priced from keeps a copy for
@@ -1019,6 +1038,8 @@ function transition(state: AppState, action: Action): AppState {
       return {
         ...state,
         solutions: state.solutions.filter((solution) => solution.id !== action.id),
+        /* its internal details go with it, rather than waiting for an id that will never come back */
+        catalogDetails: withoutDetails(state.catalogDetails, platOf(state), [action.id]),
         draft: { ...state.draft, sel }
       };
     }
@@ -1053,7 +1074,8 @@ function transition(state: AppState, action: Action): AppState {
       });
       /* a review with groups still pending imports only what was approved; nothing at all is no change */
       if (plan.added.length === 0 && plan.updated.length === 0) return state;
-      return { ...state, solutions: plan.solutions, bundles: plan.bundles };
+      const catalogDetails = plan.details.length > 0 ? mergeDetails(state.catalogDetails, plan.details, new Set(['name', ...IMPORTED_DETAIL_FIELDS])) : state.catalogDetails;
+      return { ...state, solutions: plan.solutions, bundles: plan.bundles, catalogDetails };
     }
 
     /* Undoing an import takes its estimates out of every open selection, like removing one does,
@@ -1064,7 +1086,14 @@ function transition(state: AppState, action: Action): AppState {
       const kept = new Set(removal.solutions.map((one) => one.id));
       const sel = { ...state.draft.sel };
       for (const one of state.solutions) if (!kept.has(one.id)) delete sel[one.id];
-      return { ...state, solutions: removal.solutions, bundles: removal.bundles, draft: { ...state.draft, sel } };
+      const gone = state.solutions.filter((one) => !kept.has(one.id)).map((one) => one.id);
+      return {
+        ...state,
+        solutions: removal.solutions,
+        bundles: removal.bundles,
+        catalogDetails: withoutDetails(state.catalogDetails, platOf(state), gone),
+        draft: { ...state.draft, sel }
+      };
     }
 
     case 'moveSolutions': {
@@ -1235,11 +1264,13 @@ function transition(state: AppState, action: Action): AppState {
       return withTender(state, action.id, (tender) => {
         const text = action.input.text.trim();
         if (!text) return tender;
+        const title = action.input.title?.trim() ?? '';
         const added: TenderRequirement = {
           id: nextId('R', tender.reqs, 'id'),
           doc: 0,
           page: 0,
           section: action.input.section.trim(),
+          ...(title ? { title } : {}),
           text,
           quote: '',
           priority: action.input.priority,
@@ -1267,7 +1298,16 @@ function transition(state: AppState, action: Action): AppState {
       return withTender(state, action.id, (tender) => {
         const ids = new Set(action.reqIds);
         if (!tender.reqs.some((req) => ids.has(req.id) && req.status !== action.status)) return tender;
-        return { ...tender, reqs: tender.reqs.map((req) => (ids.has(req.id) ? { ...req, status: action.status } : req)) };
+        return {
+          ...tender,
+          reqs: tender.reqs.map((req) => {
+            if (!ids.has(req.id)) return req;
+            const next: TenderRequirement = { ...req, status: action.status };
+            /* restored, it stands for itself again rather than as a repeat of the one kept */
+            if (action.status !== 'removed') delete next.repeatOf;
+            return next;
+          })
+        };
       });
 
     /* The first requirement, in list order, absorbs the others. */
@@ -1277,17 +1317,28 @@ function transition(state: AppState, action: Action): AppState {
         const picked = tender.reqs.filter((req) => ids.has(req.id));
         const [first, ...rest] = picked;
         if (!first || rest.length === 0) return tender;
+        const joined = (values: (string | undefined)[], glue: string): string => [...new Set(values.map((value) => value?.trim() ?? '').filter(Boolean))].join(glue);
+        const title = picked.find((req) => req.title?.trim())?.title?.trim() ?? '';
+        const context = joined(picked.map((req) => req.context), ' ');
+        const ref = joined(picked.map((req) => req.ref), ', ');
+        const topic = picked.find((req) => req.topic)?.topic;
         const combined: TenderRequirement = {
           id: first.id,
           doc: first.doc,
           page: first.page,
           section: first.section,
+          /* the first title among them names it; the others' words join its text */
+          ...(title ? { title } : {}),
           text: picked.map((req) => req.text).join(' '),
+          ...(context ? { context } : {}),
           quote: picked.map((req) => req.quote).filter(Boolean).join(' / '),
+          /* every reference, since the bid team answers the tender in each place it asked */
+          ...(ref ? { ref } : {}),
           priority: picked.some((req) => req.priority === 'must') ? 'must' : 'should',
           outOfScope: picked.every((req) => req.outOfScope),
           status: picked.some((req) => req.status === 'approved') ? 'approved' : 'proposed',
-          edited: true
+          edited: true,
+          ...(topic ? { topic } : {})
         };
         const gone = new Set(rest.map((req) => req.id));
         return { ...tender, reqs: tender.reqs.filter((req) => !gone.has(req.id)).map((req) => (req.id === first.id ? combined : req)) };
@@ -1299,8 +1350,30 @@ function transition(state: AppState, action: Action): AppState {
         const source = tender.reqs.find((req) => req.id === action.reqId);
         if (!source) return tender;
         const copy: TenderRequirement = { ...source, id: nextId('R', tender.reqs, 'id'), status: 'proposed', edited: true };
+        /* the copy keeps its topic, but is no repeat of anything until a grouping call says so */
         delete copy.match;
+        delete copy.repeat;
+        delete copy.repeatOf;
         return { ...tender, reqs: sortRequirements([...tender.reqs, copy]) };
+      });
+
+    case 'setGroups':
+      return withTender(state, action.id, (tender) => {
+        const { reqs, changed } = withGroups(tender.reqs, action.result, action.fresh);
+        if (!changed && !action.tokens) return tender;
+        return { ...tender, reqs: changed ? reqs : tender.reqs, tokens: addTokens(tender.tokens, action.tokens) };
+      });
+
+    case 'keepRepeat':
+      return withTender(state, action.id, (tender) => {
+        const reqs = keepRepeats(tender.reqs, action.set, action.keep);
+        return reqs ? { ...tender, reqs } : tender;
+      });
+
+    case 'dismissRepeat':
+      return withTender(state, action.id, (tender) => {
+        const reqs = dismissRepeats(tender.reqs, action.set);
+        return reqs ? { ...tender, reqs } : tender;
       });
 
     /* A proposal lands only where nothing has happened since it was asked for: the requirement is
@@ -1513,6 +1586,29 @@ function transition(state: AppState, action: Action): AppState {
         const claim = canSpend(tender) ? action.claim : undefined;
         return { ...tender, termReads: reads.map((read) => (read.key === action.key ? requeued(read, claim) : read)) };
       });
+
+    /* a person typed them, on any catalog solution: every field in the form is taken as typed */
+    case 'editCatalogDetail': {
+      const fields = INTERNAL_FIELDS.filter((key) => key in action.patch);
+      /* the demo is never stored, so a detail for one of its estimates would be a row about nothing */
+      if (!action.solutionId || fields.length === 0 || isDemoId(action.solutionId)) return state;
+      const plat = platOf(state);
+      const merged = mergeDetails(
+        state.catalogDetails,
+        [{ ...action.patch, plat, solutionId: action.solutionId, name: action.name, importedFrom: editedBy(state), up: today() }],
+        new Set(['name', ...fields])
+      );
+      /* every field emptied takes the record away, rather than storing a row that says nothing */
+      const after = detailFor(merged, plat, action.solutionId);
+      return { ...state, catalogDetails: after && !typedAny(after) ? withoutDetails(merged, plat, [action.solutionId]) : merged };
+    }
+
+    /* a field the workbook has no column for keeps what is stored: keywords typed into the sheet
+       survive a tracker without a keywords column (`mergeDetails`) */
+    case 'importCatalogDetails': {
+      if (action.details.length === 0) return state;
+      return { ...state, catalogDetails: mergeDetails(state.catalogDetails, action.details, new Set(action.columns)) };
+    }
 
     case 'addSalesLegal': {
       const estimation = state.estimations.find((one) => one.id === action.estId);
@@ -1786,9 +1882,12 @@ export function toPersisted(state: AppState): PersistedState {
     bundles: state.bundles,
     tenders: state.tenders,
     salesLegal: state.salesLegal,
+    catalogDetails: state.catalogDetails,
     settings: {},
     /* says this build reads assignments, so a save without one is kept from wiping them */
-    knowsPeople: true
+    knowsPeople: true,
+    /* and a desk entry's status, build hours, saving and reference, for the same reason */
+    knowsCatalogFields: true
   });
   /* a save that holds nothing is refused unless it names what a person deleted; any other save
      goes exactly as it always has */

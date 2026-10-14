@@ -1,5 +1,5 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Confidence, MatchKind, RequirementPriority } from '@/types';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import type { Confidence, MatchKind, RequirementPriority, TenderRequirement } from '@/types';
 import { color, font, radius } from '@/theme';
 import { useHover } from '@/lib/useHover';
 import { Chip, Field, TextArea } from '@/components/ui';
@@ -347,4 +347,72 @@ export function DeferredField({
 export function rowEdge(hovered: boolean, accent: string): CSSProperties {
   const edge = hovered ? color.ghost : color.hairline;
   return { borderStyle: 'solid', borderWidth: '1px 1px 1px 3px', borderColor: `${edge} ${edge} ${edge} ${accent}` };
+}
+
+/**
+ * A requirement as a person reads it: its name, what it asks for, and where else the tender bears on
+ * it. A requirement read before titles existed has only its text, which then stands alone.
+ */
+export function RequirementBody({ req, struck = false }: { req: Pick<TenderRequirement, 'title' | 'text' | 'context'>; struck?: boolean }): JSX.Element {
+  const line = struck ? 'line-through' : 'none';
+  return (
+    <div style={{ marginTop: 6, minWidth: 0 }}>
+      {req.title ? (
+        <div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.4, color: struck ? color.faint : color.ink, textDecoration: line, overflowWrap: 'anywhere' }}>{req.title}</div>
+      ) : null}
+      <div style={{ fontSize: 13.5, lineHeight: 1.6, color: struck ? color.faint : req.title ? color.body : color.ink, textDecoration: line, marginTop: req.title ? 3 : 0, overflowWrap: 'anywhere' }}>
+        {req.text}
+      </div>
+      {req.context ? (
+        <div style={{ fontSize: 12.5, lineHeight: 1.55, color: color.muted, marginTop: 5, overflowWrap: 'anywhere' }}>
+          <span style={{ fontWeight: 600, color: color.bodySoft }}>Elsewhere in the tender: </span>
+          {req.context}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The capability area a requirement falls under, from the grouping call. */
+export function TopicChip({ topic }: { topic: string }): JSX.Element {
+  return (
+    <span
+      title="Topic: the capability area the tender asks for this under"
+      style={{ fontSize: 10.5, fontWeight: 700, color: color.blueInk, background: color.blueWash, borderRadius: radius.pill, padding: '3px 10px', whiteSpace: 'nowrap' }}
+    >
+      {topic}
+    </span>
+  );
+}
+
+/**
+ * What a popup over the tender needs from the keyboard: Escape closes it, focus moves into it when it
+ * opens, and goes back to whatever opened it when it closes. The shared Modal does none of this, and
+ * changing it would change every modal in the app, a form with unsaved input included. The element
+ * the ref goes on takes `tabIndex={-1}`, so it can hold focus itself.
+ */
+export function useDialogKeys(onClose: () => void): RefObject<HTMLDivElement> {
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    /* one marked for it, else the first field, else the popup itself: never a button, where a stray
+       Enter would take a solution off a match or settle a set of repeats */
+    const target = box.current?.querySelector<HTMLElement>('[data-autofocus]') ?? box.current?.querySelector<HTMLElement>('input[type="text"], input:not([type]), textarea') ?? box.current;
+    target?.focus();
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        close.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      /* the opener may have gone with a re-render; focusing a detached node does nothing */
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+  return box;
 }

@@ -12,6 +12,9 @@ import {
   kindCounts,
   mergeCatalogs,
   nextBundleId,
+  referenceUrl,
+  solutionFacts,
+  solutionHome,
   solutionKind,
   subCategories,
   toSolution
@@ -340,6 +343,22 @@ describe('catalog composition', () => {
     expect(converted.build).toBeNull();
   });
 
+  it('keeps what the desk typed for a feature built before: status, build hours, saving and reference', () => {
+    const base = {
+      id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Thing', desc: '',
+      first: 10, repeat: 3, form: '', deploy: '', integrations: '', category: '', subCategory: '',
+      account: '', notes: '', from: 'RQ-1', estAt: '2026-09-01'
+    };
+    const built = toSolution({ ...base, status: 'Production', build: 120, saving: 0.75, ref: '  https://example.com/acme/thing ' });
+    expect(built).toMatchObject({ status: 'Production', build: 120, saving: 0.75, ref: 'https://example.com/acme/thing' });
+    /* built before, it is a bundle feature, so it leaves the violet estimates */
+    expect(solutionKind(built)).toBe('bundles');
+
+    /* a reference left blank still says where the estimate came from */
+    expect(toSolution({ ...base, ref: ' ' }).ref).toMatch(/^Estimated at the desk/);
+    expect(toSolution({ ...base, status: 'In Development' }).status).toBe('In Development');
+  });
+
   it("carries a desk addition's Notes / Assumptions to the catalog as written, and none as none", () => {
     const base = {
       id: 'CS-01', plat: 'openedx', bundleId: 'B01', name: 'Thing', desc: '',
@@ -485,6 +504,52 @@ describe('telling bundles from estimates', () => {
     const row = toSolution(added('CS-03', { imported: 'Nordic.xlsx', sourceId: 'NU-014', client: 'Nordic University', estBy: 'Sam' }));
     expect(row.ref).toBe('Imported from Nordic.xlsx (NU-014), estimated for Nordic University on 2026-03-01 by Sam');
     expect(row.status).toBe('Estimation');
+  });
+});
+
+describe("a solution's whole entry", () => {
+  const item = solution('EDU-9', 40, {
+    form: 'Custom development',
+    category: 'Assessment',
+    subCategory: 'Proctoring',
+    saving: 0.62,
+    account: 'Proctorio',
+    integrations: 'LTI 1.3',
+    ref: 'Delivered for Acme Academy, 2025'
+  });
+
+  it('lists the same facts the builder shows, reuse and build hours only with savings shown', () => {
+    expect(solutionFacts(item, { savings: true, notes: true })).toEqual([
+      ['Delivery form', 'Custom development'],
+      ['Category', 'Assessment \u00b7 Proctoring'],
+      ['Std deployment', '2 days'],
+      ['Original build', '160 h'],
+      ['Reuse saving (source)', '62%'],
+      ['Repeat redeploy', '12 h'],
+      ['Client-held account', 'Proctorio'],
+      ['Integrations', 'LTI 1.3'],
+      ['Reference', 'Delivered for Acme Academy, 2025']
+    ]);
+    /* with savings and notes hidden, as before showing a client: no engineered hours, no internal reference */
+    expect(solutionFacts(item, { savings: false, notes: false }).map(([label]) => label)).toEqual(['Delivery form', 'Category', 'Std deployment', 'Client-held account', 'Integrations']);
+  });
+
+  it('says an estimate was priced and never built, and shows a web reference as a link rather than a fact', () => {
+    const estimate = solution('CS-04', 12, { status: 'Estimation', form: null, ref: 'https://example.org/spec', category: null });
+    const facts = solutionFacts(estimate, { savings: false, notes: true });
+    expect(facts).toContainEqual(['Status', 'Estimate: priced by the estimation desk, not built yet']);
+    expect(facts).toContainEqual(['Delivery form', '\u2014']);
+    expect(facts.map(([label]) => label)).not.toContain('Reference');
+    expect(referenceUrl(estimate, { notes: true })).toBe('https://example.org/spec');
+    expect(referenceUrl(estimate, { notes: false })).toBeNull();
+    expect(referenceUrl(item, { notes: true })).toBeNull();
+  });
+
+  it('finds a solution under the first bundle that lists it, and nothing for an id the catalog lacks', () => {
+    const twice: Catalog = { ...catalog([item]), bundles: [{ ...catalog([item]).bundles[0]!, id: 'B01' }, { ...catalog([item]).bundles[0]!, id: 'B07' }] };
+    expect(solutionHome(twice, 'EDU-9')?.bundle.id).toBe('B01');
+    expect(solutionHome(twice, 'EDU-9')?.item.name).toBe('Solution EDU-9');
+    expect(solutionHome(twice, 'NOPE')).toBeNull();
   });
 });
 

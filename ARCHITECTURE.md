@@ -186,15 +186,49 @@ Both go through `readImport` in `lib/catalogImport.ts` first, which is strict wh
 `catalogSheet.ts` is forgiving: the served sheet must load whatever someone did to it, but a file a
 person chose to import is refused with a reason when it would load differently from how it reads.
 
+## Catalog details
+
+The team's reusable features tracker says, for each built feature, which client it was first built
+for, who to ask about it, where its code lives, and how ready it is to reuse. That is Edly's to know
+and never the client's, so it sits beside the catalog rather than in it. Added on 2026-10-14.
+
+- **In the store, not in the served sheet.** `public/catalog-source.xlsx` is committed to a public
+  repository and served to anyone, so client names, contacts and private-repo notes cannot go in it.
+  The details are their own collection (`CatalogDetail`, the `CatalogDetails` sheet), one row per
+  solution per platform, scalar columns only so the team can filter them and type keywords into
+  them in Google Sheets.
+- **Imported, then decided.** Import from Excel has a third kind, the features tracker. It is read
+  as the team keeps it (title rows, a row of column groups, Summary and Instructions sheets passed
+  over), matched to the catalog by Solution ID or by name (`readTracker`), and shown before
+  anything is saved: what matched, what did not and why, and features whose hours do not add up. A
+  second import updates in place, and a column it lacks keeps what is stored (`mergeDetails`).
+- **Shown inside the app only.** One block (`CatalogInternal`) in the builder's catalog row and the
+  tender's catalog popup, behind the internal-notes display setting, which presenting always turns
+  off. The Excel sheet and the printed quote are built from inputs with no place for the details,
+  and tests build both files from a workspace holding them and search the result.
+- **Typed at the desk, or on any solution.** The desk's Add to catalog form takes every field a
+  catalog solution has (status, original build hours, reuse saving and reference beside the
+  hours, form and notes) and the internal fields under a heading that says they are never shown to
+  clients (`readEntryForm` in `src/domain/deskEntry.ts`). An entry marked built before is a bundle
+  feature, not a violet estimate. The internal block has an Edit button wherever it shows, and an
+  "Add internal details" button where a solution has none; the estimates template takes five of
+  the fields as optional columns. Who typed a detail, or which file it came from, shows under it.
+- **The matcher reads only what helps it match.** Its catalog lines carry the tracker's keywords,
+  dependencies and implementation notes, with client names and links taken out (`forMatcher`);
+  never who built a feature, for whom, who to ask or where the code is. The names taken out are
+  every client the app knows, and a solution's own name, description and notes are scrubbed too.
+
 ## Tender intake
 
 A salesperson uploads an RFP and gets an estimation and a set of desk requests out of it, with a
 person approving every step. Four decisions shape it, and each is expensive to undo:
 
-- **The AI proposes; people write.** The model is given five tools and all five only report:
+- **The AI proposes; people write.** The model is given six tools and all six only report:
   a platform fit, the requirements in a page range, the catalog matches for a batch, the team each
-  out-of-scope item is for, and the key legal and commercial terms of a document. Nothing it
-  returns changes state. Each change is a reducer action a click dispatches, which is how "ask
+  out-of-scope item is for, the key legal and commercial terms of a document, and the topic of each
+  requirement with the ones that repeat each other. The three every tender uses are strict, so
+  their answers always fit the schema; the other three are not, because the API refuses a request
+  whose strict schemas compile to too large a grammar, and five or six of today's do. Nothing it returns changes state. Each change is a reducer action a click dispatches, which is how "ask
   before acting" is enforced rather than requested in a prompt that a tender could override.
 - **Hours come from the catalog, never the model.** A match carries catalog ids; `readMatches`
   drops any id the catalog does not have, and hours are looked up by id when shown. Unmatched work
@@ -203,12 +237,15 @@ person approving every step. Four decisions shape it, and each is expensive to u
   caches it for five minutes, kept warm while the person reads the recommendation (`nextKeepWarm`,
   a `max_tokens: 0` request every four minutes, a twentieth of the tender each on Opus 5.5); extraction then runs one call per page range over that cached copy, so no
   single call outlives a Vercel function and a failed range retries on its own. Matching needs the
-  catalog, not the tender, so it sends the catalog (cached) and the requirements in batches.
+  catalog, not the tender, so it sends the catalog (cached) and the requirements in batches. The
+  catalog goes by bundle: each bundle's pitch and the client questions it answers, then each
+  solution with its delivery form, what it works with, its notes and limits, and the scrubbed
+  catalog details (see above).
 - **Each tender has a spending limit, and a person decides to go past it.** The server prices
   every call from its usage at the published rate of the model that ran each attempt
   (`src/domain/aiPrice.ts`), and the tender keeps the running total. Before any call starts, the
   runner, the intake and the keep-warm check `canSpend`; at the limit nothing new starts and the
-  screen asks whether to continue for another step (`EDLY_AI_TENDER_LIMIT_USD`, $4 by default).
+  screen asks whether to continue for another step (`EDLY_AI_TENDER_LIMIT_USD`, $10 by default).
   Calls already running finish, because stopping one part way is billed all the same.
   Documents go converted text first and PDFs last, with a cache marker at each document's end, so a
   call about a spreadsheet carries the documents up to it and not the PDF after it.
@@ -218,10 +255,20 @@ person approving every step. Four decisions shape it, and each is expensive to u
   that before continuing, and the ranges cover the rest, less a page of margin at each edge
   (`planRanges`). A skipped section can still be read later from the requirements step. A
   spreadsheet is read in rows rather than pages: each sheet starts its own part, every row keeps its
-  row number, and its ranges are three parts of 20 rows, because a row is nearly always a
+  row number, and its ranges are two parts of 20 rows, because a row is nearly always a
   requirement and a 20-part range of rows cannot be answered inside the time limit. Legal and
   commercial terms and bid paperwork are not extracted at all; out of scope means work that is not
   software but costs money to meet (hardware, staff on site, vetting).
+- **A requirement has to make sense without the tender beside it.** Extraction writes each one
+  with a short title, a description of what is delivered, to whom and with every specific the tender
+  gives for it anywhere in the documents it can see, and a line on where else the tender asks for it.
+  The verbatim quote stays beside it, so the paraphrase can be checked. Because extraction reads a
+  range at a time, the same need often comes back more than once (a line in a list of services, a
+  full specification elsewhere). When this tab has finished reading, one more call (`op=group`)
+  reads every requirement's words, no documents and no catalog, and returns a topic for each and the
+  sets that ask for the same work, with which to keep. A person settles each set: keep some and
+  remove the rest, marked `repeatOf`, or say they differ. Estimating both halves of a repeat would
+  price the work twice, and with custom work send it to the desk twice.
 - **The browser drives the steps.** `/api/tender` keeps no state; the tender lives in the reducer
   and the `Tenders` sheet like everything else, so a half-reviewed tender survives a reload. A tab
   claims a range (`running`, with a time) before reading it, so a second tab on the same tender
@@ -230,7 +277,7 @@ person approving every step. Four decisions shape it, and each is expensive to u
 
 ```
 upload ─► Files API id ─► fit (platform, header, outline, sections to skip) ─► person picks platform and what is read
-      ─► extract, one call per range ─► person reviews requirements
+      ─► extract, one call per range ─► group into topics and repeats ─► person reviews requirements and settles repeats
       ─► match, batches of 40 ─► person accepts matches
       ─► person creates the estimation ─► person sends the desk requests ─► files deleted
 ```
