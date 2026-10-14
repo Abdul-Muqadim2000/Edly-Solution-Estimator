@@ -880,11 +880,11 @@ describe('the AI spending limit', () => {
     delete (old as Partial<Tender>).aiLimit;
     delete (old as Partial<Tender>).aiApproved;
     expect(aiSpent(old)).toBe(0);
-    expect(aiStep(old)).toBe(4);
-    expect(aiAllowance(old)).toBe(4);
+    expect(aiStep(old)).toBe(10);
+    expect(aiAllowance(old)).toBe(10);
     expect(canSpend(old)).toBe(true);
     expect(addTokens(old.tokens, { usd: 0.5 }).usd).toBe(0.5);
-    expect(aiStep(spent(0, { aiLimit: 0 }))).toBe(4);
+    expect(aiStep(spent(0, { aiLimit: 0 }))).toBe(10);
   });
 
   it('says what is waiting at the limit, and nothing below it', () => {
@@ -1282,7 +1282,9 @@ describe('a new tender', () => {
     const base = { plat: 'openedx', name: 'Acme', client: '', due: '', summary: '', docs: [], fit: null, outline: [], tokens: NO_TOKENS };
     expect(newTender({ ...base, aiLimit: 10, aiApproved: 4.3 }, 'TND-4', [], '2026-09-29')).toMatchObject({ aiLimit: 10, aiApproved: 4.3 });
     /* a server with no figure, or a nonsense one, gets the default rather than a tender that can never spend */
-    expect(newTender({ ...base, aiLimit: 0, aiApproved: -2 }, 'TND-5', [], '2026-09-29')).toMatchObject({ aiLimit: 4, aiApproved: 0 });
+    expect(newTender({ ...base, aiLimit: 0, aiApproved: -2 }, 'TND-5', [], '2026-09-29')).toMatchObject({ aiLimit: 10, aiApproved: 0 });
+    /* a tender keeps the limit it was made with: one made under the old $4 default is not raised */
+    expect(newTender({ ...base, aiLimit: 4, aiApproved: 0 }, 'TND-6', [], '2026-09-29')).toMatchObject({ aiLimit: 4 });
   });
 
   it('plans one read of each document for its key terms when the person ticked them, and none otherwise', () => {

@@ -1083,9 +1083,11 @@ export const NO_TOKENS: TenderTokens = { input: 0, output: 0, cacheRead: 0, cach
 
 /**
  * Dollars the AI may spend on a tender before a person is asked whether to go on, when the server
- * sets no other figure. Chosen on 2026-09-28; the test tenders came to about $2.50 on Opus 5.5.
+ * sets no other figure. $4 from 2026-09-28, when the test tenders came to about $2.50 on Opus 5.5;
+ * raised to $10 at the user's request on 2026-10-14, once titles, context and the grouping call put
+ * a tender like the first real one ($3.09) at about $3.65. A tender keeps the limit it was made with.
  */
-export const DEFAULT_AI_LIMIT = 4;
+export const DEFAULT_AI_LIMIT = 10;
 
 type Spending = Pick<Tender, 'tokens' | 'aiLimit' | 'aiApproved'>;
 

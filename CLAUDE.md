@@ -151,7 +151,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 1,334 tests across twenty-eight files.
+`bun run test` runs 1,342 tests across twenty-eight files.
 
 | File | Covers |
 |---|---|
@@ -175,7 +175,7 @@ reference.
 | `tests/format.test.ts` | money, hours, dates, the plain-text quote |
 | `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, topics and repeats, desk drafts, what calls cost and the spending limit |
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
-| `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
+| `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV, web page and text tenders into uploads, spreadsheets as numbered rows, a web page in the encoding it declares |
 | `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
 | `tests/stages.test.ts` | where a deal and a desk request stand: the stages in order, reading them back from the sheet, the moves filing and pricing make by themselves, what sales sees of the desk, and the boards' columns, order and totals |
 | `tests/people.test.ts` | usernames, passwords and roles as typed, names and initials, the @ search, assignments kept across a change, and who is on a ticket as the sheet holds it |
@@ -186,14 +186,14 @@ reference.
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-10-07, with titled requirements, topics and repeats):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-10-14, with web page tenders):
 
 | | |
 |---|---|
 | Statements | 98.0% |
 | Lines | 98.9% |
 | Functions | 99.3% |
-| Branches | 89.6% |
+| Branches | 89.7% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -545,8 +545,10 @@ The spreadsheets hold real deal names, client names and pricing.
   has not read the tender in the last four and a half minutes; the intake hands over its last read
   (`noteTenderRead`) so extraction after the fit starts at full width. Keep both when changing how
   many calls run at once.
-- **A tender's AI spending is checked before each call starts, never during one.** `canSpend` in
-  `src/domain/tender.ts` gates the runner, the intake's fit call and the keep-warm; the calls already
+- **A tender's AI spending is checked before each call starts, never during one.** The limit is
+  $10 unless `EDLY_AI_TENDER_LIMIT_USD` says otherwise ($4 until 2026-10-14, when the user asked
+  for more room); each tender keeps the limit it was made with, so one made earlier stays at $4.
+  `canSpend` in `src/domain/tender.ts` gates the runner, the intake's fit call and the keep-warm; the calls already
   running finish, because a call stopped part way is billed all the same, so a tender goes a few
   calls past its limit. At the limit a Retry or a split queues the part unclaimed (a claim nothing
   acts on shows as being read in every tab), and `allowMoreAi` is refused while there is room, so
@@ -613,8 +615,15 @@ The spreadsheets hold real deal names, client names and pricing.
   after (the fit screen, and `readSection` on the requirements step).
 - **A spreadsheet is read in rows, not pages.** `workbookToParts` keeps each row's number, repeats
   the Columns line on every continued part, and starts each sheet on a new part; its document
-  carries `span` (3 parts of 20 rows). A requirements matrix at the usual 20 parts a range ran past
-  the time limit, was billed and thrown away, then split and read again.
+  carries `span` (2 parts of 20 rows since 2026-10-07, 3 before). A requirements matrix at the usual
+  20 parts a range ran past the time limit, was billed and thrown away, then split and read again.
+- **A web page is read like a Word document** (`htmlToText` in `src/lib/tenderFiles.ts`, asked for
+  on 2026-10-14): a line per heading (its level kept as "#"), paragraph and list item, a line per
+  table row with cells joined by " | ", and scripts, styles, comments and form dropdowns left out.
+  It is decoded in the charset the page declares (`decodeHtmlBytes`): Word saves a web page in
+  windows-1252, and read as UTF-8 the public UT System RFP came out with 812 broken characters. On
+  that RFP, saved as HTML, it reads the same 132 table rows and 75 parts as the Word path, and keeps
+  the clause numbers Word's own numbering hides from `docxXmlToText`.
 - **Relative imports in `api/`, `server/` and the `src/` files they load end in `.js`.** Vercel runs
   them under Node, which refuses a bare `'./schema'`, and the whole API then answers with
   FUNCTION_INVOCATION_FAILED. Nothing local notices; `tests/deploy.test.ts` does.

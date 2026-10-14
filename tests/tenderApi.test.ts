@@ -159,14 +159,15 @@ describe('the probe', () => {
 describe('what a tender may spend', () => {
   const limit = async (): Promise<unknown> => ((await (await handle(new Request('http://localhost/api/tender?probe=1'))).json()) as { limit: unknown }).limit;
 
-  it('tells the browser the limit, $4 unless the server sets another', async () => {
-    expect(await limit()).toBe(4);
+  it('tells the browser the limit, $10 unless the server sets another', async () => {
+    /* raised from $4 on 2026-10-14: a tender read with titles, context and grouping costs nearer $4 on its own */
+    expect(await limit()).toBe(10);
     process.env.EDLY_AI_TENDER_LIMIT_USD = '12.5';
     expect(await limit()).toBe(12.5);
     /* a typo or a zero must not leave every tender unable to spend anything */
     for (const value of ['', 'four', '0', '-3']) {
       process.env.EDLY_AI_TENDER_LIMIT_USD = value;
-      expect(await limit()).toBe(4);
+      expect(await limit()).toBe(10);
     }
   });
 });

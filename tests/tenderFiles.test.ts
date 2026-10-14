@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   checkTenderFiles,
   csvToRows,
+  decodeHtmlBytes,
   docxToText,
   docxXmlToText,
+  htmlToText,
   MAX_UPLOAD_BYTES,
   paginate,
   PART_CHARS,
@@ -36,6 +38,8 @@ describe('which files a tender can use', () => {
     expect(tenderFileKind('pricing.xlsx')).toBe('xlsx');
     expect(tenderFileKind('notes.md')).toBe('text');
     expect(tenderFileKind('matrix.CSV')).toBe('csv');
+    expect(tenderFileKind('portal-notice.HTML')).toBe('html');
+    expect(tenderFileKind('rfp.htm')).toBe('html');
     expect(tenderFileKind('old.doc')).toBeNull();
   });
 
@@ -47,6 +51,9 @@ describe('which files a tender can use', () => {
     expect(checkTenderFiles([{ name: 'big.pdf', size: MAX_UPLOAD_BYTES + 1 }])).toContain('at most 4.0 MB');
     expect(checkTenderFiles([{ name: 'huge.docx', size: 30 * 1024 * 1024 }])).toContain('over the 25.0 MB limit');
     expect(checkTenderFiles([{ name: 'fine.pdf', size: 1000 }, { name: 'annex.docx', size: 6 * 1024 * 1024 }])).toBeNull();
+    expect(checkTenderFiles([{ name: 'notice.html', size: 1000 }])).toBeNull();
+    /* the refusal names every kind a person can choose, web pages included */
+    expect(checkTenderFiles([{ name: 'old.doc', size: 10 }])).toContain('web page (.html)');
   });
 });
 
@@ -71,6 +78,78 @@ describe('reading a Word document', () => {
   it('reads the body out of the zip, and says plainly when it is not a Word file', async () => {
     expect(await docxToText(docx(p('Hello from the tender')))).toBe('Hello from the tender');
     await expect(docxToText(writeWorkbook({ Sheet: [['a']] }))).rejects.toThrow('does not look like a Word document');
+  });
+});
+
+describe('reading a web page', () => {
+  const char = (code: number): string => String.fromCodePoint(code);
+
+  it('keeps each heading, paragraph and list item on its own line, and leaves scripts, styles and comments out', () => {
+    const page = [
+      '<!DOCTYPE html><html><head><title>Nordic University LMS tender</title>',
+      '<style>p { color: red }</style><script>var x = "<p>not part of the tender</p>";</script></head>',
+      '<body><h1>Scope of work</h1><p>The supplier shall&nbsp;host the platform &amp; support it.</p>',
+      '<ul><li>Single sign-on</li><li><p>Grade export</p></li></ul><!-- <p>a draft note</p> --></body></html>'
+    ].join('\n');
+    expect(htmlToText(page)).toBe(
+      /* the title often names the tender; headings keep their level, so the outline survives */
+      ['Nordic University LMS tender', '# Scope of work', 'The supplier shall host the platform & support it.', '- Single sign-on', '- Grade export'].join('\n')
+    );
+  });
+
+  it('keeps a table row together, cells joined, because tenders put requirements in tables', () => {
+    const table = '<table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td>FR-1</td><td><p>Single sign-on</p><p>with SAML 2.0</p></td></tr>' + '<tr><td>FR-2<td>Grade export</table>';
+    /* the second row leaves its cells and the row unclosed, which HTML allows */
+    expect(htmlToText(table)).toBe('ID | Requirement\nFR-1 | Single sign-on with SAML 2.0\nFR-2 | Grade export');
+  });
+
+  it('keeps the last row of a table the page never closes, as a page saved part way leaves it', () => {
+    expect(htmlToText('<p>Requirements</p><table><tr><td>FR-9</td><td>Offline mobile access')).toBe('Requirements\nFR-9 | Offline mobile access');
+  });
+
+  it('keeps a table inside a cell in that cell, rather than scattering its rows through the page', () => {
+    expect(htmlToText('<table><tr><td>Hosting <table><tr><td>EU</td><td>99.9%</td></tr></table></td><td>Must</td></tr></table>')).toBe('Hosting EU, 99.9% | Must');
+  });
+
+  it('reads inline markup as part of the sentence, and a line break as a break', () => {
+    expect(htmlToText('<p>The LMS <b>must</b> support <a href="/lti">LTI&nbsp;1.3</a>.<br>Caliper is optional.</p>')).toBe('The LMS must support LTI 1.3.\nCaliper is optional.');
+    /* an attribute holding ">" must not end the tag early and leak its value into the text */
+    expect(htmlToText('<p title="a > b" data-x=\'c > d\'>Text</p>')).toBe('Text');
+    /* a portal form's dropdown is not tender text */
+    expect(htmlToText('<p>Answer:</p><select><option>Yes</option><option>No</option></select>')).toBe('Answer:');
+  });
+
+  it('decodes the entities web pages use, and leaves one it does not know as written', () => {
+    expect(htmlToText('<p>Caf&eacute; &Eacute;cole &rsquo;quoted&rsquo; &mdash; 5&nbsp;&euro; &#233;&#x2014; &yuml; &bogus; &#1114112;</p>')).toBe(
+      `Caf${char(233)} ${char(201)}cole ${char(8217)}quoted${char(8217)} ${char(8212)} 5 ${char(8364)} ${char(233)}${char(8212)} ${char(255)} &bogus; &#1114112;`
+    );
+    /* soft hyphens and zero-width marks are invisible on the page and would split words for the AI */
+    expect(htmlToText(`<p>imple&shy;mentation ${char(0x200b)}plan</p>`)).toBe('implementation plan');
+  });
+
+  it('reads the page in the encoding it declares, as Word saves a web page in windows-1252', () => {
+    const bytes = (head: string, tail: number[]): Uint8Array => new Uint8Array([...new TextEncoder().encode(head), ...tail]);
+    /* "Café" with an é of 0xE9, which is not valid UTF-8 */
+    expect(decodeHtmlBytes(bytes('<meta http-equiv="Content-Type" content="text/html; charset=windows-1252"><p>Caf', [0xe9]))).toContain('Café'.normalize());
+    expect(decodeHtmlBytes(bytes('<meta charset="utf-8"><p>Caf', [0xc3, 0xa9]))).toContain('Café'.normalize());
+    /* a byte-order mark wins over the meta tag, and a label nobody knows falls back to UTF-8 */
+    expect(decodeHtmlBytes(new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('<meta charset="windows-1252">ok')]))).toContain('ok');
+    expect(decodeHtmlBytes(bytes('<meta charset="klingon"><p>Caf', [0xc3, 0xa9]))).toContain('Café'.normalize());
+    /* Notepad's "Unicode" is UTF-16 with a byte-order mark, in either byte order */
+    const utf16 = (text: string, littleEndian: boolean): Uint8Array => {
+      const out = [littleEndian ? 0xff : 0xfe, littleEndian ? 0xfe : 0xff];
+      for (const ch of text) out.push(...(littleEndian ? [ch.charCodeAt(0), 0] : [0, ch.charCodeAt(0)]));
+      return new Uint8Array(out);
+    };
+    expect(htmlToText(decodeHtmlBytes(utf16('<p>Hosting</p>', true)))).toBe('Hosting');
+    expect(htmlToText(decodeHtmlBytes(utf16('<p>Hosting</p>', false)))).toBe('Hosting');
+  });
+
+  it('turns a web page into marked text, and refuses one with no text in it', async () => {
+    const page = await prepareTenderFile('portal-notice.html', new TextEncoder().encode('<html><body><h2>3.1 Hosting</h2><p>The supplier shall host the LMS in the EU.</p></body></html>'));
+    expect(page.kind).toBe('text');
+    expect(new TextDecoder().decode(page.body)).toBe('[[Part 1]]\n## 3.1 Hosting\nThe supplier shall host the LMS in the EU.');
+    await expect(prepareTenderFile('empty.htm', new TextEncoder().encode('<html><head><title></title></head><body><script>1</script></body></html>'))).rejects.toThrow('has no text');
   });
 });
 
@@ -194,5 +273,6 @@ describe('preparing a file for upload', () => {
 
   it('refuses a kind it cannot read', async () => {
     await expect(prepareTenderFile('slides.pptx', new Uint8Array([1, 2, 3]))).rejects.toThrow('is not a PDF');
+    await expect(prepareTenderFile('slides.pptx', new Uint8Array([1, 2, 3]))).rejects.toThrow('web page (.html)');
   });
 });

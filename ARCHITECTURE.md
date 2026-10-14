@@ -208,7 +208,7 @@ person approving every step. Four decisions shape it, and each is expensive to u
   every call from its usage at the published rate of the model that ran each attempt
   (`src/domain/aiPrice.ts`), and the tender keeps the running total. Before any call starts, the
   runner, the intake and the keep-warm check `canSpend`; at the limit nothing new starts and the
-  screen asks whether to continue for another step (`EDLY_AI_TENDER_LIMIT_USD`, $4 by default).
+  screen asks whether to continue for another step (`EDLY_AI_TENDER_LIMIT_USD`, $10 by default).
   Calls already running finish, because stopping one part way is billed all the same.
   Documents go converted text first and PDFs last, with a cache marker at each document's end, so a
   call about a spreadsheet carries the documents up to it and not the PDF after it.

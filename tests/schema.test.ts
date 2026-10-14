@@ -937,7 +937,7 @@ describe('tenders', () => {
     });
 
     const back = sheetsToState(await readWorkbook(writeWorkbook(sheets)));
-    expect(back.tenders[0]).toMatchObject({ aiLimit: 4, aiApproved: 0 });
+    expect(back.tenders[0]).toMatchObject({ aiLimit: 10, aiApproved: 0 });
     /* 1,200 in at $4, 900 out at $20, 80,000 from cache at $0.20 and 90,000 written at $5, per million */
     expect(back.tenders[0]?.tokens.usd).toBeCloseTo(0.0048 + 0.018 + 0.016 + 0.45, 10);
   });
