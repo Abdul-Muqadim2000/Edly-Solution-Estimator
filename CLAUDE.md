@@ -151,7 +151,7 @@ reference.
 
 ### The suite
 
-`bun run test` runs 1,404 tests across twenty-nine files.
+`bun run test` runs 1,408 tests across twenty-nine files.
 
 | File | Covers |
 |---|---|
@@ -367,7 +367,12 @@ Each of these exists because it failed once. Do not weaken one to make a feature
    tab's own saves overtook (`overtaken` in `pullStep`): it holds the store from before that save,
    and applying it rolled the tab back, then the tab's next save took the change out of the store.
    A desk request filed during the 45-second poll was lost that way in the 2026-09-29 walkthrough.
-   `tests/storage.test.ts` covers it.
+   `tests/storage.test.ts` covers it. Nor does any read, from the store or another tab, take away a
+   custom bundle that estimates are still filed under (`keepFiledBundles` in `domain/catalog.ts`,
+   applied in the reducer's `hydrate`): no change a person makes removes one, so a copy without it
+   is stale, and the tab keeps the bundle and saves it back. On the live site on 2026-10-14 an
+   import's six new bundles appeared, then vanished seconds later, and 147 estimates fell to
+   Unassigned; `tests/reducer.test.ts` covers it.
 3. **A zero-row `PUT` is refused while the store holds rows** (`api/state.ts`, 409). `?force=1`
    clears deliberately. So does a save that names every stored row as one a person deleted
    (`deleted`, from the reducer's delete actions only; `namesEveryRow` in `server/schema.ts`):
