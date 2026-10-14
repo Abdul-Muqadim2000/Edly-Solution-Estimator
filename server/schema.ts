@@ -221,7 +221,7 @@ export function stateToSheets(state: PersistedState): WriteSheets {
   const tenders = header('tenders');
   for (const t of state.tenders ?? []) {
     /* the terms and their reads are absent from a tender that never asked for them, and stay absent */
-    const detail = toJson({ summary: t.summary, docs: t.docs, fit: t.fit, outline: t.outline, ranges: t.ranges, reqs: t.reqs, tokens: t.tokens, terms: t.terms, termReads: t.termReads });
+    const detail = toJson({ summary: t.summary, docs: t.docs, fit: t.fit, outline: t.outline, ranges: t.ranges, reqs: t.reqs, tokens: t.tokens, terms: t.terms, termReads: t.termReads, catalogSeen: t.catalogSeen });
     const parts = Math.max(1, Math.ceil(detail.length / CELL_LIMIT));
     const part = (i: number): string => (parts === 1 ? detail : wrapChunk(detail.slice(i * CELL_LIMIT, (i + 1) * CELL_LIMIT)));
     const counts = { total: t.reqs.length, approved: 0, catalog: 0, partial: 0, custom: 0, out: 0 };
@@ -529,6 +529,7 @@ interface TenderDetail {
   tokens?: Partial<Tender['tokens']>;
   terms?: Tender['terms'];
   termReads?: Tender['termReads'];
+  catalogSeen?: Tender['catalogSeen'];
 }
 
 /**
@@ -591,7 +592,8 @@ function readTenders(table: SheetTable | undefined): Tender[] {
       /* each set only when present, so a tender that never asked for its terms reads back as written */
       ...(String(row.readTerms ?? '').trim().toLowerCase() === 'yes' ? { readTerms: true } : {}),
       ...(Array.isArray(detail.terms) ? { terms: detail.terms } : {}),
-      ...(Array.isArray(detail.termReads) ? { termReads: detail.termReads } : {})
+      ...(Array.isArray(detail.termReads) ? { termReads: detail.termReads } : {}),
+      ...(Array.isArray(detail.catalogSeen) ? { catalogSeen: detail.catalogSeen.filter((id): id is string => typeof id === 'string') } : {})
     });
   }
   return withSlugs(tenders);

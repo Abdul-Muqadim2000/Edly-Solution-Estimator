@@ -646,6 +646,12 @@ export interface Tender {
   terms?: TenderTerm[];
   /** One read per document, claimed by a tab the way an extraction range is. */
   termReads?: TenderRange[];
+  /**
+   * The catalog solutions every custom and partial match still standing has seen, so the match step
+   * can say when the catalog has grown since and offer to match those again. Absent on a tender
+   * matched before it was kept, which the match step says too.
+   */
+  catalogSeen?: string[];
 }
 
 /** What a key legal or commercial term is about. */

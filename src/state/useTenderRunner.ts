@@ -28,6 +28,7 @@ import {
   type DocRef
 } from '@/domain/tender';
 import { needsSorting } from '@/domain/salesLegal';
+import { isDemoId } from '@/domain/demo';
 
 /**
  * Runs a tender's AI calls: every pending extraction range, then the grouping of what was read into
@@ -383,6 +384,9 @@ export function useTenderRunner(
     setMatchingHeld(false);
     matchingNow.add(tender.id);
     changed();
+    /* the catalog these requirements are matched against, so the match step can say when it grows;
+       the demo's estimates join it only while the demo is open, so they are not counted */
+    dispatch({ type: 'noteCatalogSeen', id: tender.id, ids: lines.map((line) => line.id).filter((id) => !isDemoId(id)), matched: wanted.map((req) => req.id) });
     const queue = matchBatches(wanted);
     const failures: string[] = [];
     /* counted here as the batches come back: `tender` is the one from when matching was asked for,

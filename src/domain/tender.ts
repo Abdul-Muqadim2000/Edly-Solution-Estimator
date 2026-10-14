@@ -758,6 +758,62 @@ export function rangeLabel(range: Pick<TenderRange, 'doc' | 'from' | 'to'>, docs
 
 /* ---------------------------------------------------------------- matching */
 
+/* ------------------------------------------------- when the catalog grows */
+
+/** The requirements a bigger catalog could change: approved, in play, matched custom or partial, and not accepted. */
+export function rematchable(tender: Pick<Tender, 'reqs'>): TenderRequirement[] {
+  return tender.reqs.filter(
+    (req) => req.status === 'approved' && !req.repeatOf && !req.outOfScope && !!req.match && !req.match.approved && (req.match.kind === 'custom' || req.match.kind === 'partial')
+  );
+}
+
+export interface CatalogGrowth {
+  /** Catalog solutions the standing matches have not seen. Empty when the tender kept no record. */
+  added: string[];
+  /** Whether the tender knows which catalog its matches were made against. */
+  recorded: boolean;
+  /** The requirements to match again: custom and partial, none a person accepted. */
+  reqIds: string[];
+  custom: number;
+  partial: number;
+}
+
+/**
+ * What the match step offers once the catalog has grown since the matches were made, or null when
+ * there is nothing to offer. `catalogIds` is the catalog in play now, the demo's estimates left out.
+ * A tender matched before the record was kept is offered the same, saying it cannot tell.
+ */
+export function catalogGrowth(tender: Pick<Tender, 'reqs' | 'catalogSeen'>, catalogIds: readonly string[]): CatalogGrowth | null {
+  const reqs = rematchable(tender);
+  if (reqs.length === 0) return null;
+  const counts = {
+    reqIds: reqs.map((req) => req.id),
+    custom: reqs.filter((req) => req.match?.kind === 'custom').length,
+    partial: reqs.filter((req) => req.match?.kind === 'partial').length
+  };
+  if (!tender.catalogSeen) return { added: [], recorded: false, ...counts };
+  const seen = new Set(tender.catalogSeen);
+  const added = [...new Set(catalogIds)].filter((id) => !seen.has(id));
+  return added.length > 0 ? { added, recorded: true, ...counts } : null;
+}
+
+/**
+ * The record after a matching run that used `catalogIds` for the requirements `matched`, or after a
+ * person said not now (`'all'`). It becomes this catalog only when no custom or partial match from
+ * an earlier run is left standing: those older matches have not seen what is new, so otherwise the
+ * record keeps only what both saw, and the match step goes on offering them. Undefined stays
+ * undefined while an unrecorded match is still standing.
+ */
+export function seenAfterRun(tender: Pick<Tender, 'reqs' | 'catalogSeen'>, catalogIds: readonly string[], matched: readonly string[] | 'all'): string[] | undefined {
+  const ids = [...new Set(catalogIds)].sort();
+  if (matched === 'all') return ids;
+  const running = new Set(matched);
+  if (!rematchable(tender).some((req) => !running.has(req.id))) return ids;
+  if (!tender.catalogSeen) return undefined;
+  const now = new Set(ids);
+  return tender.catalogSeen.filter((id) => now.has(id));
+}
+
 /** Approved requirements the AI has not matched yet. Out-of-scope ones are settled without it. */
 export function needsMatching(tender: Pick<Tender, 'reqs'>): MatchInput[] {
   return tender.reqs
