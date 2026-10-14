@@ -532,6 +532,14 @@ The spreadsheets hold real deal names, client names and pricing.
   documents first, so the fit call and every extraction call share one cached copy of the tender.
   Changing any of those per call re-bills the whole tender on every range, and so does an effort
   or thinking setting that differs between calls (`EDLY_AI_EFFORT` is one setting for all of them).
+  Only three tools are strict (fit, requirements, matches): the API compiles every strict schema in
+  a request into one grammar and refuses the request when it is too large. Five strict tools fitted
+  until titles and context went into the extraction schema and the grouping tool arrived
+  (2026-10-07); after that every tender call was refused, which only the real run of 2026-10-14
+  found, before the change was pushed, because the stand-in accepts anything. `main`'s own five
+  were probed the same day and compile. A new tool is not strict, and its answer goes
+  through a `read*` function that takes anything; growing one of the three schemas a lot needs a
+  `max_tokens: 0` probe against the real API first.
   The documents go in `readingOrder`, converted text before PDFs, with a cache marker at each
   document's end, and an extraction call carries only the documents up to the one it reads: keep
   that order identical in every call, or a spreadsheet range pays for the PDF again. The cache is

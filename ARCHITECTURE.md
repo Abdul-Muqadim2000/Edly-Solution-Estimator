@@ -194,7 +194,9 @@ person approving every step. Four decisions shape it, and each is expensive to u
 - **The AI proposes; people write.** The model is given six tools and all six only report:
   a platform fit, the requirements in a page range, the catalog matches for a batch, the team each
   out-of-scope item is for, the key legal and commercial terms of a document, and the topic of each
-  requirement with the ones that repeat each other. Nothing it returns changes state. Each change is a reducer action a click dispatches, which is how "ask
+  requirement with the ones that repeat each other. The three every tender uses are strict, so
+  their answers always fit the schema; the other three are not, because the API refuses a request
+  whose strict schemas compile to too large a grammar, and five or six of today's do. Nothing it returns changes state. Each change is a reducer action a click dispatches, which is how "ask
   before acting" is enforced rather than requested in a prompt that a tender could override.
 - **Hours come from the catalog, never the model.** A match carries catalog ids; `readMatches`
   drops any id the catalog does not have, and hours are looked up by id when shown. Unmatched work

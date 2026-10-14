@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { handle } from '../api/tender';
 import { DEFAULT_MODEL } from '../server/ai/anthropic';
+import { TOOLS } from '../server/ai/prompts';
 
 /**
  * /api/tender, driven end to end against a stubbed `fetch` that answers the way Anthropic's API
@@ -140,6 +141,17 @@ const sentMessage = (): Record<string, unknown> => {
   if (!call) throw new Error('no Messages call was made');
   return call.body as Record<string, unknown>;
 };
+
+describe('the tools every call sends', () => {
+  /* With these schemas, six or five strict tools made the API refuse every call, the fit call
+     first, with a 400: "The compiled grammar is too large". Probed on 2026-10-14; three compile.
+     The other three answers are narrowed by readCategories, readTerms and readGroups, which take
+     anything. */
+  it('makes only the fit, requirements and matches tools strict, the most the API will compile together', () => {
+    expect(TOOLS.filter((tool) => tool.strict).map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches']);
+    expect(TOOLS.map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches', 'report_categories', 'report_terms', 'report_groups']);
+  });
+});
 
 describe('the probe', () => {
   it('says whether the AI is set up here, and which model it uses', async () => {
@@ -298,7 +310,8 @@ describe('the fit step', () => {
     const tools = sent.tools as { name: string; strict: boolean }[];
     /* each tool added later goes after the three every tender uses, so those keep their order */
     expect(tools.map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches', 'report_categories', 'report_terms', 'report_groups']);
-    expect(tools.every((tool) => tool.strict)).toBe(true);
+    /* three strict tools is the most the API compiles in one request; see 'the tools every call sends' */
+    expect(tools.filter((tool) => tool.strict).map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches']);
 
     const content = (sent.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
     /* the documents lead, converted text before the PDF, each ending in a cache marker, so a later
@@ -632,7 +645,8 @@ describe('grouping requirements into topics and repeats', () => {
     /* only the same work twice is a repeat; a neighbour in the same area is not */
     expect(text).toContain('Requirements that are only in the same area, or that depend on each other, are not repeats.');
     const tool = (sent.tools as { name: string; strict: boolean }[]).at(-1);
-    expect(tool).toMatchObject({ name: 'report_groups', strict: true });
+    /* not strict: readGroups keeps only ids it asked about, whatever comes back */
+    expect(tool).toMatchObject({ name: 'report_groups', strict: false });
     expect(sent.fallbacks).toBe('default');
   });
 
@@ -697,8 +711,8 @@ describe('sorting out-of-scope items into teams', () => {
     expect(text).toContain('R-14 (Security) Hold a state cloud security certification for the hosting Out of scope because: A certification, not software.');
     expect(text).toContain('- certification: Certification, for security or compliance certifications');
     const tool = (sent.tools as SchemaTool[]).find((one) => one.name === 'report_categories');
-    expect(tool?.strict).toBe(true);
-    /* an enum, so the answer can only name a team the app has */
+    expect(tool?.strict).toBe(false);
+    /* an enum the model is shown; not strict, so readCategories is what keeps a team the app has no name for out */
     expect(tool?.input_schema.properties.items?.items.properties.category?.enum).toEqual(['sales', 'account', 'legal', 'people', 'certification']);
     expect(sent.fallbacks).toBe('default');
   });
@@ -759,7 +773,7 @@ describe('reading the key terms', () => {
     ]);
     expect(String(content.at(-1)?.text)).toContain('key legal and commercial terms stated in document 1 (Acme RFP.pdf)');
     const tool = (sent.tools as { name: string; strict: boolean }[]).find((one) => one.name === 'report_terms');
-    expect(tool?.strict).toBe(true);
+    expect(tool?.strict).toBe(false);
   });
 
   it('sends exactly what an extraction of the same document sends ahead of its instruction, so it reads that cache entry', async () => {

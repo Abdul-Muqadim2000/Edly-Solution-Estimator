@@ -34,8 +34,14 @@ const object = (properties: Record<string, unknown>): Record<string, unknown> =>
 
 const confidence = { type: 'string', enum: ['high', 'medium', 'low'] };
 
-/* strict, so the arguments always match the schema. Eager input streaming is left off on
-   purpose: the server waits for the whole answer anyway, and it would switch off that check. */
+/* The three tools every tender uses are strict, so their arguments always match the schema. The
+   other three are not: the API compiles every strict schema in a request into one grammar and
+   refuses the call with "The compiled grammar is too large" (a 400) past a limit. Titles and
+   context in the extraction schema, and the grouping tool, took six strict tools past it; found on
+   a real run on 2026-10-14, before that work was pushed. Their answers are short and go through
+   readCategories, readTerms and readGroups, which take anything and keep what fits.
+   Eager input streaming is left off on purpose: the server waits for the whole answer anyway, and
+   it would switch off the strict check. */
 export const TOOLS: Tool[] = [
   {
     name: 'report_fit',
@@ -133,7 +139,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'report_categories',
     description: 'Report which team each out-of-scope item from a tender is for.',
-    strict: true,
+    strict: false,
     input_schema: object({
       items: {
         type: 'array',
@@ -147,7 +153,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'report_terms',
     description: 'Report the key legal and commercial terms stated in one tender document.',
-    strict: true,
+    strict: false,
     input_schema: object({
       terms: {
         type: 'array',
@@ -165,7 +171,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'report_groups',
     description: 'Report the topic each requirement from a tender falls under, and the requirements that ask for the same work.',
-    strict: true,
+    strict: false,
     input_schema: object({
       topics: {
         type: 'array',
