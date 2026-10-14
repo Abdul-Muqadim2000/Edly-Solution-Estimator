@@ -13,7 +13,9 @@ import { readWorkbook, unzip, type Workbook } from '@/lib/xlsx';
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 /** A Word, Excel or HTML file is converted before upload, so only its text has to fit. */
 export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
-export const MAX_FILES = 5;
+/* No limit on the number of files: a tender comes as many as the buyer chose. What one request can
+   hold is their total size, since every call that reads the tender carries the files together, and
+   the API answers for that (`too_large`). It was five until 2026-10-14, for no recorded reason. */
 /** Characters per part of converted text: about a printed page. */
 export const PART_CHARS = 4000;
 /**
@@ -52,7 +54,6 @@ const megabytes = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)
 /** Why a set of chosen files cannot be sent, or null when it can. Checked before anything uploads. */
 export function checkTenderFiles(files: readonly { name: string; size: number }[]): string | null {
   if (files.length === 0) return 'Choose at least one file.';
-  if (files.length > MAX_FILES) return `At most ${MAX_FILES} files per tender.`;
   for (const file of files) {
     const kind = tenderFileKind(file.name);
     if (!kind) return `${file.name} is not ${KINDS_IN_WORDS}.`;

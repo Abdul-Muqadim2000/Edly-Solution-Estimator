@@ -167,8 +167,14 @@ export function toAiError(error: unknown): AiError {
   }
   if (error instanceof Anthropic.BadRequestError) {
     const detail = error.message.toLowerCase();
-    if (detail.includes('too long') || detail.includes('too large') || detail.includes('exceed')) {
-      return new AiError('too_large', 'That is more than the AI can read in one go. Split the tender into smaller files.', 413);
+    /* "The compiled grammar is too large" is about the tool schemas, not the tender; it says too
+       large as well, and was once shown as advice to split files that were never the problem */
+    if (!detail.includes('grammar') && (detail.includes('too long') || detail.includes('too large') || detail.includes('exceed'))) {
+      return new AiError(
+        'too_large',
+        'These files together are more than the AI can read in one request. Leave out the files or pages that hold no requirements, such as forms, contract templates and appendices, and try again.',
+        413
+      );
     }
     return new AiError('bad_request', `Anthropic refused the request: ${error.message}`, 400);
   }

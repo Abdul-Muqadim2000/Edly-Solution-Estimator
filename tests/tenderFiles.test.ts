@@ -45,7 +45,9 @@ describe('which files a tender can use', () => {
 
   it('says why a set of files cannot be sent, before anything uploads', () => {
     expect(checkTenderFiles([])).toBe('Choose at least one file.');
-    expect(checkTenderFiles(Array.from({ length: 6 }, (_, i) => ({ name: `f${i}.pdf`, size: 10 })))).toContain('At most 5');
+    /* no count: a tender comes as many files as the buyer chose, and what one request can hold is
+       their total size, which the API answers for (too_large) */
+    expect(checkTenderFiles(Array.from({ length: 12 }, (_, i) => ({ name: `annex-${i}.pdf`, size: 10 })))).toBeNull();
     expect(checkTenderFiles([{ name: 'old.doc', size: 10 }])).toContain('is not a PDF');
     /* Vercel refuses a bigger body before the function runs, with a page nobody can act on */
     expect(checkTenderFiles([{ name: 'big.pdf', size: MAX_UPLOAD_BYTES + 1 }])).toContain('at most 4.0 MB');
