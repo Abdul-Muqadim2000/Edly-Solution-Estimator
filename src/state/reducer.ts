@@ -35,7 +35,9 @@ import {
   addTokens,
   approvedToGoOn,
   canSpend,
+  dismissRepeats,
   highestId,
+  keepRepeats,
   newTender,
   planTermReads,
   sectionRanges,
@@ -44,10 +46,12 @@ import {
   sortRequirements,
   splitRange,
   tenderRequests,
+  withGroups,
   type Claim,
   type DeskContact,
   type DeskDraft,
   type ExtractedRequirement,
+  type GroupResult,
   type NewTenderInput
 } from '@/domain/tender';
 import { addTerms, copiedItems, deletable, handItem, patchItem, salesLegalDrafts, salesLegalItems, type ExtractedTerm, type HandItemInput, type SalesLegalPatch } from '@/domain/salesLegal';
@@ -329,11 +333,17 @@ export type Action =
   | { type: 'splitRange'; id: string; key: string; claim?: Claim }
   /** `index`: the section's place in the tender's outline, which never changes after creation */
   | { type: 'readSection'; id: string; index: number }
-  | { type: 'addRequirement'; id: string; input: { text: string; section: string; priority: RequirementPriority } }
-  | { type: 'editRequirement'; id: string; reqId: string; patch: Partial<Pick<TenderRequirement, 'text' | 'section' | 'priority' | 'outOfScope'>> }
+  | { type: 'addRequirement'; id: string; input: { title?: string; text: string; section: string; priority: RequirementPriority } }
+  | { type: 'editRequirement'; id: string; reqId: string; patch: Partial<Pick<TenderRequirement, 'title' | 'text' | 'context' | 'section' | 'priority' | 'outOfScope'>> }
   | { type: 'setRequirementStatus'; id: string; reqIds: string[]; status: RequirementStatus }
   | { type: 'combineRequirements'; id: string; reqIds: string[] }
   | { type: 'duplicateRequirement'; id: string; reqId: string }
+  /** `fresh`: the requirements that had no topic when the grouping call was asked; only a set holding one is offered */
+  | { type: 'setGroups'; id: string; result: GroupResult; fresh: string[]; tokens?: Partial<TenderTokens> }
+  /** A person kept some requirements of a set of repeats; the rest are removed as repeats of them. */
+  | { type: 'keepRepeat'; id: string; set: string; keep: string[] }
+  /** A person said a set of repeats are different work after all. */
+  | { type: 'dismissRepeat'; id: string; set: string }
   /** `texts`: each requirement's wording when the match was asked for, so a stale answer is dropped */
   | { type: 'setMatches'; id: string; matches: Record<string, RequirementMatch>; texts?: Record<string, string>; tokens?: Partial<TenderTokens> }
   | { type: 'claimRanges'; id: string; keys: string[]; claim: Claim }
@@ -1235,11 +1245,13 @@ function transition(state: AppState, action: Action): AppState {
       return withTender(state, action.id, (tender) => {
         const text = action.input.text.trim();
         if (!text) return tender;
+        const title = action.input.title?.trim() ?? '';
         const added: TenderRequirement = {
           id: nextId('R', tender.reqs, 'id'),
           doc: 0,
           page: 0,
           section: action.input.section.trim(),
+          ...(title ? { title } : {}),
           text,
           quote: '',
           priority: action.input.priority,
@@ -1267,7 +1279,16 @@ function transition(state: AppState, action: Action): AppState {
       return withTender(state, action.id, (tender) => {
         const ids = new Set(action.reqIds);
         if (!tender.reqs.some((req) => ids.has(req.id) && req.status !== action.status)) return tender;
-        return { ...tender, reqs: tender.reqs.map((req) => (ids.has(req.id) ? { ...req, status: action.status } : req)) };
+        return {
+          ...tender,
+          reqs: tender.reqs.map((req) => {
+            if (!ids.has(req.id)) return req;
+            const next: TenderRequirement = { ...req, status: action.status };
+            /* restored, it stands for itself again rather than as a repeat of the one kept */
+            if (action.status !== 'removed') delete next.repeatOf;
+            return next;
+          })
+        };
       });
 
     /* The first requirement, in list order, absorbs the others. */
@@ -1277,17 +1298,28 @@ function transition(state: AppState, action: Action): AppState {
         const picked = tender.reqs.filter((req) => ids.has(req.id));
         const [first, ...rest] = picked;
         if (!first || rest.length === 0) return tender;
+        const joined = (values: (string | undefined)[], glue: string): string => [...new Set(values.map((value) => value?.trim() ?? '').filter(Boolean))].join(glue);
+        const title = picked.find((req) => req.title?.trim())?.title?.trim() ?? '';
+        const context = joined(picked.map((req) => req.context), ' ');
+        const ref = joined(picked.map((req) => req.ref), ', ');
+        const topic = picked.find((req) => req.topic)?.topic;
         const combined: TenderRequirement = {
           id: first.id,
           doc: first.doc,
           page: first.page,
           section: first.section,
+          /* the first title among them names it; the others' words join its text */
+          ...(title ? { title } : {}),
           text: picked.map((req) => req.text).join(' '),
+          ...(context ? { context } : {}),
           quote: picked.map((req) => req.quote).filter(Boolean).join(' / '),
+          /* every reference, since the bid team answers the tender in each place it asked */
+          ...(ref ? { ref } : {}),
           priority: picked.some((req) => req.priority === 'must') ? 'must' : 'should',
           outOfScope: picked.every((req) => req.outOfScope),
           status: picked.some((req) => req.status === 'approved') ? 'approved' : 'proposed',
-          edited: true
+          edited: true,
+          ...(topic ? { topic } : {})
         };
         const gone = new Set(rest.map((req) => req.id));
         return { ...tender, reqs: tender.reqs.filter((req) => !gone.has(req.id)).map((req) => (req.id === first.id ? combined : req)) };
@@ -1299,8 +1331,30 @@ function transition(state: AppState, action: Action): AppState {
         const source = tender.reqs.find((req) => req.id === action.reqId);
         if (!source) return tender;
         const copy: TenderRequirement = { ...source, id: nextId('R', tender.reqs, 'id'), status: 'proposed', edited: true };
+        /* the copy keeps its topic, but is no repeat of anything until a grouping call says so */
         delete copy.match;
+        delete copy.repeat;
+        delete copy.repeatOf;
         return { ...tender, reqs: sortRequirements([...tender.reqs, copy]) };
+      });
+
+    case 'setGroups':
+      return withTender(state, action.id, (tender) => {
+        const { reqs, changed } = withGroups(tender.reqs, action.result, action.fresh);
+        if (!changed && !action.tokens) return tender;
+        return { ...tender, reqs: changed ? reqs : tender.reqs, tokens: addTokens(tender.tokens, action.tokens) };
+      });
+
+    case 'keepRepeat':
+      return withTender(state, action.id, (tender) => {
+        const reqs = keepRepeats(tender.reqs, action.set, action.keep);
+        return reqs ? { ...tender, reqs } : tender;
+      });
+
+    case 'dismissRepeat':
+      return withTender(state, action.id, (tender) => {
+        const reqs = dismissRepeats(tender.reqs, action.set);
+        return reqs ? { ...tender, reqs } : tender;
       });
 
     /* A proposal lands only where nothing has happened since it was asked for: the requirement is

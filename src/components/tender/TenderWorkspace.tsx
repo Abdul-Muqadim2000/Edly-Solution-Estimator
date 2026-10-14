@@ -95,7 +95,14 @@ export function TenderWorkspace(): JSX.Element {
     {
       stage: 'requirements',
       label: 'Requirements',
-      meta: counts.pendingRanges > 0 ? (runner.held ? 'Paused at the AI limit' : 'Reading the tender…') : `${counts.approved} approved, ${counts.proposed} to review`
+      meta:
+        counts.pendingRanges > 0
+          ? runner.held
+            ? 'Paused at the AI limit'
+            : 'Reading the tender…'
+          : runner.grouping
+            ? 'Finding repeats…'
+            : `${counts.approved} approved, ${counts.proposed} to review`
     },
     { stage: 'match', label: 'Match to the catalog', meta: counts.matched > 0 ? `${counts.reviewed} of ${counts.approved} accepted` : 'After requirements' },
     { stage: 'apply', label: 'Estimation and desk', meta: tender.sentAt ? `Sent ${tender.sentAt}` : tender.estId ? 'Estimation created' : 'Last step' }

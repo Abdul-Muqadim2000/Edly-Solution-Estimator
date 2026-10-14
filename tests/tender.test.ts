@@ -58,6 +58,24 @@ import {
   tenderSelection,
   tokenSummary,
   touchedCache,
+  byTopic,
+  dismissRepeats,
+  extracting,
+  GROUP_CONTEXT,
+  GROUP_LIMIT,
+  GROUP_TEXT,
+  groupInputs,
+  groupingWanted,
+  idList,
+  keepRepeats,
+  NO_TOPIC,
+  readGroups,
+  repeatSets,
+  requirementsUsing,
+  TEXT_LIMIT,
+  topicsInUse,
+  ungrouped,
+  withGroups,
   type DeskDraft,
   type ExtractedRequirement
 } from '../src/domain/tender';
@@ -334,6 +352,28 @@ describe('reading extracted requirements', () => {
     expect(withRef?.ref).toBe('FR-012');
     /* no reference is no field, so requirements from before references read the same */
     expect(without).not.toHaveProperty('ref');
+  });
+
+  it('keeps the title and where else the tender asks for it, and leaves both off when the model gave none', () => {
+    const long = `Discussion boards inside each course. ${'Learners and instructors post and reply in threads. '.repeat(20)}`;
+    const [titled, plain] = readRequirements(
+      {
+        requirements: [
+          { title: ' Discussion   boards ', text: long, context: 'Rider 6 lists it among the collaboration tools.', page: 3 },
+          { title: '', text: 'Branded theme', context: '   ' }
+        ]
+      },
+      { doc: 1 },
+      5
+    );
+    expect(titled?.title).toBe('Discussion boards');
+    expect(titled?.context).toBe('Rider 6 lists it among the collaboration tools.');
+    /* a description written to stand on its own runs to a few sentences; the old 800-character cap cut it mid-word */
+    expect(titled?.text.length).toBeGreaterThan(800);
+    expect(titled?.text.length).toBeLessThanOrEqual(TEXT_LIMIT);
+    /* absent, not blank, the way a requirement read before titles existed is */
+    expect(plain).not.toHaveProperty('title');
+    expect(plain).not.toHaveProperty('context');
   });
 
   it('drops a page outside the document rather than pointing somewhere that does not exist', () => {
@@ -669,6 +709,14 @@ describe('reading catalog matches', () => {
     expect(needsMatching(subject).map((one) => one.id)).toEqual(['R-01']);
   });
 
+  it('sends each requirement’s title with its words, and a blank one for a requirement read before titles', () => {
+    const subject = tender({ reqs: [req('R-01', { title: 'Two-way SIS integration' }), req('R-02')] });
+    expect(needsMatching(subject)).toEqual([
+      { id: 'R-01', title: 'Two-way SIS integration', text: 'Requirement R-01', section: 'Identity', priority: 'must' },
+      { id: 'R-02', title: '', text: 'Requirement R-02', section: 'Identity', priority: 'must' }
+    ]);
+  });
+
   it('settles out-of-scope requirements without asking the AI', () => {
     const subject = tender({ reqs: [req('R-01', { outOfScope: true }), req('R-02', { outOfScope: true, match: match() }), req('R-03', { outOfScope: true, status: 'proposed' })] });
     const settled = outOfScopeMatches(subject);
@@ -926,6 +974,204 @@ describe('turning approved matches into an estimation', () => {
   });
 });
 
+describe('grouping requirements into topics and repeats', () => {
+  const four = (): TenderRequirement[] => [
+    req('R-01', { title: 'Calendar, notification and syllabus tools', section: 'Rider 6', status: 'proposed' }),
+    req('R-02', { title: 'Syllabus tools', ref: '4.2.1', section: 'Core capabilities' }),
+    req('R-03', { title: 'Lab hardware', outOfScope: true }),
+    req('R-04', { title: 'Old idea', status: 'removed' })
+  ];
+
+  it('narrows the answer to the requirements it was asked about, each in one topic and one set at most', () => {
+    const result = readGroups(
+      {
+        topics: [
+          { name: ' Course   tools ', ids: ['R-01', 'R-02', 'R-99'] },
+          { name: 'Hardware', ids: ['R-03', 'R-01'] },
+          { name: '', ids: ['R-04'] }
+        ],
+        repeats: [
+          { ids: ['R-01', 'R-02', 'R-02', 'R-99'], keep: ['R-07'], note: 'Both ask for syllabus tools.' },
+          /* R-02 is already in a set, which leaves this one with a single requirement: no repeat at all */
+          { ids: ['R-02', 'R-03'], keep: ['R-03'], note: '' },
+          'not an object'
+        ]
+      },
+      ['R-01', 'R-02', 'R-03', 'R-04']
+    );
+    expect(result.topics).toEqual({ 'R-01': 'Course tools', 'R-02': 'Course tools', 'R-03': 'Hardware' });
+    /* a keep outside the set falls back to its first, rather than keeping nothing */
+    expect(result.repeats).toEqual([{ ids: ['R-01', 'R-02'], keep: ['R-01'], note: 'Both ask for syllabus tools.' }]);
+    expect(readGroups('nonsense', ['R-01'])).toEqual({ topics: {}, repeats: [] });
+  });
+
+  it('keeps the parts of a broad item when the AI names them, and never keeps the whole set', () => {
+    const ids = ['R-01', 'R-02', 'R-03'];
+    const parts = readGroups({ repeats: [{ ids, keep: ['R-02', 'R-03', 'R-02'], note: 'R-01 lists what the others state.' }] }, ids);
+    expect(parts.repeats[0]?.keep).toEqual(['R-02', 'R-03']);
+    /* keeping all of them removes nothing, which is no repeat at all: the first is offered instead */
+    const all = readGroups({ repeats: [{ ids, keep: ids, note: '' }] }, ids);
+    expect(all.repeats[0]?.keep).toEqual(['R-01']);
+    expect(readGroups({ repeats: [{ ids, keep: 'R-02', note: '' }] }, ids).repeats[0]?.keep).toEqual(['R-01']);
+  });
+
+  it('reads every requirement still in play, cut to what grouping needs', () => {
+    const long = req('R-05', { text: 'x'.repeat(GROUP_TEXT + 50), context: 'y'.repeat(GROUP_CONTEXT + 50) });
+    const inputs = groupInputs(tender({ reqs: [...four(), long] }));
+    /* a removed requirement is a decision already made, so it is not compared again */
+    expect(inputs.map((one) => one.id)).toEqual(['R-01', 'R-02', 'R-03', 'R-05']);
+    expect(inputs[1]).toEqual({ id: 'R-02', ref: '4.2.1', section: 'Core capabilities', title: 'Syllabus tools', text: 'Requirement R-02', context: '' });
+    expect(inputs[3]?.text).toHaveLength(GROUP_TEXT);
+    expect(inputs[3]?.context).toHaveLength(GROUP_CONTEXT);
+    const many = Array.from({ length: GROUP_LIMIT + 5 }, (_, i) => req(`R-${i + 1}`));
+    expect(groupInputs(tender({ reqs: many }))).toHaveLength(GROUP_LIMIT);
+  });
+
+  it('wants grouping only while something in play has no topic and there are two to compare', () => {
+    expect(ungrouped(tender({ reqs: four() }))).toEqual(['R-01', 'R-02', 'R-03']);
+    expect(groupingWanted(tender({ reqs: four() }))).toBe(true);
+    expect(groupingWanted(tender({ reqs: four().map((one) => ({ ...one, topic: 'Tools' })) }))).toBe(false);
+    /* one requirement has nothing to repeat */
+    expect(groupingWanted(tender({ reqs: [req('R-01')] }))).toBe(false);
+    expect(extracting(tender({ ranges: [{ key: 'a', doc: 1, from: 1, to: 2, status: 'failed' }] }))).toBe(false);
+    expect(extracting(tender({ ranges: [{ key: 'a', doc: 1, from: 1, to: 2, status: 'running' }] }))).toBe(true);
+  });
+
+  it('gives a topic only where there is none, so a second call leaves the first one’s headings alone', () => {
+    const reqs = [req('R-01', { topic: 'Course tools' }), req('R-02')];
+    const { reqs: placed, changed } = withGroups(reqs, { topics: { 'R-01': 'Renamed', 'R-02': 'Hosting' }, repeats: [] }, ['R-02']);
+    expect(placed.map((one) => one.topic)).toEqual(['Course tools', 'Hosting']);
+    expect(changed).toBe(true);
+    expect(topicsInUse(tender({ reqs: placed }))).toEqual(['Course tools', 'Hosting']);
+    expect(withGroups(placed, { topics: { 'R-02': 'Other' }, repeats: [] }, []).changed).toBe(false);
+  });
+
+  it('offers a set of repeats only when it holds a requirement that is new since the last call', () => {
+    const reqs = [req('R-01', { topic: 'A' }), req('R-02', { topic: 'A' }), req('R-03')];
+    const old = { ids: ['R-01', 'R-02'], keep: ['R-01'], note: 'Old pair' };
+    const fresh = { ids: ['R-02', 'R-03'], keep: ['R-03'], note: 'New pair' };
+    /* R-01 and R-02 were both grouped before, so a person has already seen them side by side */
+    const { reqs: marked } = withGroups(reqs, { topics: {}, repeats: [old, fresh] }, ['R-03']);
+    expect(marked.map((one) => one.repeat?.set ?? '')).toEqual(['', 'S-01', 'S-01']);
+    expect(marked[2]?.repeat).toEqual({ set: 'S-01', note: 'New pair', keep: true });
+  });
+
+  it('never puts a removed requirement, or one already in an open set, into another set', () => {
+    const reqs = [req('R-01', { repeat: { set: 'S-04', note: 'x' } }), req('R-02', { repeat: { set: 'S-04', note: 'x' } }), req('R-03'), req('R-04', { status: 'removed' }), req('R-05')];
+    const { reqs: marked } = withGroups(
+      reqs,
+      {
+        topics: {},
+        repeats: [
+          { ids: ['R-01', 'R-03'], keep: ['R-03'], note: 'a' },
+          { ids: ['R-04', 'R-05'], keep: ['R-05'], note: 'b' },
+          { ids: ['R-03', 'R-05'], keep: ['R-05'], note: 'c' }
+        ]
+      },
+      ['R-03', 'R-04', 'R-05']
+    );
+    /* numbered after the open S-04, never reusing a number in play */
+    expect(marked.map((one) => one.repeat?.set ?? '')).toEqual(['S-04', 'S-04', 'S-05', '', 'S-05']);
+  });
+
+  it('lists only open sets that still hold two requirements, in document order, with the one to keep', () => {
+    const reqs = [
+      req('R-01', { repeat: { set: 'S-01', note: 'n' } }),
+      req('R-02', { repeat: { set: 'S-01', note: 'n', keep: true } }),
+      req('R-03', { repeat: { set: 'S-02', note: 'm', keep: true }, status: 'removed' }),
+      req('R-04', { repeat: { set: 'S-02', note: 'm' } }),
+      req('R-05', { repeat: { set: 'S-03', note: 'k', keep: true }, status: 'removed' }),
+      req('R-06', { repeat: { set: 'S-03', note: 'k' } }),
+      req('R-07', { repeat: { set: 'S-03', note: 'k' } })
+    ];
+    const sets = repeatSets(tender({ reqs }));
+    expect(sets.map((one) => [one.set, one.reqs.map((r) => r.id), one.keep])).toEqual([
+      ['S-01', ['R-01', 'R-02'], ['R-02']],
+      /* the one the AI chose was removed since, so the first left is offered */
+      ['S-03', ['R-06', 'R-07'], ['R-06']]
+    ]);
+  });
+
+  it('keeps one of a set and says where else the tender asks for it; nothing when there is nothing to settle', () => {
+    const reqs = [
+      req('R-01', { ref: 'Rider 6', priority: 'must', repeat: { set: 'S-01', note: 'n' } }),
+      req('R-02', { section: 'Core capabilities', priority: 'should', context: 'Listed with the calendar.', repeat: { set: 'S-01', note: 'n', keep: true } }),
+      req('R-03', { section: '', repeat: { set: 'S-01', note: 'n' } }),
+      req('R-04', { status: 'removed', repeat: { set: 'S-01', note: 'n' } })
+    ];
+    const kept = keepRepeats(reqs, 'S-01', ['R-02']);
+    expect(kept?.[1]).toMatchObject({ priority: 'must', context: 'Listed with the calendar. Also asked for in R-01 (Rider 6), R-03.' });
+    expect(kept?.map((one) => [one.status, (one.repeatOf ?? []).join(' '), one.repeat?.set ?? ''])).toEqual([
+      ['removed', 'R-02', ''],
+      ['approved', '', ''],
+      ['removed', 'R-02', ''],
+      /* removed by hand before, it leaves the set without becoming a repeat of anything */
+      ['removed', '', '']
+    ]);
+    /* a removed one, one outside the set, keeping nothing, keeping all: none of them settles anything */
+    expect(keepRepeats(reqs, 'S-01', ['R-04'])).toBeNull();
+    expect(keepRepeats(reqs, 'S-01', ['R-02', 'R-77'])).toBeNull();
+    expect(keepRepeats(reqs, 'S-01', [])).toBeNull();
+    expect(keepRepeats(reqs, 'S-01', ['R-01', 'R-02', 'R-03'])).toBeNull();
+    expect(keepRepeats(reqs, 'S-09', ['R-02'])).toBeNull();
+    expect(dismissRepeats(reqs, 'S-01')?.every((one) => !one.repeat)).toBe(true);
+    expect(dismissRepeats(reqs, 'S-09')).toBeNull();
+  });
+
+  it('removes a broad item and keeps each of its parts, each saying where else the tender asks for it', () => {
+    const reqs = [
+      req('R-01', { title: 'Calendar, notification and syllabus tools', section: 'Rider 6', priority: 'must', repeat: { set: 'S-01', note: 'n' } }),
+      req('R-02', { title: 'Syllabus tools', priority: 'should', repeat: { set: 'S-01', note: 'n', keep: true } }),
+      req('R-03', { title: 'Course calendar', priority: 'should', repeat: { set: 'S-01', note: 'n', keep: true } })
+    ];
+    const kept = keepRepeats(reqs, 'S-01', ['R-02', 'R-03']);
+    expect(kept?.map((one) => [one.id, one.status, one.priority, (one.repeatOf ?? []).join(' ')])).toEqual([
+      ['R-01', 'removed', 'must', 'R-02 R-03'],
+      /* the broad item was a must, so each part it listed is */
+      ['R-02', 'approved', 'must', ''],
+      ['R-03', 'approved', 'must', '']
+    ]);
+    expect(kept?.[2]?.context).toBe('Also asked for in R-01 (Rider 6).');
+    expect(repeatSets(tender({ reqs: reqs })).at(0)?.keep).toEqual(['R-02', 'R-03']);
+  });
+
+  it('names ids the way a person reads a list', () => {
+    expect(idList([])).toBe('');
+    expect(idList(['R-04'])).toBe('R-04');
+    expect(idList(['R-04', 'R-05'])).toBe('R-04 and R-05');
+    expect(idList(['R-01', 'R-04', 'R-05'])).toBe('R-01, R-04 and R-05');
+  });
+
+  it('lays requirements out under their topics in the order the tender raises them, the ungrouped last', () => {
+    const groups = byTopic([req('R-01', { topic: 'Hosting' }), req('R-02'), req('R-03', { topic: 'Assessment' }), req('R-04', { topic: 'Hosting' })]);
+    expect(groups.map((group) => [group.topic, group.reqs.map((one) => one.id)])).toEqual([
+      ['Hosting', ['R-01', 'R-04']],
+      ['Assessment', ['R-03']],
+      [NO_TOPIC, ['R-02']]
+    ]);
+    expect(byTopic([])).toEqual([]);
+  });
+
+  it('names the approved requirements a catalog solution is matched to, so its popup can say what it covers', () => {
+    const subject = tender({
+      reqs: [
+        req('R-01', { match: match({ solutionIds: ['SSO-1'] }) }),
+        req('R-02', { match: match({ kind: 'partial', solutionIds: ['SSO-1', 'AS-1'], approved: false }) }),
+        req('R-03', { status: 'proposed', match: match({ solutionIds: ['SSO-1'] }) }),
+        req('R-04', { match: match({ kind: 'custom', solutionIds: [] }) })
+      ]
+    });
+    expect(requirementsUsing(subject, 'SSO-1').map((one) => one.id)).toEqual(['R-01', 'R-02']);
+    expect(requirementsUsing(subject, 'NOPE')).toEqual([]);
+  });
+
+  it('says at the limit that requirements are waiting to be checked for repeats', () => {
+    const atLimit = tender({ tokens: { ...NO_TOKENS, usd: 4.2 } });
+    expect(heldByLimit(atLimit, new Set(), false, 0, 12)).toBe('12 requirements are not checked for repeats yet');
+    expect(heldByLimit(atLimit, new Set(), false, 0, 1)).toBe('1 requirement is not checked for repeats yet');
+  });
+});
+
 describe('drafting desk requests', () => {
   const subject = tender({
     docs: [doc(1, { name: 'RFP.pdf' })],
@@ -957,6 +1203,22 @@ describe('drafting desk requests', () => {
     expect(partial?.details).toContain('nice to have');
     /* no bundle was named, so the area says so rather than guessing one */
     expect(partial?.area).toBe(SOMETHING_NEW);
+  });
+
+  it('heads custom work with the requirement’s title, and tells the estimator where else the tender asks for it', () => {
+    const titled = tender({
+      docs: [doc(1, { name: 'RFP.pdf' })],
+      reqs: [
+        req('R-01', { title: 'Proctored final exams', text: 'Proctored final exams for every accredited course.', context: 'Section 6 sets the exam calendar.', match: match({ kind: 'custom', solutionIds: [] }) }),
+        req('R-02', { title: 'Single sign-on', match: match({ kind: 'partial', remainder: 'SCIM provisioning for contractors' }) })
+      ]
+    });
+    const [custom, partial] = deskDrafts(titled, catalog);
+    expect(custom?.title).toBe('Proctored final exams');
+    expect(custom?.details).toContain('Elsewhere in the tender: Section 6 sets the exam calendar.');
+    /* a partial match sends only what the catalog misses, which the title does not name */
+    expect(partial?.title).toBe('SCIM provisioning for contractors');
+    expect(partial?.details).not.toContain('Elsewhere in the tender');
   });
 
   it('uses what a person reworded, and remembers what they left out or already sent', () => {

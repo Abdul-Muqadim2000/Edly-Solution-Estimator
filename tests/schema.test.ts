@@ -836,6 +836,31 @@ describe('tenders', () => {
     expect(back.tenders[0]).toEqual(planned);
   });
 
+  it('keeps what makes a requirement readable and what links it to the rest of the tender', async () => {
+    /* lost on a reload, a title or a context leaves "Provide syllabus tools." again, and a lost repeat
+       mark lets the same work be matched twice without anyone being asked */
+    const base = tender(4);
+    const linked: Tender = {
+      ...base,
+      reqs: base.reqs.map((req, index) =>
+        index === 0
+          ? { ...req, title: 'Syllabus tools', context: 'Rider 6 lists them too.', topic: 'Course tools', repeat: { set: 'S-01', note: 'Both ask for syllabus tools.', keep: true } }
+          : index === 1
+            ? { ...req, topic: 'Course tools', repeat: { set: 'S-01', note: 'Both ask for syllabus tools.' } }
+            : index === 2
+              ? { ...req, status: 'removed' as const, repeatOf: ['R-01'] }
+              : req
+      )
+    };
+    const back = await roundTrip({ ...sample(), tenders: [linked] });
+    expect(back.tenders[0]?.reqs[0]).toMatchObject({ title: 'Syllabus tools', context: 'Rider 6 lists them too.', topic: 'Course tools', repeat: { set: 'S-01', keep: true } });
+    expect(back.tenders[0]?.reqs[2]?.repeatOf).toEqual(['R-01']);
+    expect(back.tenders[0]).toEqual(linked);
+    /* a requirement from before any of these reads back without them, not with blanks */
+    expect(back.tenders[0]?.reqs[3]).not.toHaveProperty('title');
+    expect(back.tenders[0]?.reqs[3]).not.toHaveProperty('topic');
+  });
+
   it('splits a tender whose requirements run past one cell, and rejoins it exactly', async () => {
     const rows = stateToSheets(sample())[SHEETS.tenders] ?? [];
     /* 120 requirements serialise far past what Excel keeps in one cell */

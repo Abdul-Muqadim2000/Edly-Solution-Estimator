@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { isSpreadsheet, type CatalogLine, type DocRef, type MatchInput, type PlatformDigest } from '../../src/domain/tender.js';
+import { isSpreadsheet, type CatalogLine, type DocRef, type GroupInput, type MatchInput, type PlatformDigest } from '../../src/domain/tender.js';
 import { SALES_LEGAL_CATEGORIES, TERM_TOPICS, type SortInput } from '../../src/domain/salesLegal.js';
 
 /**
@@ -84,7 +84,16 @@ export const TOOLS: Tool[] = [
       requirements: {
         type: 'array',
         items: object({
-          text: { type: 'string', description: 'The requirement restated as one clear statement of what must be delivered.' },
+          title: { type: 'string', description: 'A name for it in two to eight words, the way a bid team would head it: "Two-way SIS integration", "24/7 technical support".' },
+          text: {
+            type: 'string',
+            description:
+              'What must be delivered, written for an estimator who has not read the tender: what it is, who uses it and for what, and every specific the documents give for it. One to four sentences.'
+          },
+          context: {
+            type: 'string',
+            description: 'In one sentence, where else the tender bears on it: a section that asks for the same thing again or in more detail, or a definition or scope it depends on. Empty if nothing does.'
+          },
           quote: { type: 'string', description: 'The shortest verbatim passage that states it, at most 40 words.' },
           page: { type: 'integer', description: 'Physical page in the file, the first page being 1. For converted text, the [[Part N]] number.' },
           section: { type: 'string', description: 'The heading the requirement sits under.' },
@@ -151,10 +160,37 @@ export const TOOLS: Tool[] = [
         })
       }
     }) as Tool['input_schema']
+  },
+  /* last, for the same reason the two above follow the first three */
+  {
+    name: 'report_groups',
+    description: 'Report the topic each requirement from a tender falls under, and the requirements that ask for the same work.',
+    strict: true,
+    input_schema: object({
+      topics: {
+        type: 'array',
+        items: object({
+          name: { type: 'string', description: 'The capability area, in two to five words.' },
+          ids: { type: 'array', items: { type: 'string' }, description: 'Requirement ids, exactly as given.' }
+        })
+      },
+      repeats: {
+        type: 'array',
+        items: object({
+          ids: { type: 'array', items: { type: 'string' }, description: 'Two or more requirement ids, exactly as given.' },
+          keep: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'The id that states the need most fully; or, for a broad item whose parts are each stated on their own, the ids of those parts.'
+          },
+          note: { type: 'string', description: 'One sentence: what they share, and anything only one of them adds.' }
+        })
+      }
+    }) as Tool['input_schema']
   }
 ];
 
-export type ToolName = 'report_fit' | 'report_requirements' | 'report_matches' | 'report_categories' | 'report_terms';
+export type ToolName = 'report_fit' | 'report_requirements' | 'report_matches' | 'report_categories' | 'report_terms' | 'report_groups';
 
 const TEXT_CONTEXT = 'Converted to text from the original file. Lines reading [[Part N]] mark parts, which stand in for pages.';
 /* matches the layout `workbookToParts` in src/lib/tenderFiles.ts writes */
@@ -249,7 +285,15 @@ export function extractInstruction(doc: DocRef, from: number, to: number): strin
     '',
     'A requirement is something the supplier must deliver, build, configure, integrate, migrate, host, support, train or comply with. Include functional features, integrations, data migration, reporting, accessibility, security, privacy, hosting, support and training obligations.',
     'Split a sentence that lists separate deliverables into separate requirements. Do not report background, evaluation criteria or instructions to bidders unless they impose a delivery obligation.',
-    'In a table or spreadsheet, each row usually states one requirement. Read the row with its column names, and restate the requirement cell, not the whole row.',
+    'In a table or spreadsheet, each row usually states one requirement. Read the row with its column names: the requirement cell says what is asked, and the other cells (category, users, notes) tell you more about it.',
+    '',
+    'Write each requirement so that an estimator who has not read the tender understands it, and can price it, from what you write alone:',
+    '- title names it in two to eight words, the way a bid team would head it.',
+    '- text says what must be delivered, who uses it and for what, and every specific the tender gives for it: standards and versions, named systems, numbers of users, sites or institutions, service levels, formats and dates.',
+    '- A tender often states one need in several places: a short item in a list of services, a fuller specification in the scope of work, a service level in the contract. You can read all of the documents above, so bring into text the specifics they state elsewhere about the same need, and name in context where else it is stated (by section number or heading), or the definition or scope it depends on, such as which institutions or users it covers.',
+    '- A requirement split out of a list still says what the list is for. From a list of the collaboration tools each course needs, "discussion boards" becomes "Discussion boards inside each course, one of the communication and collaboration tools the LMS must provide."',
+    '- Keep to what the documents say. Where the tender gives no more than a phrase, say plainly what that phrase asks for, and do not add features, figures or standards it does not state.',
+    '',
     'priority is must for mandatory wording (shall, must, required, mandatory, essential) and should for desirable wording (should, may, could, preferred, desirable, optional).',
     "Where the tender uses its own scale, such as MoSCoW letters (M, S, C, W) or numbered levels, go by its legend: the top level is must and the levels below it are should. Leave out anything the tender marks as not wanted this time, such as a Won't have (W): it is not a requirement.",
     "ref is the tender's own reference, copied exactly, so the bid team can find the requirement in the original.",
@@ -279,7 +323,37 @@ export function matchInstruction(reqs: readonly MatchInput[]): string {
     'confidence is high when a description clearly covers the requirement, medium when it probably does, low when it is a stretch.',
     '',
     'Requirements:',
-    ...reqs.map((req) => `${req.id} [${req.priority}]${req.section ? ` (${cell(req.section)})` : ''} ${cell(req.text)}`)
+    ...reqs.map((req) => `${req.id} [${req.priority}]${req.section ? ` (${cell(req.section)})` : ''} ${req.title ? `${cell(req.title)}: ` : ''}${cell(req.text)}`)
+  ].join('\n');
+}
+
+/**
+ * The grouping call: every requirement still in play, as words, sorted into topics, with the ones that
+ * ask for the same work set side by side. No documents and no catalog: the requirements already say
+ * what each asks and where else the tender states it, so the call costs cents. `topics` are the names
+ * the tender already uses, so a second call after more pages were read keeps the headings stable.
+ */
+export function groupInstruction(reqs: readonly GroupInput[], topics: readonly string[]): string {
+  const line = (req: GroupInput): string =>
+    [
+      req.id,
+      req.ref ? `[${cell(req.ref)}]` : '',
+      req.section ? `(${cell(req.section)})` : '',
+      `${req.title ? `${cell(req.title)}: ` : ''}${cell(req.text)}`,
+      req.context ? `Elsewhere: ${cell(req.context)}` : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+  return [
+    'Call report_groups for the requirements below. They were extracted from one tender a few pages at a time, so the same need is often listed more than once: a short item in a list of services, a fuller specification in the scope of work, a service level in the contract.',
+    '',
+    'topics: put every requirement in the one capability area a bid team would answer it under, such as Course authoring and content, Assessment and grading, Communication and collaboration, Student system integrations, Identity and access, Reporting and analytics, Accessibility, Hosting, availability and support, Security and privacy, Data migration, Implementation and training, or Contract and compliance. Name each topic in two to five words, use between four and thirty of them (fewer for a short list), and put every id in exactly one.',
+    ...(topics.length > 0 ? [`This tender already uses these topics. Use the same names wherever they fit: ${topics.map(cell).join('; ')}.`] : []),
+    '',
+    'repeats: each set of requirements that ask for the same work, so that estimating every one of them would count that work twice. That is the same feature stated in two places, or a broad item whose parts are each stated as requirements of their own elsewhere. keep is the id that states the need most fully, or, where the parts of a broad item are each stated on their own, the ids of those parts, so that the broad item is the one that goes. note says in one sentence what they share, and anything only one of them adds, such as a stricter service level or another standard. Requirements that are only in the same area, or that depend on each other, are not repeats. Return an empty list when there are none.',
+    '',
+    'Requirements:',
+    ...reqs.map(line)
   ].join('\n');
 }
 

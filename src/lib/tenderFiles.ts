@@ -22,11 +22,13 @@ export const PART_CHARS = 4000;
  */
 export const SHEET_ROWS = 20;
 /**
- * Parts of a spreadsheet one extraction call reads: 60 rows, about 7,500 tokens of answer. The
+ * Parts of a spreadsheet one extraction call reads: 40 rows, about 8,000 tokens of answer. The
  * usual 20 parts would be 400 rows, which no call finishes inside the function's time limit, so
- * the call is thrown away (and billed) before the range is split and read again.
+ * the call is thrown away (and billed) before the range is split and read again. It was 60 rows
+ * until each requirement came with a title, a self-contained description and where else the tender
+ * asks for it, which made each answer about 60% longer; a call costs only a cache read of the tender.
  */
-export const SHEET_SPAN = 3;
+export const SHEET_SPAN = 2;
 
 export type TenderFileKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'text';
 

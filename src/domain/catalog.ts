@@ -1,4 +1,5 @@
 import type { AddedBundle, AddedSolution, Bundle, Catalog, CatalogTotals, Solution } from '@/types';
+import { hours } from '@/lib/format';
 
 /**
  * Catalog composition.
@@ -189,6 +190,50 @@ export function composeCatalog({ base, platform, added, ownBundles }: ComposeInp
 /** Every solution in a catalog, flattened. */
 export function allSolutions(catalog: Catalog): Solution[] {
   return catalog.bundles.flatMap((b) => b.items);
+}
+
+/**
+ * A solution and the bundle it is listed under first, the way the tender's match step describes the
+ * catalog to the AI. Null for an id the catalog does not have.
+ */
+export function solutionHome(catalog: Catalog, id: string): { item: Solution; bundle: Bundle } | null {
+  for (const bundle of catalog.bundles) {
+    const item = bundle.items.find((one) => one.id === id);
+    if (item) return { item, bundle };
+  }
+  return null;
+}
+
+/** What the Display settings say about a solution's details: reuse and build hours, and internal references. */
+export interface FactPrefs {
+  savings: boolean;
+  notes: boolean;
+}
+
+/** A reference that is a web address, shown as a link of its own while notes are shown. */
+export const referenceUrl = (item: Pick<Solution, 'ref'>, prefs: Pick<FactPrefs, 'notes'>): string | null =>
+  prefs.notes && item.ref && /^http/.test(item.ref) ? item.ref : null;
+
+/**
+ * A solution's details as label and value, the same list wherever one is opened: the builder's
+ * catalog row and the tender's popup. Reuse and build hours follow the savings setting, and a plain
+ * reference the notes setting. The notes themselves are written for the client, so they are shown
+ * on their own, not here.
+ */
+export function solutionFacts(item: Solution, prefs: FactPrefs): [string, string][] {
+  const facts: ([string, string] | null)[] = [
+    ['Delivery form', item.form ?? '\u2014'],
+    solutionKind(item) === 'estimates' ? ['Status', 'Estimate: priced by the estimation desk, not built yet'] : null,
+    item.category ? ['Category', item.category + (item.subCategory ? ` \u00b7 ${item.subCategory}` : '')] : null,
+    ['Std deployment', item.deploy ?? 'Not recorded'],
+    prefs.savings && item.build !== null ? ['Original build', `${hours(item.build)} h`] : null,
+    prefs.savings && item.saving !== null && item.saving !== undefined ? ['Reuse saving (source)', `${Math.round(item.saving * 100)}%`] : null,
+    prefs.savings && item.repeat !== null ? ['Repeat redeploy', `${hours(item.repeat)} h`] : null,
+    item.account ? ['Client-held account', item.account] : null,
+    item.integrations ? ['Integrations', item.integrations] : null,
+    prefs.notes && item.ref && !referenceUrl(item, prefs) ? ['Reference', item.ref] : null
+  ];
+  return facts.filter((fact): fact is [string, string] => fact !== null);
 }
 
 /** Distinct category values already in use — the autocomplete source at the desk. */

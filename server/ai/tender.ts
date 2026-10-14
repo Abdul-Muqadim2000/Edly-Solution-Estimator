@@ -1,12 +1,19 @@
 import Anthropic, { toFile } from '@anthropic-ai/sdk';
 import {
+  GROUP_CONTEXT,
+  GROUP_LIMIT,
+  GROUP_TEXT,
   readFit,
+  readGroups,
   readMatches,
   readRequirements,
+  TEXT_LIMIT,
   type CatalogLine,
   type DocRef,
   type ExtractedRequirement,
   type FitResult,
+  type GroupInput,
+  type GroupResult,
   type MatchInput,
   type PlatformDigest
 } from '../../src/domain/tender.js';
@@ -19,6 +26,7 @@ import {
   documentBlocks,
   extractInstruction,
   fitInstruction,
+  groupInstruction,
   KEEP_WARM_TEXT,
   matchInstruction,
   sortInstruction,
@@ -103,12 +111,38 @@ export function readMatchInputs(value: unknown): MatchInput[] {
       const raw = record(entry);
       return {
         id: str(raw.id, 40),
-        text: str(raw.text, 800),
+        title: str(raw.title, 160),
+        text: str(raw.text, TEXT_LIMIT),
         section: str(raw.section, 160),
         priority: raw.priority === 'should' ? ('should' as const) : ('must' as const)
       };
     })
     .filter((req) => req.id && req.text);
+}
+
+/** Requirements for the grouping call: all of a tender's, as words, so a repeat is found wherever it sits. */
+export function readGroupInputs(value: unknown): GroupInput[] {
+  return list(value, GROUP_LIMIT, 'requirements')
+    .map((entry) => {
+      const raw = record(entry);
+      return {
+        id: str(raw.id, 40),
+        ref: str(raw.ref, 80),
+        section: str(raw.section, 160),
+        title: str(raw.title, 160),
+        text: str(raw.text, GROUP_TEXT),
+        context: str(raw.context, GROUP_CONTEXT)
+      };
+    })
+    .filter((req) => req.id && req.text);
+}
+
+/** The topic names a tender already uses. Names only, and a few dozen at most. */
+export function readTopicNames(value: unknown): string[] {
+  return (Array.isArray(value) ? value : [])
+    .slice(0, 60)
+    .map((name) => str(name, 80))
+    .filter(Boolean);
 }
 
 /** Out-of-scope items for the sort call. A tender with more than this is sorted in several calls. */
@@ -307,6 +341,23 @@ export async function matchRequirements(
       reqs.map((req) => req.id),
       new Set(catalog.map((line) => line.id)),
       new Set(catalog.map((line) => line.bundle))
+    ),
+    tokens
+  };
+}
+
+/**
+ * Puts a tender's requirements under topics and sets side by side the ones that ask for the same
+ * work. Their words only: no documents and no catalog, so the call costs cents. What comes back is
+ * narrowed to the ids asked about.
+ */
+export async function groupRequirements(reqs: readonly GroupInput[], topics: readonly string[]): Promise<GroupResult & { tokens: TenderTokens }> {
+  if (reqs.length === 0) return { topics: {}, repeats: [], tokens: tokensOf(null, aiModel()) };
+  const { input, tokens } = await callTool('report_groups', [{ type: 'text', text: groupInstruction(reqs, topics) }]);
+  return {
+    ...readGroups(
+      input,
+      reqs.map((req) => req.id)
     ),
     tokens
   };

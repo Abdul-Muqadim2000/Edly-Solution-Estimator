@@ -521,13 +521,43 @@ export interface RequirementMatch {
   category?: SalesLegalCategory;
 }
 
+/**
+ * Requirements that ask for the same work, found by the grouping call across the whole tender. Each
+ * member carries the same `set`. A person decides: keep some and remove the rest, or say they differ.
+ */
+export interface RequirementRepeat {
+  /** Shared by every requirement in the set ("S-03"). Only open sets carry one. */
+  set: string;
+  /** What they share, and anything only one of them adds, in one sentence. */
+  note: string;
+  /**
+   * The AI suggests keeping it: it states the need most fully, or it is one of the parts a broad item
+   * in the set lists, each stated on its own.
+   */
+  keep?: boolean;
+}
+
 export interface TenderRequirement {
   id: string;
   doc: number;
   /** Physical page in a PDF, or part in converted text. 0 when unknown. */
   page: number;
   section: string;
+  /**
+   * A short name for it, the way a bid team would head it ("Two-way SIS integration"). Missing on
+   * requirements read before titles existed, and on most added by hand.
+   */
+  title?: string;
+  /**
+   * What must be delivered, written to be understood without the tender beside it: who uses it,
+   * for what, and the specifics the tender gives for it anywhere in its documents.
+   */
   text: string;
+  /**
+   * Where else the tender bears on it: a section that asks for the same thing again or in more
+   * detail, or a definition or scope it depends on. Missing when nothing does.
+   */
+  context?: string;
   /** The tender's own wording, so the desk and the bid team can check the paraphrase. */
   quote: string;
   /**
@@ -542,6 +572,12 @@ export interface TenderRequirement {
   status: RequirementStatus;
   /** Added or reworded by a person. */
   edited?: boolean;
+  /** The capability area it falls under ("Assessment and grading"), from the grouping call. Missing until grouped. */
+  topic?: string;
+  /** Other requirements ask for the same work, and nobody has decided yet which to keep. */
+  repeat?: RequirementRepeat;
+  /** Removed by a person as a repeat of these requirements, which were kept. Cleared when it is restored. */
+  repeatOf?: string[];
   match?: RequirementMatch;
 }
 

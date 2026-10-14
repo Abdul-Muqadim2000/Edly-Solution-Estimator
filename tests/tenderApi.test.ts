@@ -295,8 +295,8 @@ describe('the fit step', () => {
     expect(call?.headers.get('x-api-key')).toBe('sk-ant-test');
 
     const tools = sent.tools as { name: string; strict: boolean }[];
-    /* the two sales and legal tools come after the three every tender uses, so those keep their order */
-    expect(tools.map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches', 'report_categories', 'report_terms']);
+    /* each tool added later goes after the three every tender uses, so those keep their order */
+    expect(tools.map((tool) => tool.name)).toEqual(['report_fit', 'report_requirements', 'report_matches', 'report_categories', 'report_terms', 'report_groups']);
     expect(tools.every((tool) => tool.strict)).toBe(true);
 
     const content = (sent.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
@@ -402,6 +402,46 @@ describe('the extraction step', () => {
     /* MoSCoW sheets mark Won't haves; listing them as requirements prices work the client ruled out */
     expect(instruction).toContain("Won't have (W): it is not a requirement");
     expect(instruction).toContain('the top level is must');
+  });
+
+  it('asks for a title, a description that stands on its own, and where else the tender asks for it', async () => {
+    replies = [
+      {
+        sse: stream('tool_use', {
+          name: 'report_requirements',
+          input: {
+            requirements: [
+              {
+                title: 'Syllabus tools',
+                text: 'Syllabus tools inside each course, so instructors publish a syllabus beside the course calendar for every participating institution.',
+                context: 'Rider 6 lists syllabus tools among the LMS services.',
+                quote: 'syllabus tools',
+                page: 12,
+                section: 'Core capabilities',
+                ref: '',
+                priority: 'must',
+                outOfScope: false
+              }
+            ]
+          }
+        })
+      }
+    ];
+    const body = (await (await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } })).json()) as { found: Record<string, unknown>[] };
+    expect(body.found[0]).toMatchObject({ title: 'Syllabus tools', context: 'Rider 6 lists syllabus tools among the LMS services.' });
+
+    const sent = sentMessage();
+    const item = (sent.tools as { name: string; input_schema: { properties: { requirements?: { items: { required: string[] } } } } }[]).find((tool) => tool.name === 'report_requirements')!
+      .input_schema.properties.requirements!.items;
+    /* strict tools make every field required, so the model answers each of them for every requirement */
+    expect(item.required).toEqual(expect.arrayContaining(['title', 'text', 'context', 'quote']));
+    const instruction = String(((sent.messages as { content: { text?: string }[] }[])[0]?.content ?? []).at(-1)?.text);
+    /* "Provide syllabus tools." told an estimator nothing: who uses it, how many, and what else the tender says */
+    expect(instruction).toContain('so that an estimator who has not read the tender understands it');
+    expect(instruction).toContain('bring into text the specifics they state elsewhere about the same need');
+    expect(instruction).toContain('A requirement split out of a list still says what the list is for');
+    /* the guard against padding: richer, never invented */
+    expect(instruction).toContain('do not add features, figures or standards it does not state');
   });
 
   it('says a refusal is a refusal, and still reports the tokens it cost', async () => {
@@ -516,6 +556,17 @@ describe('the match step', () => {
     expect(String(content[0]?.text)).not.toMatch(/\bh\b|hours/);
   });
 
+  it('names each requirement by its title as well as its words, so a short phrase is not matched on its own', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_matches', input: { matches: [] } }) }];
+    const text = 'Two-way exchange of rosters and final grades with each institution\u2019s student information system. '.repeat(14);
+    await post('match', { catalog, reqs: [{ id: 'R-07', title: 'Two-way SIS integration', text, section: 'Integrations', priority: 'must' }, { id: 'R-08', text: 'Branded theme', section: '', priority: 'should' }] });
+    const instruction = String(((sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [])[1]?.text);
+    expect(instruction).toContain('R-07 [must] (Integrations) Two-way SIS integration: Two-way exchange of rosters');
+    /* the whole description reaches the matcher, not the first 800 characters of it */
+    expect(instruction).toContain(text.replace(/\s+/g, ' ').trim());
+    expect(instruction).toContain('R-08 [should] Branded theme');
+  });
+
   it('asks for one of two solutions that do the same job, the built one first', async () => {
     replies = [{ sse: stream('tool_use', { name: 'report_matches', input: { matches: [] } }) }];
     await post('match', { catalog, reqs: [{ id: 'R-01', text: 'Digital badges', section: '', priority: 'must' }] });
@@ -538,6 +589,76 @@ describe('the match step', () => {
   it('refuses more requirements than one call should carry', async () => {
     const reqs = Array.from({ length: 61 }, (_, i) => ({ id: `R-${i}`, text: 'x', section: '', priority: 'must' }));
     expect((await post('match', { catalog, reqs })).status).toBe(400);
+  });
+});
+
+describe('grouping requirements into topics and repeats', () => {
+  const reqs = [
+    { id: 'R-53', ref: '', section: 'Rider 6', title: 'Calendar, notification and syllabus tools', text: 'Calendar, notification and syllabus tools for every course.', context: '' },
+    { id: 'R-164', ref: '4.2.1', section: 'Core capabilities', title: 'Syllabus tools', text: 'Syllabus tools inside each course.', context: 'Rider 6 lists them too.' }
+  ];
+
+  it('sends only the requirements’ words, no documents and no catalog, and keeps only the ids asked about', async () => {
+    replies = [
+      {
+        sse: stream('tool_use', {
+          name: 'report_groups',
+          input: {
+            topics: [{ name: 'Course tools', ids: ['R-53', 'R-164', 'R-999'] }],
+            repeats: [{ ids: ['R-53', 'R-164'], keep: ['R-164'], note: 'Both ask for syllabus tools.' }, { ids: ['R-999', 'R-53'], keep: ['R-999'], note: '' }]
+          }
+        })
+      }
+    ];
+    const response = await post('group', { reqs, topics: ['Hosting and support'] });
+    const body = (await response.json()) as { topics: Record<string, string>; repeats: unknown[]; tokens: { output: number } };
+    expect(response.status).toBe(200);
+    expect(body.topics).toEqual({ 'R-53': 'Course tools', 'R-164': 'Course tools' });
+    expect(body.repeats).toEqual([{ ids: ['R-53', 'R-164'], keep: ['R-164'], note: 'Both ask for syllabus tools.' }]);
+    expect(body.tokens.output).toBe(640);
+
+    const sent = sentMessage();
+    const content = (sent.messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
+    /* the documents are the dear part of every other call; the requirements already carry what grouping needs */
+    expect(content.map((block) => block.type)).toEqual(['text']);
+    const text = String(content[0]?.text);
+    expect(text).toContain('R-164 [4.2.1] (Core capabilities) Syllabus tools: Syllabus tools inside each course. Elsewhere: Rider 6 lists them too.');
+    expect(text).toContain('R-53 (Rider 6) Calendar, notification and syllabus tools: Calendar');
+    /* a second call after more pages were read reuses the headings a person has already seen */
+    expect(text).toContain('Use the same names wherever they fit: Hosting and support.');
+    /* a broad item whose parts are stated on their own is the one that goes, not the parts */
+    expect(text).toContain('the ids of those parts, so that the broad item is the one that goes');
+    /* only the same work twice is a repeat; a neighbour in the same area is not */
+    expect(text).toContain('Requirements that are only in the same area, or that depend on each other, are not repeats.');
+    const tool = (sent.tools as { name: string; strict: boolean }[]).at(-1);
+    expect(tool).toMatchObject({ name: 'report_groups', strict: true });
+    expect(sent.fallbacks).toBe('default');
+  });
+
+  it('says nothing about topics in use on a tender grouped for the first time', async () => {
+    replies = [{ sse: stream('tool_use', { name: 'report_groups', input: { topics: [], repeats: [] } }) }];
+    await post('group', { reqs, topics: 'not a list' });
+    const text = String(((sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [])[0]?.text);
+    expect(text).not.toContain('already uses these topics');
+  });
+
+  it('says a refusal is a refusal and what it cost, and makes no call for no requirements', async () => {
+    replies = [{ sse: stream('refusal') }];
+    const refused = await post('group', { reqs, topics: [] });
+    expect(refused.status).toBe(422);
+    expect(((await refused.json()) as { tokens: { input: number } }).tokens.input).toBe(1200);
+
+    calls = [];
+    const none = (await (await post('group', { reqs: [], topics: [] })).json()) as { topics: object; repeats: unknown[] };
+    expect(none).toMatchObject({ topics: {}, repeats: [] });
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses more requirements than one call should carry, before any call', async () => {
+    const many = Array.from({ length: 1001 }, (_, i) => ({ id: `R-${i}`, text: 'Something' }));
+    expect((await post('group', { reqs: many, topics: [] })).status).toBe(400);
+    expect((await post('group', { reqs: 'R-01', topics: [] })).status).toBe(400);
+    expect(calls).toEqual([]);
   });
 });
 

@@ -9,6 +9,7 @@ import type {
   Practice,
   RequirementMatch,
   RequirementPriority,
+  RequirementRepeat,
   Tender,
   TenderDocument,
   TenderRange,
@@ -81,15 +82,32 @@ export interface FitResult {
 }
 
 /** A requirement as extracted, before it has an id or a person has looked at it. */
-export type ExtractedRequirement = Omit<TenderRequirement, 'id' | 'status' | 'match' | 'edited'>;
+export type ExtractedRequirement = Omit<TenderRequirement, 'id' | 'status' | 'match' | 'edited' | 'topic' | 'repeat' | 'repeatOf'>;
 
 /** A requirement as the match step sends it. */
 export interface MatchInput {
   id: string;
+  /** Blank for a requirement read before titles existed. */
+  title: string;
   text: string;
   section: string;
   priority: RequirementPriority;
 }
+
+/** A requirement as the grouping call reads it: its words and where it sits, nothing else. */
+export interface GroupInput {
+  id: string;
+  ref: string;
+  section: string;
+  title: string;
+  text: string;
+  context: string;
+}
+
+/** Longest a requirement's description may be. A self-contained one runs to four sentences. */
+export const TEXT_LIMIT = 1500;
+const TITLE_LIMIT = 120;
+const CONTEXT_LIMIT = 600;
 
 /**
  * Why an AI call failed, in terms the browser can act on. `truncated` and `timeout` mean the
@@ -206,16 +224,21 @@ export function readFit(input: unknown, platformIds: readonly string[], docs: re
 export function readRequirements(input: unknown, range: Pick<TenderRange, 'doc'>, docPages: number): ExtractedRequirement[] {
   const found: ExtractedRequirement[] = [];
   for (const entry of list(record(input).requirements).map(record)) {
-    const text = str(entry.text, 800);
+    const text = str(entry.text, TEXT_LIMIT);
     if (!text) continue;
     const page = int(entry.page);
     const ref = str(entry.ref, 80);
+    const title = str(entry.title, TITLE_LIMIT);
+    const context = str(entry.context, CONTEXT_LIMIT);
     found.push({
       doc: range.doc,
       /* a page outside the document is a misreading, not a location */
       page: page >= 1 && (docPages === 0 || page <= docPages) ? page : 0,
       section: str(entry.section, 160),
+      /* absent rather than blank, the way a requirement read before titles existed is */
+      ...(title ? { title } : {}),
       text,
+      ...(context ? { context } : {}),
       quote: str(entry.quote, 600),
       priority: entry.priority === 'should' ? 'should' : 'must',
       outOfScope: entry.outOfScope === true,
@@ -223,6 +246,48 @@ export function readRequirements(input: unknown, range: Pick<TenderRange, 'doc'>
     });
   }
   return found;
+}
+
+export interface RepeatProposal {
+  ids: string[];
+  /** One id, or the parts of a broad item, each stated on its own. Never empty, never the whole set. */
+  keep: string[];
+  note: string;
+}
+
+export interface GroupResult {
+  /** Requirement id to topic name. */
+  topics: Record<string, string>;
+  repeats: RepeatProposal[];
+}
+
+/**
+ * The grouping call's answer, narrowed to the requirements it was asked about. A requirement goes in
+ * one topic and one set of repeats at most, the first that names it; a set left with fewer than two
+ * real requirements is no repeat at all. `keep` names only ids in its set; one that names none, or
+ * every one of them, falls back to the set's first, since keeping all of them is no choice at all.
+ */
+export function readGroups(input: unknown, requirementIds: readonly string[]): GroupResult {
+  const wanted = new Set(requirementIds);
+  const raw = record(input);
+  const topics: Record<string, string> = {};
+  for (const entry of list(raw.topics).map(record).slice(0, 60)) {
+    const name = str(entry.name, 80);
+    if (!name) continue;
+    for (const id of list(entry.ids).map((value) => str(value, 40))) if (wanted.has(id) && !topics[id]) topics[id] = name;
+  }
+
+  const taken = new Set<string>();
+  const repeats: RepeatProposal[] = [];
+  for (const entry of list(raw.repeats).map(record)) {
+    const ids = [...new Set(list(entry.ids).map((value) => str(value, 40)))].filter((id) => wanted.has(id) && !taken.has(id));
+    const first = ids[0];
+    if (!first || ids.length < 2) continue;
+    for (const id of ids) taken.add(id);
+    const named = [...new Set(list(entry.keep).map((value) => str(value, 40)))].filter((id) => ids.includes(id));
+    repeats.push({ ids, keep: named.length > 0 && named.length < ids.length ? named : [first], note: str(entry.note, 400) });
+  }
+  return { topics, repeats };
 }
 
 /**
@@ -679,7 +744,201 @@ export function rangeLabel(range: Pick<TenderRange, 'doc' | 'from' | 'to'>, docs
 export function needsMatching(tender: Pick<Tender, 'reqs'>): MatchInput[] {
   return tender.reqs
     .filter((req) => req.status === 'approved' && !req.outOfScope && !req.match)
-    .map((req) => ({ id: req.id, text: req.text, section: req.section, priority: req.priority }));
+    .map((req) => ({ id: req.id, title: req.title ?? '', text: req.text, section: req.section, priority: req.priority }));
+}
+
+/* ---------------------------------------------------------------- grouping */
+
+/** Requirements one grouping call reads at most. A tender's whole list, as words, fits in one call well past this. */
+export const GROUP_LIMIT = 1000;
+/**
+ * How much of each description and context the grouping call reads. Enough to tell what a requirement
+ * asks for; cut so a thousand of them stay well inside the 2 MB a request to /api/tender may carry.
+ */
+export const GROUP_TEXT = 700;
+export const GROUP_CONTEXT = 300;
+
+/**
+ * What the grouping call reads: every requirement still in play, so a repeat is found wherever it
+ * sits in the tender. Removed ones are left out; a person already decided they are not wanted.
+ */
+export function groupInputs(tender: Pick<Tender, 'reqs'>): GroupInput[] {
+  return tender.reqs
+    .filter((req) => req.status !== 'removed')
+    .slice(0, GROUP_LIMIT)
+    .map((req) => ({
+      id: req.id,
+      ref: req.ref ?? '',
+      section: req.section,
+      title: req.title ?? '',
+      text: req.text.slice(0, GROUP_TEXT),
+      context: (req.context ?? '').slice(0, GROUP_CONTEXT)
+    }));
+}
+
+/** Requirements in play that no grouping call has given a topic yet. */
+export function ungrouped(tender: Pick<Tender, 'reqs'>): string[] {
+  return tender.reqs.filter((req) => req.status !== 'removed' && !req.topic).map((req) => req.id);
+}
+
+/** Some part of the tender is waiting to be read, or being read in some tab. */
+export const extracting = (tender: Pick<Tender, 'ranges'>): boolean => tender.ranges.some((range) => range.status === 'pending' || range.status === 'running');
+
+/**
+ * Whether a grouping call has anything to do: a requirement in play with no topic, and at least two
+ * to compare. One alone has nothing to repeat, and its topic can wait for the next.
+ */
+export function groupingWanted(tender: Pick<Tender, 'reqs'>): boolean {
+  return ungrouped(tender).length > 0 && groupInputs(tender).length > 1;
+}
+
+/** The topics a tender already uses, in the order they first appear, so a later call reuses their names. */
+export function topicsInUse(tender: Pick<Tender, 'reqs'>): string[] {
+  return [...new Set(tender.reqs.flatMap((req) => (req.topic ? [req.topic] : [])))];
+}
+
+export interface RepeatSet {
+  set: string;
+  note: string;
+  /** In document order. Only those still in play. */
+  reqs: TenderRequirement[];
+  /** The ids the AI suggests keeping, or the first when those it named are gone. */
+  keep: string[];
+}
+
+/**
+ * Open sets of repeats, each with its requirements still in play. A set reduced to one by removals
+ * or merges since is no longer a choice to make, so it is not listed.
+ */
+export function repeatSets(tender: Pick<Tender, 'reqs'>): RepeatSet[] {
+  const sets = new Map<string, RepeatSet>();
+  for (const req of tender.reqs) {
+    if (!req.repeat || req.status === 'removed') continue;
+    const entry = sets.get(req.repeat.set) ?? { set: req.repeat.set, note: req.repeat.note, reqs: [], keep: [] };
+    entry.reqs.push(req);
+    if (req.repeat.keep) entry.keep.push(req.id);
+    sets.set(req.repeat.set, entry);
+  }
+  return [...sets.values()]
+    .filter((entry) => entry.reqs.length > 1)
+    .map((entry) => ({ ...entry, keep: entry.keep.length > 0 && entry.keep.length < entry.reqs.length ? entry.keep : [entry.reqs[0]!.id] }));
+}
+
+/**
+ * A grouping call's answer laid onto the requirements. A topic lands only where there is none, so a
+ * second call after more pages were read leaves the first one's headings alone. A set of repeats
+ * lands only when it holds a requirement that had no topic when the call was asked (`fresh`), so a
+ * set a person already looked at and called different is not offered again; and only when each of
+ * its requirements is still in play and in no other open set.
+ */
+export function withGroups(reqs: readonly TenderRequirement[], result: GroupResult, fresh: readonly string[]): { reqs: TenderRequirement[]; changed: boolean } {
+  const isFresh = new Set(fresh);
+  let changed = false;
+  const placed = reqs.map((req) => {
+    const topic = result.topics[req.id];
+    if (!topic || req.topic || req.status === 'removed') return req;
+    changed = true;
+    return { ...req, topic };
+  });
+
+  const byId = new Map(placed.map((req) => [req.id, req] as const));
+  let last = highestId('S', placed.flatMap((req) => (req.repeat ? [req.repeat.set] : [])));
+  const marks = new Map<string, RequirementRepeat>();
+  for (const proposal of result.repeats) {
+    const members = proposal.ids.map((id) => byId.get(id));
+    if (members.some((req) => !req || req.status === 'removed' || req.repeat || marks.has(req.id))) continue;
+    if (!proposal.ids.some((id) => isFresh.has(id))) continue;
+    last += 1;
+    const set = serialId('S', last);
+    for (const id of proposal.ids) marks.set(id, { set, note: proposal.note, ...(proposal.keep.includes(id) ? { keep: true } : {}) });
+  }
+  if (marks.size === 0) return { reqs: placed, changed };
+  return { reqs: placed.map((req) => (marks.has(req.id) ? { ...req, repeat: marks.get(req.id)! } : req)), changed: true };
+}
+
+const without = <K extends keyof TenderRequirement>(req: TenderRequirement, ...keys: K[]): TenderRequirement => {
+  const next = { ...req };
+  for (const key of keys) delete next[key];
+  return next;
+};
+
+/** Where a requirement sits, for a line that names it: "R-53 (Rider 6)", its ref before its section. */
+const placeOf = (req: Pick<TenderRequirement, 'id' | 'ref' | 'section'>): string => {
+  const where = req.ref?.trim() || req.section.trim();
+  return where ? `${req.id} (${where})` : req.id;
+};
+
+/**
+ * A person settled a set of repeats by keeping some of it: the one that states the need best, or the
+ * parts a broad item lists. The others are removed, not deleted, and marked as repeats of what was
+ * kept, so Restore brings one back. What is kept takes the strictest priority among them (a must
+ * stated once is a must), is approved if any of them was, and says where else the tender asks for it,
+ * which the bid team still answers in each place. Null when there is nothing to settle: no set, a
+ * kept id outside it, or nothing kept or nothing removed.
+ */
+export function keepRepeats(reqs: readonly TenderRequirement[], set: string, keepIds: readonly string[]): TenderRequirement[] | null {
+  const open = reqs.filter((req) => req.repeat?.set === set && req.status !== 'removed');
+  const keep = new Set(keepIds);
+  const kept = open.filter((req) => keep.has(req.id));
+  const others = open.filter((req) => !keep.has(req.id));
+  if (kept.length === 0 || others.length === 0 || kept.length !== keep.size) return null;
+  const gone = new Set(others.map((req) => req.id));
+  const also = `Also asked for in ${others.map(placeOf).join(', ')}.`;
+  const keptIds = kept.map((req) => req.id);
+  return reqs.map((req) => {
+    if (keep.has(req.id)) {
+      return {
+        ...without(req, 'repeat'),
+        context: [req.context, also].filter(Boolean).join(' '),
+        priority: open.some((one) => one.priority === 'must') ? 'must' : req.priority,
+        status: req.status === 'proposed' && others.some((one) => one.status === 'approved') ? 'approved' : req.status
+      };
+    }
+    if (gone.has(req.id)) return { ...without(req, 'repeat'), status: 'removed', repeatOf: keptIds };
+    /* a member removed earlier by hand leaves the set too, so it does not reopen it on a Restore */
+    return req.repeat?.set === set ? without(req, 'repeat') : req;
+  });
+}
+
+/** A person said the requirements in a set are not the same work. Null when the set is not there. */
+export function dismissRepeats(reqs: readonly TenderRequirement[], set: string): TenderRequirement[] | null {
+  if (!reqs.some((req) => req.repeat?.set === set)) return null;
+  return reqs.map((req) => (req.repeat?.set === set ? without(req, 'repeat') : req));
+}
+
+/** Ids as a person reads a list of them: "R-04", "R-04 and R-05", "R-01, R-04 and R-05". */
+export function idList(ids: readonly string[]): string {
+  if (ids.length <= 1) return ids[0] ?? '';
+  return `${ids.slice(0, -1).join(', ')} and ${ids[ids.length - 1]}`;
+}
+
+/** The topic heading for requirements no grouping call has placed yet. */
+export const NO_TOPIC = 'Not grouped yet';
+
+/**
+ * Requirements under their topics, for the "By topic" view: topics in the order the tender first
+ * raises them, each list in document order, and those with none last under `NO_TOPIC`.
+ */
+export function byTopic(reqs: readonly TenderRequirement[]): { topic: string; reqs: TenderRequirement[] }[] {
+  const groups = new Map<string, TenderRequirement[]>();
+  for (const req of reqs) {
+    const topic = req.topic || NO_TOPIC;
+    groups.set(topic, [...(groups.get(topic) ?? []), req]);
+  }
+  const loose = groups.get(NO_TOPIC);
+  groups.delete(NO_TOPIC);
+  const ordered = [...groups].map(([topic, members]) => ({ topic, reqs: members }));
+  return loose ? [...ordered, { topic: NO_TOPIC, reqs: loose }] : ordered;
+}
+
+/**
+ * Requirements whose match names a catalog solution, so its popup can say what else in the tender
+ * it covers. Its hours count once in the estimation however many name it.
+ */
+export function requirementsUsing(tender: Pick<Tender, 'reqs'>, solutionId: string): TenderRequirement[] {
+  return tender.reqs.filter(
+    (req) => req.status === 'approved' && (req.match?.kind === 'catalog' || req.match?.kind === 'partial') && req.match.solutionIds.includes(solutionId)
+  );
 }
 
 /** Requirements marked out of scope at extraction need no AI to be matched as out of scope. */
@@ -863,12 +1122,15 @@ export function heldByLimit(
   inFlight: ReadonlySet<string>,
   matchingHeld: boolean,
   /** Out-of-scope items the sort call was asked for and the limit stopped. */
-  sortingHeld = 0
+  sortingHeld = 0,
+  /** Requirements the grouping call was asked for and the limit stopped. */
+  groupingHeld = 0
 ): string {
   if (canSpend(tender)) return '';
   const held: string[] = [];
   const unread = tender.ranges.filter((range) => (range.status === 'pending' || range.status === 'running') && !inFlight.has(range.key)).length;
   if (unread > 0) held.push(`${plural(unread, 'part')} of the tender ${unread === 1 ? 'is' : 'are'} not read yet`);
+  if (groupingHeld > 0) held.push(`${plural(groupingHeld, 'requirement')} ${groupingHeld === 1 ? 'is' : 'are'} not checked for repeats yet`);
   const unmatched = matchingHeld ? needsMatching(tender).length : 0;
   if (unmatched > 0) held.push(`${plural(unmatched, 'requirement')} ${unmatched === 1 ? 'is' : 'are'} not matched yet`);
   const terms = documentsIn(unreadTerms(tender).filter((read) => !inFlight.has(read.key)));
@@ -977,14 +1239,18 @@ export function deskDrafts(tender: Pick<Tender, 'reqs' | 'docs'>, catalog: Catal
     } else {
       lines.push(req.text);
     }
+    /* the estimator prices it without the tender, so where else the tender asks for it travels with it */
+    if (req.context) lines.push('', `Elsewhere in the tender: ${req.context}`);
     lines.push('', `Tender priority: ${req.priority === 'must' ? 'must have' : 'nice to have'}.`);
     if (req.quote) lines.push(`From the tender (${source}): "${req.quote}"`);
 
     const edit: DeskDraftEdit = match.draft ?? {};
+    /* a partial match sends only its remainder, which the requirement's title does not name */
+    const derived = match.kind === 'partial' ? shortTitle(match.remainder) : req.title?.trim() || shortTitle(req.text);
     drafts.push({
       reqId: req.id,
       kind: match.kind,
-      title: edit.title ?? shortTitle(match.kind === 'partial' ? match.remainder : req.text),
+      title: edit.title ?? derived,
       details: edit.details ?? lines.join('\n'),
       area: edit.area ?? (bundleName.get(match.area) ?? SOMETHING_NEW),
       integrations: edit.integrations ?? match.integrations,

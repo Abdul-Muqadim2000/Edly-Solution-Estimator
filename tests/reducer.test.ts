@@ -1230,6 +1230,87 @@ describe('tenders', () => {
     expect(tender(state).reqs[1]?.match).toBeUndefined();
   });
 
+  /* R-01 Single sign-on (p. 2), R-03 Hardware for labs (p. 4), R-02 Grade export (p. 9) */
+  const grouped = (): AppState =>
+    run(withTender(), {
+      type: 'setGroups',
+      id: 'TND-1',
+      result: { topics: { 'R-01': 'Identity and access', 'R-02': 'Student system integrations', 'R-03': 'Hosting and support' }, repeats: [{ ids: ['R-01', 'R-02'], keep: ['R-02'], note: 'Both ask for the sign-on.' }] },
+      fresh: ['R-01', 'R-02', 'R-03'],
+      tokens: { input: 40, output: 12, usd: 0.01 }
+    });
+
+  it('puts each requirement under its topic and marks the repeats the grouping call found, counting what it cost', () => {
+    const state = grouped();
+    const byId = new Map(tender(state).reqs.map((req) => [req.id, req] as const));
+    expect(byId.get('R-01')?.topic).toBe('Identity and access');
+    expect(byId.get('R-01')?.repeat).toEqual({ set: 'S-01', note: 'Both ask for the sign-on.' });
+    expect(byId.get('R-02')?.repeat).toEqual({ set: 'S-01', note: 'Both ask for the sign-on.', keep: true });
+    expect(byId.get('R-03')?.repeat).toBeUndefined();
+    expect(tender(state).tokens).toMatchObject({ input: 140, output: 62 });
+    /* nothing new and nothing spent: the same state, so no save follows */
+    expect(run(state, { type: 'setGroups', id: 'TND-1', result: { topics: {}, repeats: [] }, fresh: [] })).toBe(state);
+  });
+
+  it('keeps one of a set of repeats and removes the rest as repeats of it, carrying the stricter priority', () => {
+    const shouldOne = run(grouped(), { type: 'editRequirement', id: 'TND-1', reqId: 'R-02', patch: { priority: 'should' } }, { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' });
+    const state = run(shouldOne, { type: 'keepRepeat', id: 'TND-1', set: 'S-01', keep: ['R-02'] });
+    const byId = new Map(tender(state).reqs.map((req) => [req.id, req] as const));
+    /* the one removed was a must, and a must stated once is a must */
+    expect(byId.get('R-02')).toMatchObject({ priority: 'must', status: 'approved' });
+    expect(byId.get('R-02')?.repeat).toBeUndefined();
+    expect(byId.get('R-02')?.context).toBe('Also asked for in R-01 (Scope).');
+    expect(byId.get('R-01')).toMatchObject({ status: 'removed', repeatOf: ['R-02'] });
+    expect(byId.get('R-01')?.repeat).toBeUndefined();
+
+    /* restored, it counts on its own again and no longer reads as a repeat */
+    const restored = run(state, { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'proposed' });
+    expect(tender(restored).reqs.find((req) => req.id === 'R-01')?.repeatOf).toBeUndefined();
+    /* the set is settled, so a second click changes nothing */
+    expect(run(state, { type: 'keepRepeat', id: 'TND-1', set: 'S-01', keep: ['R-02'] })).toBe(state);
+  });
+
+  it('lets a person say a set of repeats are different work, leaving every one of them as it was', () => {
+    const state = run(grouped(), { type: 'dismissRepeat', id: 'TND-1', set: 'S-01' });
+    expect(tender(state).reqs.every((req) => req.repeat === undefined && req.status === 'proposed')).toBe(true);
+    expect(run(state, { type: 'dismissRepeat', id: 'TND-1', set: 'S-01' })).toBe(state);
+  });
+
+  it('keeps a merged requirement’s title, topic, every reference and where else the tender asks for it', () => {
+    const titled = run(
+      withTender(),
+      { type: 'editRequirement', id: 'TND-1', reqId: 'R-01', patch: { title: 'Single sign-on', context: 'Annex B repeats it.' } },
+      { type: 'editRequirement', id: 'TND-1', reqId: 'R-02', patch: { context: 'Section 6 sets the schedule.' } }
+    );
+    const withRefs: AppState = {
+      ...titled,
+      tenders: titled.tenders.map((one) => ({ ...one, reqs: one.reqs.map((req) => ({ ...req, ref: req.id === 'R-01' ? 'FR-1' : 'FR-9', topic: 'Integrations' })) }))
+    };
+    const merged = tender(run(withRefs, { type: 'combineRequirements', id: 'TND-1', reqIds: ['R-01', 'R-02'] })).reqs[0];
+    expect(merged).toMatchObject({ title: 'Single sign-on', ref: 'FR-1, FR-9', topic: 'Integrations', context: 'Annex B repeats it. Section 6 sets the schedule.' });
+  });
+
+  it('splits a requirement into a copy that keeps its topic but repeats nothing until grouped again', () => {
+    const state = run(grouped(), { type: 'duplicateRequirement', id: 'TND-1', reqId: 'R-01' });
+    const copy = tender(state).reqs.find((req) => req.id === 'R-04');
+    expect(copy?.topic).toBe('Identity and access');
+    expect(copy?.repeat).toBeUndefined();
+  });
+
+  it('keeps a match when only the title or the context is reworded, which says nothing new about the work', () => {
+    const matched = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' }, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': aMatch() } });
+    const renamed = run(matched, { type: 'editRequirement', id: 'TND-1', reqId: 'R-01', patch: { title: 'SSO', context: 'Also in Annex B.' } });
+    expect(tender(renamed).reqs[0]).toMatchObject({ title: 'SSO', context: 'Also in Annex B.' });
+    expect(tender(renamed).reqs[0]?.match).toBeDefined();
+  });
+
+  it('adds a requirement by hand with a title, or with none when it is left blank', () => {
+    const titled = run(withTender(), { type: 'addRequirement', id: 'TND-1', input: { title: ' Lab hardware ', text: 'Forty lab PCs', section: '', priority: 'must' } });
+    expect(tender(titled).reqs.find((req) => req.id === 'R-04')?.title).toBe('Lab hardware');
+    const plain = run(withTender(), { type: 'addRequirement', id: 'TND-1', input: { title: '  ', text: 'Forty lab PCs', section: '', priority: 'must' } });
+    expect(tender(plain).reqs.find((req) => req.id === 'R-04')).not.toHaveProperty('title');
+  });
+
   it('only matches approved requirements, so one removed while matching ran stays unmatched', () => {
     const state = run(
       withTender(),

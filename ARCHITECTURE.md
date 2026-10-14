@@ -191,10 +191,10 @@ person chose to import is refused with a reason when it would load differently f
 A salesperson uploads an RFP and gets an estimation and a set of desk requests out of it, with a
 person approving every step. Four decisions shape it, and each is expensive to undo:
 
-- **The AI proposes; people write.** The model is given five tools and all five only report:
+- **The AI proposes; people write.** The model is given six tools and all six only report:
   a platform fit, the requirements in a page range, the catalog matches for a batch, the team each
-  out-of-scope item is for, and the key legal and commercial terms of a document. Nothing it
-  returns changes state. Each change is a reducer action a click dispatches, which is how "ask
+  out-of-scope item is for, the key legal and commercial terms of a document, and the topic of each
+  requirement with the ones that repeat each other. Nothing it returns changes state. Each change is a reducer action a click dispatches, which is how "ask
   before acting" is enforced rather than requested in a prompt that a tender could override.
 - **Hours come from the catalog, never the model.** A match carries catalog ids; `readMatches`
   drops any id the catalog does not have, and hours are looked up by id when shown. Unmatched work
@@ -218,10 +218,20 @@ person approving every step. Four decisions shape it, and each is expensive to u
   that before continuing, and the ranges cover the rest, less a page of margin at each edge
   (`planRanges`). A skipped section can still be read later from the requirements step. A
   spreadsheet is read in rows rather than pages: each sheet starts its own part, every row keeps its
-  row number, and its ranges are three parts of 20 rows, because a row is nearly always a
+  row number, and its ranges are two parts of 20 rows, because a row is nearly always a
   requirement and a 20-part range of rows cannot be answered inside the time limit. Legal and
   commercial terms and bid paperwork are not extracted at all; out of scope means work that is not
   software but costs money to meet (hardware, staff on site, vetting).
+- **A requirement has to make sense without the tender beside it.** Extraction writes each one
+  with a short title, a description of what is delivered, to whom and with every specific the tender
+  gives for it anywhere in the documents it can see, and a line on where else the tender asks for it.
+  The verbatim quote stays beside it, so the paraphrase can be checked. Because extraction reads a
+  range at a time, the same need often comes back more than once (a line in a list of services, a
+  full specification elsewhere). When this tab has finished reading, one more call (`op=group`)
+  reads every requirement's words, no documents and no catalog, and returns a topic for each and the
+  sets that ask for the same work, with which to keep. A person settles each set: keep some and
+  remove the rest, marked `repeatOf`, or say they differ. Estimating both halves of a repeat would
+  price the work twice, and with custom work send it to the desk twice.
 - **The browser drives the steps.** `/api/tender` keeps no state; the tender lives in the reducer
   and the `Tenders` sheet like everything else, so a half-reviewed tender survives a reload. A tab
   claims a range (`running`, with a time) before reading it, so a second tab on the same tender
@@ -230,7 +240,7 @@ person approving every step. Four decisions shape it, and each is expensive to u
 
 ```
 upload ─► Files API id ─► fit (platform, header, outline, sections to skip) ─► person picks platform and what is read
-      ─► extract, one call per range ─► person reviews requirements
+      ─► extract, one call per range ─► group into topics and repeats ─► person reviews requirements and settles repeats
       ─► match, batches of 40 ─► person accepts matches
       ─► person creates the estimation ─► person sends the desk requests ─► files deleted
 ```

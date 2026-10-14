@@ -151,11 +151,11 @@ reference.
 
 ### The suite
 
-`bun run test` runs 1,300 tests across twenty-eight files.
+`bun run test` runs 1,334 tests across twenty-eight files.
 
 | File | Covers |
 |---|---|
-| `tests/domain.test.ts` | `calcEstimate`, `schedule`, catalog composition and helpers |
+| `tests/domain.test.ts` | `calcEstimate`, `schedule`, catalog composition and helpers, a solution's whole entry as the builder and the tender popup show it |
 | `tests/reducer.test.ts` | every state transition, selector and label |
 | `tests/router.test.ts` | URL to state and back, both directions, a link held through sign-in, the links between screens and each role's home |
 | `tests/pressable.test.ts` | a clickable card or row pressed from the keyboard: Enter and Space press it, keys meant for a field inside it are left alone |
@@ -173,7 +173,7 @@ reference.
 | `tests/team.test.ts` | the team composition: role and seniority from the rate card, people and weeks from the plan |
 | `tests/mail.test.ts` | the desk emails and the clipboard fallback |
 | `tests/format.test.ts` | money, hours, dates, the plain-text quote |
-| `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, desk drafts, what calls cost and the spending limit |
+| `tests/tender.test.ts` | tender logic: narrowing what the AI returns, ranges and skipped sections, topics and repeats, desk drafts, what calls cost and the spending limit |
 | `tests/tenderApi.test.ts` | `/api/tender` end to end, against a stubbed Anthropic API |
 | `tests/tenderFiles.test.ts` | turning PDF, Word, Excel, CSV and text tenders into uploads, spreadsheets as numbered rows |
 | `tests/salesLegal.test.ts` | the sales, account and legal list: what a tender offers and what is copied, items typed by hand, edits, reading a hand-edited sheet, narrowing the sort and terms answers |
@@ -186,14 +186,14 @@ reference.
 
 ### Coverage
 
-`bun run test:coverage`. Current state, measured rather than estimated (2026-09-30, with users and notifications):
+`bun run test:coverage`. Current state, measured rather than estimated (2026-10-07, with titled requirements, topics and repeats):
 
 | | |
 |---|---|
-| Statements | 97.9% |
-| Lines | 98.8% |
-| Functions | 99.2% |
-| Branches | 89.3% |
+| Statements | 98.0% |
+| Lines | 98.9% |
+| Functions | 99.3% |
+| Branches | 89.6% |
 
 The thresholds in `vitest.config.ts` are floors: 97% statements, 87% branches, 98% functions and
 98% lines, each set just under the figures above when the tender reading plan landed. A change that
@@ -590,6 +590,21 @@ The spreadsheets hold real deal names, client names and pricing.
   split like ranges when one call cannot finish (`splitTermRead`), under `terms:` keys no range can
   have, and they share the extraction's call budget. The tender files are not deleted after the
   desk requests while a terms read is unfinished.
+- **A requirement is written to stand on its own, and its repeats are only proposed.** Extraction
+  asks for a `title`, a `text` that says who uses it and every specific the tender gives for it,
+  and a `context` naming where else the tender asks for it, with the verbatim `quote` kept beside
+  them; the prompt forbids adding features, figures or standards the tender does not state. The
+  user asked for this on 2026-10-07, after the real run produced "Provide syllabus tools." and the
+  same need three times. The grouping call (`op=group`, `report_groups`, last in `TOOLS` so the
+  three tools every tender uses keep their order) reads the requirements' words only, no documents
+  and no catalog, and runs by itself only after this tab read part of the tender
+  (`rangesReadHere`); a tender read before it has a button. `withGroups` gives a topic only where
+  there is none and offers a set of repeats only when it holds a requirement that had no topic when
+  asked, so nothing a person already looked at is offered again. A set keeps one requirement or
+  the parts of a broad item, never all of them (`readGroups`, `keepRepeats`); what is removed is
+  marked `repeatOf` and comes back with Restore. Every field lives on the requirement inside the
+  tender's JSON column, so an older tab keeps it on a save. A spreadsheet range is 40 rows since
+  this change (`SHEET_SPAN`), because each answer is about 60% longer.
 - **Skipping is safe only because it errs towards reading.** `readFit` skips a section only on an
   explicit `true`; `readRuns` reads a page any unskipped section claims, a page no section claims,
   and a page of margin either side of a skipped stretch (not in spreadsheets, whose sheets start
@@ -703,7 +718,8 @@ The spreadsheets hold real deal names, client names and pricing.
 - **The tender AI has been run against the real API once, on one Word tender** (2026-09-29,
   VERIFY.md). PDF and spreadsheet tenders have only met the stand-in (Worth adding next 17), and
   PDFs are limited to 4 MB until uploads are staged (DEFERRED.md 9). The sort and the key-terms
-  calls have only met a stand-in too (Worth adding next 20).
+  calls have only met a stand-in too (Worth adding next 20), and so have the extraction prompt
+  that writes titles and context and the grouping call (Worth adding next 23).
 - **The per-tender AI limit is a check in the browser, not a cap.** A caller going straight to
   `/api/tender` skips it (DEFERRED.md 11). The cap that holds is a monthly spend limit on the
   Anthropic Console workspace that owns the key.
@@ -857,6 +873,16 @@ everything else waiting on a server, are in DEFERRED.md.
 22. **Comments on a ticket, with @mentions in them.** Assignment is the only @ today. A comment
     thread per deal and per request, where an @ tells that person, would fit the same derived
     notifications; it is a new collection (every touch-point in the feature checklist).
+23. **Run the self-contained extraction and the grouping call for real.** Built on 2026-10-07 and
+    driven end to end against a stand-in only. Upload the UT System RFP again (its files at
+    Anthropic expired on 2026-10-01) and compare with the 2026-09-29 run in VERIFY.md: how many of
+    the 241 requirements now read on their own, whether any description adds something the tender
+    does not say, how many sets of repeats come back and whether they are real, and what extraction
+    costs now (estimated at about $0.35 more than the $1.05 it was, for longer answers; grouping
+    about $0.20). It spends real money, about $3.50 to $4 for the tender, so it needs a yes first.
+24. **Open a catalog solution in its own tab.** The match step's popup shows a solution in place.
+    A link that opens it in a new tab (a middle click on the chip) needs a route for it, for example
+    `?item=EDU-076` on the tender's URL kept in `parseRoute` and `formatRoute`, or a page of its own.
 
 ---
 
