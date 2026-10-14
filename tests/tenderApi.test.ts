@@ -417,6 +417,17 @@ describe('the extraction step', () => {
     expect(marks).toEqual([false, true, true, true, true, false]);
   });
 
+  it('reads a tender of any number of files, with the four cache markers on the last four', async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => ({ n: i + 1, name: `Annex ${i + 1}.docx`, kind: 'text', fileId: `file_${i + 1}`, pages: 2 }));
+    replies = [{ sse: stream('tool_use', { name: 'report_fit', input: { platform: 'openedx' } }) }];
+    calls = [];
+    expect((await post('fit', { docs: nine, platforms })).status).toBe(200);
+    const blocks = (sentMessage().messages as { content: Record<string, unknown>[] }[])[0]?.content ?? [];
+    expect(blocks.filter((block) => block.type === 'document')).toHaveLength(9);
+    /* the API keeps four; every document before the first marker is inside its cached prefix */
+    expect(blocks.map((block) => Boolean(block.cache_control))).toEqual([false, false, false, false, false, true, true, true, true, false]);
+  });
+
   it("asks for the tender's own reference, and to leave out what the tender says it will not have", async () => {
     replies = [{ sse: stream('tool_use', { name: 'report_requirements', input: { requirements: [{ text: 'Bulk enrolment', quote: 'bulk enrolment', page: 3, section: 'Functional', ref: 'FR-004', priority: 'must', outOfScope: false }] } }) }];
     const body = (await (await post('extract', { docs, range: { doc: 2, from: 1, to: 3 } })).json()) as { found: { ref?: string }[] };
@@ -523,7 +534,18 @@ describe('the extraction step', () => {
 
     replies = [apiError(400, 'invalid_request_error', 'prompt is too long: 1200000 tokens')];
     response = await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
-    expect(((await response.json()) as { code: string }).code).toBe('too_large');
+    const tooLarge = (await response.json()) as { code: string; error: string };
+    expect(tooLarge.code).toBe('too_large');
+    /* every call carries the files together, so splitting one file cannot help; leaving some out can */
+    expect(tooLarge.error).toContain('Leave out');
+
+    /* a schema the API cannot compile is the app's fault, not the tender's size; calling it too_large
+       told a person to split files that were never the problem */
+    replies = [apiError(400, 'invalid_request_error', 'The compiled grammar is too large, which would cause performance issues.')];
+    response = await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
+    const grammar = (await response.json()) as { code: string; error: string };
+    expect(grammar.code).toBe('bad_request');
+    expect(grammar.error).toContain('compiled grammar');
 
     replies = [apiError(400, 'invalid_request_error', 'something else')];
     response = await post('extract', { docs, range: { doc: 1, from: 1, to: 20 } });
