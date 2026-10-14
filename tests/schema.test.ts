@@ -1117,6 +1117,15 @@ describe('tenders', () => {
     expect(back.tenders[0]).not.toHaveProperty('terms');
     expect(back.tenders[0]).not.toHaveProperty('termReads');
   });
+
+  it('keeps the catalog a tender was matched against, and reads one matched before it as having none', async () => {
+    const original = sample();
+    const seen = { ...original.tenders[0]!, catalogSeen: ['EDU-004', 'EDU-013', 'CS-01'] };
+    const back = await roundTrip({ ...original, tenders: [seen] });
+    /* without it the match step cannot say the catalog has grown since the matches were made */
+    expect(back.tenders[0]?.catalogSeen).toEqual(['EDU-004', 'EDU-013', 'CS-01']);
+    expect((await roundTrip(original)).tenders[0]).not.toHaveProperty('catalogSeen');
+  });
 });
 
 describe('the sales, account and legal sheet', () => {

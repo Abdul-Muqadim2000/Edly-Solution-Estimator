@@ -1348,6 +1348,17 @@ describe('tenders', () => {
     expect(run(cleared, { type: 'clearMatches', id: 'TND-1', reqIds: ['R-01'] })).toBe(cleared);
   });
 
+  it('records the catalog a run matched against, so the match step can tell when it has grown', () => {
+    const matched = run(withTender(), { type: 'setRequirementStatus', id: 'TND-1', reqIds: ['R-01'], status: 'approved' }, { type: 'setMatches', id: 'TND-1', matches: { 'R-01': { ...aMatch(), kind: 'custom', solutionIds: [], approved: false } } });
+    const noted = run(matched, { type: 'noteCatalogSeen', id: 'TND-1', ids: ['SSO-1', 'AS-1'], matched: ['R-01'] });
+    expect(tender(noted).catalogSeen).toEqual(['AS-1', 'SSO-1']);
+    /* the same catalog again is no change, and so no save */
+    expect(run(noted, { type: 'noteCatalogSeen', id: 'TND-1', ids: ['AS-1', 'SSO-1'], matched: ['R-01'] })).toBe(noted);
+    /* "not now" takes today's catalog as seen */
+    const later = run(noted, { type: 'noteCatalogSeen', id: 'TND-1', ids: ['SSO-1', 'AS-1', 'CS-01'], matched: 'all' });
+    expect(tender(later).catalogSeen).toEqual(['AS-1', 'CS-01', 'SSO-1']);
+  });
+
   it('creates the estimation with the accepted solutions picked, on the tender platform, and leaves it closed', () => {
     const state = run(withTender(), { type: 'applyTender', id: 'TND-1', input: { name: 'Acme deal', client: 'Acme Academy', tag: 'Active', due: '2026-11-30' }, solutionIds: ['SSO-1', 'AS-1'] });
     const created = state.estimations.find((one) => one.name === 'Acme deal');

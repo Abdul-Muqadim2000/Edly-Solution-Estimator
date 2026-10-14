@@ -662,6 +662,13 @@ The spreadsheets hold real deal names, client names and pricing.
   `src/domain/deskEntry.ts`), and anyone edits them in place on any solution (`editCatalogDetail`);
   a detail whose every field is emptied is removed, the demo's estimates take none, and removing
   a solution or an import takes its details with it.
+- **A tender remembers the catalog its custom and partial matches saw** (`catalogSeen`, in the
+  tender's JSON column). When the catalog has grown since, the match step says so and offers to
+  match those again in one press; a match a person accepted is never offered (`rematchable`,
+  `catalogGrowth` in `src/domain/tender.ts`). A run that matches only some requirements does not
+  mark the new solutions as seen for the older matches (`seenAfterRun`), and the demo's estimates
+  are left out of the record. A tender matched before 2026-10-14 has no record, and the step says
+  it cannot tell; "Not now" records the catalog as it is. Asked for on 2026-10-14.
 - **Skipping is safe only because it errs towards reading.** `readFit` skips a section only on an
   explicit `true`; `readRuns` reads a page any unskipped section claims, a page no section claims,
   and a page of margin either side of a skipped stretch (not in spreadsheets, whose sheets start

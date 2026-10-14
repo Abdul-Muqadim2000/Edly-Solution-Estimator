@@ -2,7 +2,8 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { Catalog, MatchKind, RequirementMatch, Solution, Tender, TenderDocument, TenderRequirement } from '@/types';
 import type { Action } from '@/state/reducer';
 import type { TenderRunner } from '@/state/useTenderRunner';
-import { catalogHours, needsMatching, outOfScopeMatches, repeatSets, sourceLabel, tenderCounts, tenderSelection } from '@/domain/tender';
+import { catalogGrowth, catalogHours, needsMatching, outOfScopeMatches, repeatSets, sourceLabel, tenderCounts, tenderSelection } from '@/domain/tender';
+import { isDemoId } from '@/domain/demo';
 import { allSolutions } from '@/domain/catalog';
 import { hours, plural } from '@/lib/format';
 import { color, radius } from '@/theme';
@@ -270,6 +271,9 @@ export function MatchStep({
   const sureOnes = approved.filter((req) => req.match && !req.match.approved && req.match.confidence === 'high').map((req) => req.id);
   /* a set still open in step 1 would have its work matched, and perhaps sent to the desk, twice */
   const openRepeats = repeatSets(tender).filter((entry) => entry.reqs.filter((req) => req.status === 'approved').length > 1).length;
+  /* the catalog in play, without the demo's estimates, which join it only while the demo is open */
+  const catalogIds = useMemo(() => [...byId.keys()].filter((id) => !isDemoId(id)), [byId]);
+  const growth = catalogGrowth(tender, catalogIds);
   const viewedReq = viewing ? tender.reqs.find((req) => req.id === viewing.reqId) ?? null : null;
   const browsedReq = browsing ? tender.reqs.find((req) => req.id === browsing) ?? null : null;
 
@@ -306,6 +310,17 @@ export function MatchStep({
             </Button>
           </Row>
         </Banner>
+      ) : null}
+      {growth && !runner.matching && !runner.held ? (
+        <CatalogGrowthBanner
+          growth={growth}
+          names={growth.added.map((id) => byId.get(id)?.name ?? '').filter(Boolean)}
+          onMatch={() => {
+            dispatch({ type: 'clearMatches', id: tender.id, reqIds: growth.reqIds });
+            setRunNow(true);
+          }}
+          onDismiss={() => dispatch({ type: 'noteCatalogSeen', id: tender.id, ids: catalogIds, matched: 'all' })}
+        />
       ) : null}
       {runner.matching ? <Banner tone="good">Matching against the catalog. Results appear on each requirement as they come back.</Banner> : null}
       {openRepeats > 0 ? (
@@ -444,5 +459,46 @@ export function MatchStep({
         </Button>
       </Row>
     </div>
+  );
+}
+
+/**
+ * Said once the catalog has grown since the custom and partial matches were made, or when the
+ * tender cannot tell, with one button to match those again. Accepted matches are never offered.
+ */
+function CatalogGrowthBanner({
+  growth,
+  names,
+  onMatch,
+  onDismiss
+}: {
+  growth: NonNullable<ReturnType<typeof catalogGrowth>>;
+  names: string[];
+  onMatch: () => void;
+  onDismiss: () => void;
+}): JSX.Element {
+  const total = growth.reqIds.length;
+  const which = [growth.custom > 0 ? `${growth.custom} custom` : '', growth.partial > 0 ? `${growth.partial} partial` : ''].filter(Boolean).join(' and ');
+  const examples = names.slice(0, 3);
+  const among = examples.length > 0 ? `, among them ${examples.length === 1 ? examples[0] : `${examples.slice(0, -1).join(', ')} and ${examples.at(-1)}`}` : '';
+  return (
+    <Banner tone="warn">
+      <div style={{ display: 'grid', gap: 8 }}>
+        <span>
+          {growth.recorded
+            ? `The catalog has ${plural(growth.added.length, 'solution')} it did not have when these were matched${among}. `
+            : 'These were matched before Quotient noted which catalog they saw, so solutions added since may cover some of them. '}
+          {`${which} ${total === 1 ? 'requirement' : 'requirements'} could find a match now. Accepted matches stay as they are; matching uses the AI and counts against this tender's limit.`}
+        </span>
+        <Row gap={8}>
+          <Button size="sm" tone="primary" onClick={onMatch}>
+            Match {total === 1 ? 'it' : `these ${total}`} again
+          </Button>
+          <Button size="sm" tone="ghost" onClick={onDismiss} title="Keep these matches; ask again only when the catalog grows">
+            Not now
+          </Button>
+        </Row>
+      </div>
+    </Banner>
   );
 }

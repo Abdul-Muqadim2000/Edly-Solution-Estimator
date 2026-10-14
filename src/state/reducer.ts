@@ -42,6 +42,7 @@ import {
   newTender,
   planTermReads,
   sectionRanges,
+  seenAfterRun,
   serialId,
   splitTermRead,
   sortRequirements,
@@ -344,6 +345,8 @@ export type Action =
   | { type: 'editMatch'; id: string; reqId: string; patch: Partial<RequirementMatch> }
   | { type: 'approveMatches'; id: string; reqIds: string[]; approved: boolean }
   | { type: 'clearMatches'; id: string; reqIds: string[] }
+  /** The catalog a matching run used (`matched`: the requirements it matched), or 'all' when a person said not now. */
+  | { type: 'noteCatalogSeen'; id: string; ids: string[]; matched: string[] | 'all' }
   | { type: 'applyTender'; id: string; input: NewEstimationInput; solutionIds: string[] }
   | { type: 'sendTenderRequests'; id: string; drafts: DeskDraft[]; contact: DeskContact }
   | { type: 'forgetTenderFiles'; id: string; fileIds: string[] }
@@ -1429,6 +1432,19 @@ function transition(state: AppState, action: Action): AppState {
           ...tender,
           reqs: tender.reqs.map((req) => (ids.has(req.id) && req.match ? { ...req, match: { ...req.match, approved: action.approved } } : req))
         };
+      });
+
+    /* what the custom and partial matches standing have seen, so the match step can say when the
+       catalog has grown since (`seenAfterRun`) */
+    case 'noteCatalogSeen':
+      return withTender(state, action.id, (tender) => {
+        const seen = seenAfterRun(tender, action.ids, action.matched);
+        const before = tender.catalogSeen;
+        if (seen === before || (seen && before && seen.length === before.length && seen.every((id, i) => id === before[i]))) return tender;
+        const next: Tender = { ...tender };
+        if (seen) next.catalogSeen = seen;
+        else delete next.catalogSeen;
+        return next;
       });
 
     case 'clearMatches':

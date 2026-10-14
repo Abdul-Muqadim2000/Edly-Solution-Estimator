@@ -18,6 +18,9 @@ import {
   KEEP_WARM_EVERY_MS,
   KEEP_WARM_MAX,
   needsMatching,
+  catalogGrowth,
+  rematchable,
+  seenAfterRun,
   newTender,
   nextKeepWarm,
   NO_TOKENS,
@@ -1016,6 +1019,57 @@ describe('the AI spending limit', () => {
 });
 
 /* ------------------------------------------------------------------ apply */
+
+describe('matching again once the catalog has grown', () => {
+  /* the shared helper's match is an accepted one; these are as the AI left them */
+  const custom = match({ kind: 'custom', solutionIds: [], approved: false });
+  const partial = match({ kind: 'partial', approved: false });
+  const matched = (): Tender =>
+    tender({
+      reqs: [
+        req('R-01', { match: custom }),
+        req('R-02', { match: partial }),
+        /* a person accepted it: what they decided is never undone by a bigger catalog */
+        req('R-03', { match: { ...custom, approved: true } }),
+        req('R-04', { match: match({ approved: false }) }),
+        req('R-05', { match: match({ kind: 'out', solutionIds: [], approved: false }) }),
+        req('R-06', { match: custom, repeatOf: ['R-01'] }),
+        req('R-07', { match: custom, status: 'proposed' })
+      ]
+    });
+
+  it('offers only custom and partial matches nobody accepted, of requirements still in play', () => {
+    expect(rematchable(matched()).map((one) => one.id)).toEqual(['R-01', 'R-02']);
+  });
+
+  it('says what the catalog gained since the matches were made, and nothing when it gained none', () => {
+    const subject = { ...matched(), catalogSeen: ['EDU-004', 'EDU-013'] };
+    expect(catalogGrowth(subject, ['EDU-004', 'EDU-013', 'CS-01', 'CS-02', 'CS-01'])).toEqual({ added: ['CS-01', 'CS-02'], recorded: true, reqIds: ['R-01', 'R-02'], custom: 1, partial: 1 });
+    expect(catalogGrowth(subject, ['EDU-004', 'EDU-013'])).toBeNull();
+    /* a solution taken out of the catalog is not growth */
+    expect(catalogGrowth(subject, ['EDU-004'])).toBeNull();
+  });
+
+  it('offers a tender matched before the record was kept, saying it cannot tell', () => {
+    expect(catalogGrowth(matched(), ['EDU-004'])).toMatchObject({ added: [], recorded: false, reqIds: ['R-01', 'R-02'] });
+  });
+
+  it('offers nothing when no custom or partial match is left to change', () => {
+    expect(catalogGrowth(tender({ reqs: [req('R-01', { match: match({ approved: false }) })] }), ['EDU-004', 'CS-01'])).toBeNull();
+  });
+
+  it('records the catalog a run used only when no older custom or partial match is left standing', () => {
+    const subject = { ...matched(), catalogSeen: ['EDU-004', 'EDU-013'] };
+    /* the run matched R-01 and R-02 again, so every standing match has seen the whole catalog */
+    expect(seenAfterRun(subject, ['EDU-013', 'CS-01', 'EDU-004'], ['R-01', 'R-02'])).toEqual(['CS-01', 'EDU-004', 'EDU-013']);
+    /* a run for one new requirement leaves R-01 and R-02 as they were, matched without CS-01 */
+    expect(seenAfterRun(subject, ['EDU-004', 'CS-01'], ['R-09'])).toEqual(['EDU-004']);
+    /* unrecorded stays unrecorded while an older match stands */
+    expect(seenAfterRun(matched(), ['EDU-004'], ['R-09'])).toBeUndefined();
+    /* "not now" takes the catalog as it is */
+    expect(seenAfterRun(matched(), ['EDU-004', 'CS-01'], 'all')).toEqual(['CS-01', 'EDU-004']);
+  });
+});
 
 describe('turning approved matches into an estimation', () => {
   const subject = tender({
