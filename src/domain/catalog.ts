@@ -32,6 +32,22 @@ export function nextBundleId(taken: Iterable<string>): string {
   return `B${String(highest + 1).padStart(2, '0')}`;
 }
 
+/**
+ * The custom bundles a read brings, plus any this tab holds that the read lacks while estimates in
+ * it are still filed there. No change a person makes removes such a bundle: the desk refuses while
+ * estimates sit in it, and removing an import takes the estimates and the bundles together. So a
+ * read without one is a stale or partial copy, and taking it left the estimates under Unassigned
+ * (seen on the live site, 2026-10-14). The same array comes back when nothing is kept, so a tab
+ * does not count the read as a change of its own.
+ */
+export function keepFiledBundles(incoming: AddedBundle[], solutions: readonly AddedSolution[], held: readonly AddedBundle[]): AddedBundle[] {
+  const key = (plat: string | undefined, id: string): string => `${plat || 'openedx'}/${id}`;
+  const brought = new Set(incoming.map((bundle) => key(bundle.plat, bundle.id)));
+  const filed = new Set(solutions.map((solution) => key(solution.plat, solution.bundleId)));
+  const kept = held.filter((bundle) => !brought.has(key(bundle.plat, bundle.id)) && filed.has(key(bundle.plat, bundle.id)));
+  return kept.length > 0 ? [...incoming, ...kept] : incoming;
+}
+
 /* ------------------------------------------------------ the two kinds */
 
 /**

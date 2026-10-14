@@ -59,7 +59,7 @@ import { addTerms, copiedItems, deletable, handItem, patchItem, salesLegalDrafts
 import { DEMO_ID, demoPrefix, isDemoEstimation, isDemoId, isDemoRequest, isDemoSolution, resetDemo, withDemo, withoutDemo } from '@/domain/demo';
 import { DEFAULT_SHEET, readSheetPrefs, type SheetColumnId, type SheetPrefs, type SheetSectionId } from '@/domain/taskBreakdown';
 import { IMPORTED_DETAIL_FIELDS, planEstimateImport, removeImported, type EstimateRow } from '@/domain/estimateImport';
-import { nextBundleId } from '@/domain/catalog';
+import { keepFiledBundles, nextBundleId } from '@/domain/catalog';
 import { detailFor, INTERNAL_FIELDS, mergeDetails, typedAny, withoutDetails } from '@/domain/catalogDetails';
 import type { NewSolutionInput } from '@/domain/deskEntry';
 import { isAwaiting, stageOf, stageOnFiling, stageOnSettled } from '@/domain/stages';
@@ -545,8 +545,12 @@ function transition(state: AppState, action: Action): AppState {
   switch (action.type) {
     /* Whatever arrives, from browser storage, the store or another tab, holds no demo, because the
        demo is never written anywhere; so it is put back into each collection that arrived. */
-    case 'hydrate':
-      return withDemo(state, { ...state, ...action.payload }, today());
+    case 'hydrate': {
+      /* a bundle estimates are still filed under is never taken away by a read (`keepFiledBundles`) */
+      const { bundles } = action.payload;
+      const kept = bundles ? keepFiledBundles(bundles, action.payload.solutions ?? state.solutions, state.bundles) : undefined;
+      return withDemo(state, { ...state, ...action.payload, ...(kept ? { bundles: kept } : {}) }, today());
+    }
 
     /* A sibling tab rewrote the list. Anything open here keeps its local copy — the draft in
        this tab is unsaved work, and the other tab could not have known about it. */

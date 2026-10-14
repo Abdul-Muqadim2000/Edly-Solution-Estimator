@@ -2013,6 +2013,46 @@ describe('importing estimates from a workbook', () => {
   });
 });
 
+describe('a read that arrives without custom bundles', () => {
+  /* On the live site an import's six new bundles showed, then vanished two to three seconds later,
+     and their 147 estimates fell to Unassigned: a copy of the store with the estimates but not the
+     bundles reached the tab and replaced its own. A bundle that estimates are still filed under is
+     never removed on purpose (the desk refuses to, and removing an import takes both), so a read
+     that lacks one is stale, and the tab keeps it and saves it back. */
+  const withImport = (): AppState =>
+    reducer(workspace(), { type: 'importEstimates', rows: [row(1, { area: 'Mobile Apps' }), row(2, { area: 'Mobile Apps' }), row(3)], file: 'nordic.xlsx', catalogBundles: onScreen });
+
+  it('keeps a custom bundle its estimates are still filed under', () => {
+    const state = withImport();
+    expect(state.bundles.map((one) => one.id)).toEqual(['B16']);
+    const read = reducer(state, { type: 'hydrate', payload: { solutions: state.solutions, bundles: [] } });
+    expect(read.bundles.map((one) => one.id)).toEqual(['B16']);
+    /* the same from another tab, which sends the bundles alone */
+    expect(reducer(state, { type: 'hydrate', payload: { bundles: [] } }).bundles.map((one) => one.id)).toEqual(['B16']);
+  });
+
+  it('lets a read remove a bundle nothing is filed under any more, and the import that made it', () => {
+    const state = withImport();
+    const emptied = reducer(state, { type: 'hydrate', payload: { solutions: state.solutions.filter((one) => one.bundleId !== 'B16'), bundles: [] } });
+    expect(emptied.bundles).toEqual([]);
+    expect(reducer(state, { type: 'hydrate', payload: { solutions: [], bundles: [] } }).bundles).toEqual([]);
+  });
+
+  it('takes the bundles a read brings as they are when it lacks none still in use', () => {
+    const state = withImport();
+    const fresh = state.bundles.map((one) => ({ ...one, name: 'Mobile' }));
+    const read = reducer(state, { type: 'hydrate', payload: { solutions: state.solutions, bundles: fresh } });
+    /* the very array the read brought, so the tab does not count it as a change of its own */
+    expect(read.bundles).toBe(fresh);
+  });
+
+  it('keeps a bundle per platform: one filed on Moodle does not hold an Open edX bundle of the same id', () => {
+    const state = withImport();
+    const moodleOnly = state.solutions.map((one) => ({ ...one, plat: 'moodle' }));
+    expect(reducer(state, { type: 'hydrate', payload: { solutions: moodleOnly, bundles: [] } }).bundles).toEqual([]);
+  });
+});
+
 describe('undoing an import', () => {
   const state = run(
     workspace({ bundles: [{ id: 'CB-01', plat: 'openedx', name: 'Compliance', pitch: '', offerWhen: '', pairsWith: null, at: '' }] }),
